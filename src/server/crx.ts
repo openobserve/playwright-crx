@@ -41,6 +41,8 @@ import type { DeviceDescriptor } from 'playwright-core/lib/server/types';
 import { EmptyRecorderApp, RecorderApp } from 'playwright-core/lib/server/recorder/recorderApp';
 import type { LanguageGeneratorOptions } from 'playwright-core/lib/server/codegen/types';
 
+export type RecorderAppFactoryOverride = (crx: Crx, recorder: Recorder, context: CRBrowserContext) => IRecorderApp | Promise<IRecorderApp>;
+
 const kTabIdSymbol = Symbol('kTabIdSymbol');
 
 export function tabIdFromPage(page: Page): number | undefined {
@@ -48,6 +50,8 @@ export function tabIdFromPage(page: Page): number | undefined {
 }
 
 export class Crx extends SdkObject {
+
+  static recorderAppFactoryOverride: RecorderAppFactoryOverride | null = null;
 
   private _transport?: CrxTransport;
   private _browserPromise?: Promise<CRBrowser>;
@@ -126,10 +130,11 @@ export class Crx extends SdkObject {
     // override factory otherwise it will fail because the default factory tries to launch a new playwright app
     RecorderApp.factory = (): IRecorderAppFactory => {
       return async recorder => {
-        if (recorder instanceof Recorder && recorder._context === context)
+        if (recorder instanceof Recorder && recorder._context === context) {
+          if (Crx.recorderAppFactoryOverride)
+            return await Crx.recorderAppFactoryOverride(crxApp._crx, recorder, context);
           return await crxApp._createRecorderApp(recorder);
-        else
-          return new EmptyRecorderApp();
+        } else {return new EmptyRecorderApp();}
       };
     };
     return crxApp;

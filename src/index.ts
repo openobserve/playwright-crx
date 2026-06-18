@@ -60,3 +60,13 @@ export const { _crx: crx, selectors, errors } = playwrightAPI;
 export default playwrightAPI;
 
 wrapClientApis();
+
+// Synthetics recorder exports
+export { Crx } from './server/crx';
+export type { RecorderAppFactoryOverride } from './server/crx';
+export { mapActionToBrowserStep, mapActionsToBrowserSteps } from './server/recorder/actionMapper';
+export type { BrowserStep, BrowserStepAction, SelectorType } from './server/recorder/actionMapper';
+export { SyntheticsRecorderApp } from './server/recorder/syntheticsRecorderApp';
+export type { SyntheticsForwardMessage, SyntheticsForwardCallback } from './server/recorder/syntheticsRecorderApp';
+export { HeadlessRecorderWindow } from './server/recorder/headlessRecorderWindow';
+export type { ForwardCallback } from './server/recorder/headlessRecorderWindow';
