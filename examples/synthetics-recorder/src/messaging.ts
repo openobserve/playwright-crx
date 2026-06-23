@@ -9,7 +9,7 @@ import type { BrowserStep } from 'playwright-crx';
 // ---- O2 → Extension commands (via externally_connectable) ----
 
 export type O2Command =
-  | { action: 'startRecording'; mode?: Mode; testIdAttr?: string }
+  | { action: 'startRecording'; mode?: Mode; testIdAttr?: string; targetUrl?: string }
   | { action: 'stopRecording' }
   | { action: 'setMode'; mode: Mode }
   | { action: 'getStatus' }
@@ -20,7 +20,7 @@ export type O2ToExtensionMessage = {
   command: O2Command;
 };
 
-// ---- Extension → O2 data (via HTTP fetch) ----
+// ---- Extension → O2 data (pushed over the runtime Port back to the O2 web app) ----
 
 export type ExtensionToO2Payload =
   | { method: 'setMode'; mode: Mode }

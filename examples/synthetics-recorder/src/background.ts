@@ -3,8 +3,9 @@
  *
  * Lifecycle:
  * 1. Sets Crx.recorderAppFactoryOverride → SyntheticsRecorderApp
- * 2. Listens for startRecording from O2 → opens recording tab → attaches
- * 3. Routes BrowserStep[] from SyntheticsRecorderApp → O2 API + overlay
+ * 2. The O2 web app (running in a browser tab) connects via chrome.runtime.connect
+ *    and sends startRecording → opens recording tab → attaches
+ * 3. Routes BrowserStep[] from SyntheticsRecorderApp → O2 web app (over the Port) + overlay
  * 4. Auto-stops on tab close
  */
 
@@ -12,7 +13,7 @@ import playwright, { crx, Crx, SyntheticsRecorderApp } from 'playwright-crx';
 import type { Mode } from '@recorder/recorderTypes';
 import type { CrxApplication } from 'playwright-crx';
 import type { BrowserStep, SyntheticsForwardMessage } from 'playwright-crx';
-import type { O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage } from './messaging';
+import type { O2Command, O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage } from './messaging';
 
 // ---- State ----
 
@@ -22,15 +23,17 @@ let recordingTabId: number | undefined;
 let currentMode: Mode = 'none';
 let browserSteps: BrowserStep[] = [];
 let isRecording = false;
-let o2Endpoint = '';
+
+// Long-lived connection back to the O2 web app running in a browser tab.
+// The O2 app opens this via chrome.runtime.connect(extensionId, { name: 'synthetics-recorder' }).
+let o2Port: chrome.runtime.Port | undefined;
+
+// Name the O2 web app must use when opening the connection.
+const O2_PORT_NAME = 'synthetics-recorder';
 
 // ---- Initialization ----
 
-async function init() {
-  // Load O2 endpoint from storage
-  const stored = await chrome.storage.local.get(['o2Endpoint']);
-  o2Endpoint = (stored.o2Endpoint as string) || '';
-
+function init() {
   // Set the factory override BEFORE any CRX operations
   Crx.recorderAppFactoryOverride = async (crxInstance, recorder, _context) => {
     const app = new SyntheticsRecorderApp(crxInstance, recorder, handleRecorderMessage);
@@ -45,7 +48,10 @@ async function init() {
   // Set default testIdAttributeName
   playwright.selectors.setTestIdAttribute('data-test');
 
-  // Listen for commands from O2 web app
+  // Long-lived connection from the O2 web app — used to stream events back to it.
+  chrome.runtime.onConnectExternal.addListener(handleO2Connect);
+
+  // One-shot commands from the O2 web app (request/response).
   chrome.runtime.onMessageExternal.addListener(handleO2Message);
 
   // Listen for actions from content script overlay
@@ -58,6 +64,28 @@ async function init() {
   chrome.action.onClicked.addListener(handleActionClick);
 }
 
+// ---- O2 web app connection (externally_connectable Port) ----
+
+function handleO2Connect(port: chrome.runtime.Port) {
+  console.log(port);
+  if (port.name !== O2_PORT_NAME) return;
+
+  // Only one O2 app drives the recorder at a time; the latest connection wins.
+  o2Port = port;
+
+  // Commands may also arrive over the port (so the app can use a single channel).
+  port.onMessage.addListener((message: O2ToExtensionMessage) => {
+    console.log("O2 message ---", message);
+    if (message?.type === 'synthetics-command')
+      runO2Command(message.command, response => port.postMessage({ type: 'synthetics-response', response }));
+  });
+
+  port.onDisconnect.addListener(() => {
+    console.log("disconnect port --------------", o2Port);
+    if (o2Port === port) o2Port = undefined;
+  });
+}
+
 // ---- O2 → Extension commands (externally_connectable) ----
 
 function handleO2Message(
@@ -66,34 +94,38 @@ function handleO2Message(
   sendResponse: (response?: any) => void
 ): boolean {
   if (message.type !== 'synthetics-command') return false;
+  return runO2Command(message.command, sendResponse);
+}
 
-  const { command } = message;
-
+// Runs a single O2 command, replying via `respond`. Returns true when the
+// response is sent asynchronously (required by chrome.runtime.onMessage*).
+function runO2Command(command: O2Command, respond: (response?: any) => void): boolean {
+  console.log("O2 command ---", command);
   switch (command.action) {
     case 'startRecording':
-      startRecording(command.mode ?? 'recording', command.testIdAttr ?? 'data-test')
-        .then(() => sendResponse({ success: true }))
-        .catch(err => sendResponse({ success: false, error: err.message }));
+      startRecording(command.mode ?? 'recording', command.testIdAttr ?? 'class', command.targetUrl)
+        .then(() => respond({ success: true }))
+        .catch(err => respond({ success: false, error: err.message }));
       return true;
 
     case 'stopRecording':
       stopRecording()
-        .then(() => sendResponse({ success: true }))
-        .catch(err => sendResponse({ success: false, error: err.message }));
+        .then(() => respond({ success: true }))
+        .catch(err => respond({ success: false, error: err.message }));
       return true;
 
     case 'setMode':
       setMode(command.mode)
-        .then(() => sendResponse({ success: true }))
-        .catch(err => sendResponse({ success: false, error: err.message }));
+        .then(() => respond({ success: true }))
+        .catch(err => respond({ success: false, error: err.message }));
       return true;
 
     case 'getStatus':
-      sendResponse({ isRecording, mode: currentMode, tabId: recordingTabId, stepCount: browserSteps.length });
+      respond({ isRecording, mode: currentMode, tabId: recordingTabId, stepCount: browserSteps.length });
       return false;
 
     case 'ejectCode':
-      sendResponse({ code: '' }); // TBD
+      respond({ code: '' }); // TBD
       return false;
   }
   return false;
@@ -127,6 +159,7 @@ function handleInternalMessage(
 // ---- Recorder → background messages (from SyntheticsRecorderApp) ----
 
 function handleRecorderMessage(msg: SyntheticsForwardMessage) {
+  console.log("handleRecorderMessage ---", msg);
   switch (msg.method) {
     case 'setActions': {
       if (msg.browserSteps) {
@@ -191,24 +224,93 @@ function handleRecorderMessage(msg: SyntheticsForwardMessage) {
   }
 }
 
+// ---- Recorder-owned window tracking ----
+//
+// We track the window ids the recorder itself created in chrome.storage.session. This is the ONLY
+// source of truth for "which incognito windows are ours" — the recorder never closes a window that
+// isn't in this set, so the user's personal incognito windows are always safe. The set survives
+// service-worker restarts (so orphaned recorder windows are still recoverable) and is cleared when
+// the browser closes.
+
+const OWNED_WINDOWS_KEY = 'recordingWindowIds';
+
+async function getOwnedWindowIds(): Promise<number[]> {
+  const stored = await chrome.storage.session.get(OWNED_WINDOWS_KEY);
+  const ids = stored[OWNED_WINDOWS_KEY];
+  return Array.isArray(ids) ? ids : [];
+}
+
+async function setOwnedWindowIds(ids: number[]): Promise<void> {
+  await chrome.storage.session.set({ [OWNED_WINDOWS_KEY]: ids });
+}
+
 // ---- Recording lifecycle ----
 
-async function startRecording(mode: Mode = 'recording', testIdAttr: string = 'data-test') {
-  if (isRecording) return;
+// Prepares the incognito window/tab to record on and returns its tab id. If the recorder already owns
+// a live incognito window, that window is reused (its tab navigated to targetUrl) and any other
+// recorder-owned windows are closed; otherwise a fresh incognito window is created.
+async function prepareRecordingWindow(targetUrl: string): Promise<number> {
+  // Tear down any in-memory session WITHOUT closing the window (so it can be reused). Awaiting
+  // crxApp.close() lets the context Close event clear the incognito lock in crx.ts, otherwise the
+  // next crx.start({ incognito: true }) throws 'incognito crxApplication is already started'.
+  if (crxApp) {
+    await crxApp.recorder.hide().catch(() => {});
+    await crxApp.close().catch(() => {});
+    crxApp = undefined;
+  }
 
+  // Resolve which of our tracked windows are still alive and still incognito.
+  const ownedIds = await getOwnedWindowIds();
+  const ownedWindows = (await Promise.all(
+    ownedIds.map(id => chrome.windows.get(id, { populate: true }).catch(() => undefined)),
+  )).filter((w): w is chrome.windows.Window => !!w && !!w.id && w.incognito);
+
+  // Prefer the window that holds the previous recording tab; otherwise the first live owned window.
+  const reuseWin = ownedWindows.find(w => w.tabs?.some(t => t.id === recordingTabId)) ?? ownedWindows[0];
+
+  // Close every OTHER recorder-owned window (orphans from prior sessions). Never touches windows
+  // outside the tracked set, so personal incognito windows are left alone.
+  await Promise.all(
+    ownedWindows
+      .filter(w => w.id !== reuseWin?.id)
+      .map(w => chrome.windows.remove(w.id!).catch(() => {})),
+  );
+
+  if (reuseWin?.id) {
+    const reuseTab = reuseWin.tabs?.find(t => t.active) ?? reuseWin.tabs?.[0];
+    if (reuseTab?.id) {
+      await chrome.windows.update(reuseWin.id, { focused: true });
+      await chrome.tabs.update(reuseTab.id, { url: targetUrl || 'about:blank', active: true });
+      await setOwnedWindowIds([reuseWin.id]);
+      return reuseTab.id;
+    }
+  }
+
+  // No reusable window — open a fresh incognito window. crx.start({ incognito: true }) reuses the
+  // active incognito tab (see _startIncognitoCrxApplication in crx.ts), keeping it to one window.
+  const win = await chrome.windows.create({
+    incognito: true,
+    focused: true,
+    url: targetUrl || 'about:blank',
+  });
+  const tab = win?.tabs?.[0];
+  if (!win?.id || !tab?.id) throw new Error('Failed to create incognito recording window');
+
+  await setOwnedWindowIds([win.id]);
+  return tab.id;
+}
+
+async function startRecording(mode: Mode = 'recording', testIdAttr: string = 'class', targetUrl: string = '') {
   playwright.selectors.setTestIdAttribute(testIdAttr);
 
-  // Open a new dedicated recording tab
-  const tab = await chrome.tabs.create({ url: 'about:blank', active: true });
-  if (!tab?.id) throw new Error('Failed to create recording tab');
-
-  recordingTabId = tab.id;
-  recordingId = `rec_${Date.now()}_${tab.id}`;
+  // Reuse an existing recorder window if present (resetting everything), else open a new one.
+  recordingTabId = await prepareRecordingWindow(targetUrl);
+  recordingId = `rec_${Date.now()}_${recordingTabId}`;
   browserSteps = [];
   currentMode = mode;
 
-  // Start CRX application (lazy — reuses if already started)
-  crxApp = await crx.start({ incognito: false });
+  // Start CRX in incognito — finds & reuses the incognito tab prepared above.
+  crxApp = await crx.start({ incognito: true });
 
   // Show recorder (creates SyntheticsRecorderApp via factory override)
   await crxApp.recorder.show({
@@ -240,7 +342,7 @@ async function startRecording(mode: Mode = 'recording', testIdAttr: string = 'da
     payload: {
       method: 'recordingStarted',
       tabId: recordingTabId,
-      url: tab.url ?? '',
+      url: targetUrl,
     },
   });
 }
@@ -273,6 +375,10 @@ async function stopRecording() {
 
   await crxApp.close().catch(() => {});
   crxApp = undefined;
+
+  // Clear window tracking so the next start treats things as a clean slate. The window itself is
+  // left open (matching prior behavior) — only the tracking is reset.
+  await setOwnedWindowIds([]);
 
   chrome.action.setBadgeText({ text: '' });
 }
@@ -350,17 +456,19 @@ async function sendToOverlay(tabId: number, payload: OverlayMessage['payload']) 
   }
 }
 
-async function sendToO2(message: ExtensionToO2Message) {
-  if (!o2Endpoint) return;
+// Pushes an event to the O2 web app over the live Port. If no app is connected
+// (e.g. recording was started from the extension icon), the event is dropped.
+function sendToO2(message: ExtensionToO2Message) {
+  console.log("Send to o2 ---", message);
+  console.log("O2 Port ----", o2Port);
+  if (!o2Port) return;
 
   try {
-    await fetch(`${o2Endpoint}/recorder/events`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(message),
-    });
+    o2Port.postMessage(message);
   } catch (err) {
-    console.error('[SyntheticsRecorder] Failed to send to O2:', err);
+    // Port may have disconnected between the check and the post.
+    console.error('[SyntheticsRecorder] Failed to send to O2 app:', err);
+    o2Port = undefined;
   }
 }
 

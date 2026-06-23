@@ -29,7 +29,7 @@ import type * as crxchannels from '../protocol/channels';
 import { CrxRecorderApp } from './recorder/crxRecorderApp';
 import { CrxTransport } from './transport/crxTransport';
 import { BrowserContext } from 'playwright-core/lib/server/browserContext';
-import type { IRecorder, IRecorderAppFactory } from 'playwright-core/lib/server/recorder/recorderFrontend';
+import type { IRecorder, IRecorderApp, IRecorderAppFactory } from 'playwright-core/lib/server/recorder/recorderFrontend';
 import type { Mode } from '@recorder/recorderTypes';
 import CrxPlayer from './recorder/crxPlayer';
 import { createTab } from './utils';
@@ -41,7 +41,15 @@ import type { DeviceDescriptor } from 'playwright-core/lib/server/types';
 import { EmptyRecorderApp, RecorderApp } from 'playwright-core/lib/server/recorder/recorderApp';
 import type { LanguageGeneratorOptions } from 'playwright-core/lib/server/codegen/types';
 
-export type RecorderAppFactoryOverride = (crx: Crx, recorder: Recorder, context: CRBrowserContext) => IRecorderApp | Promise<IRecorderApp>;
+// The recorder app used by CrxApplication. Extends Playwright's IRecorderApp with
+// the crx-specific surface that CrxApplication drives directly (open/_recorder/load).
+export interface ICrxRecorderApp extends IRecorderApp {
+  readonly _recorder: Recorder;
+  open(options?: crxchannels.CrxApplicationShowRecorderParams): Promise<void>;
+  load?(code: string): void;
+}
+
+export type RecorderAppFactoryOverride = (crx: Crx, recorder: Recorder, context: CRBrowserContext) => ICrxRecorderApp | Promise<ICrxRecorderApp>;
 
 const kTabIdSymbol = Symbol('kTabIdSymbol');
 
@@ -128,13 +136,13 @@ export class Crx extends SdkObject {
       this._transport = undefined;
     });
     // override factory otherwise it will fail because the default factory tries to launch a new playwright app
+    // _createRecorderApp honors Crx.recorderAppFactoryOverride, so both entry points stay consistent.
     RecorderApp.factory = (): IRecorderAppFactory => {
       return async recorder => {
-        if (recorder instanceof Recorder && recorder._context === context) {
-          if (Crx.recorderAppFactoryOverride)
-            return await Crx.recorderAppFactoryOverride(crxApp._crx, recorder, context);
+        if (recorder instanceof Recorder && recorder._context === context)
           return await crxApp._createRecorderApp(recorder);
-        } else {return new EmptyRecorderApp();}
+        else
+          return new EmptyRecorderApp();
       };
     };
     return crxApp;
@@ -183,7 +191,7 @@ export class CrxApplication extends SdkObject {
   private _crx: Crx;
   readonly _context: CRBrowserContext;
   private _transport: CrxTransport;
-  private _recorderApp?: CrxRecorderApp;
+  private _recorderApp?: ICrxRecorderApp;
   private _closed = false;
 
   constructor(crx: Crx, context: CRBrowserContext, transport: CrxTransport) {
@@ -246,7 +254,10 @@ export class CrxApplication extends SdkObject {
         mode: mode === 'none' ? undefined : mode,
         ...otherOptions
       };
-      Recorder.show(this._context, recorder => this._createRecorderApp(recorder), recorderParams);
+      // Must await: the recorder-app factory (_createRecorderApp) may be async — e.g. when
+      // Crx.recorderAppFactoryOverride returns a promise — so this._recorderApp is only set once
+      // Recorder.show resolves. Without the await, this._recorderApp is still undefined below.
+      await Recorder.show(this._context, recorder => this._createRecorderApp(recorder), recorderParams);
     }
 
     await this._recorderApp!.open(options);
@@ -336,7 +347,7 @@ export class CrxApplication extends SdkObject {
   }
 
   load(code: string) {
-    this._recorderApp?.load(code);
+    this._recorderApp?.load?.(code);
   }
 
   async run(code: string, page?: Page) {
@@ -353,7 +364,9 @@ export class CrxApplication extends SdkObject {
 
   async _createRecorderApp(recorder: IRecorder) {
     if (!this._recorderApp) {
-      this._recorderApp = new CrxRecorderApp(this._crx, recorder as Recorder);
+      this._recorderApp = Crx.recorderAppFactoryOverride
+        ? await Crx.recorderAppFactoryOverride(this._crx, recorder as Recorder, this._context)
+        : new CrxRecorderApp(this._crx, recorder as Recorder);
       this._recorderApp.on('show', () => this.emit(CrxApplication.Events.RecorderShow));
       this._recorderApp.on('hide', () => this.emit(CrxApplication.Events.RecorderHide));
       this._recorderApp.on('modeChanged', event => {

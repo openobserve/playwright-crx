@@ -22,7 +22,7 @@
   "externally_connectable": {
     "matches": [
       "https://*.openobserve.ai/*",
-      "https://localhost:*/*"
+      "http://localhost:*/*"
     ]
   },
   "content_scripts": [
