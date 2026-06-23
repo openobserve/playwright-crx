@@ -103,6 +103,8 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
   }
 
   async setPaused(paused: boolean) {
+    // eslint-disable-next-line no-console
+    console.log('setPausedsetPaused ---', paused);
     this._sendMessage({ type: 'recorder', method: 'setPaused', paused });
   }
 
@@ -124,6 +126,8 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
   }
 
   async setSources(sources: Source[]) {
+    // eslint-disable-next-line no-console
+    console.log('setSources ---', sources);
     sources = sources.filter(s => s.isRecorded);
     this._sources = sources;
 
@@ -142,6 +146,8 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
   }
 
   async elementPicked(elementInfo: ElementInfo, userGesture?: boolean) {
+    // eslint-disable-next-line no-console
+    console.log('Element Picked ---', elementInfo);
     if (userGesture) {
       if (this._recorder.mode() === 'inspecting')
         this._recorder.setMode('standby');
@@ -159,6 +165,8 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
   }
 
   async setActions(actions: ActionInContext[], sources: Source[]) {
+    // eslint-disable-next-line no-console
+    console.log('setActions ---', actions, sources);
     this._recordedActions = Array.from(actions);
     this._sources = Array.from(sources);
 
@@ -200,6 +208,8 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
   }
 
   _sendMessage(msg: RecorderMessage) {
+    // eslint-disable-next-line no-console
+    console.log('_sendMessage ---', msg);
     return this._window?.postMessage(msg);
   }
 
@@ -208,6 +218,8 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
   }
 
   private _onMessage({ type, event, params }: RecorderEventData) {
+    // eslint-disable-next-line no-console
+    console.log('_onMessage ---', type, event, params);
     if (type === 'recorderEvent') {
       switch (event) {
         case 'resume':

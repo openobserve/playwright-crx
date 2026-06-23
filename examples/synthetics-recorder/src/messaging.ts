@@ -13,7 +13,18 @@ export type O2Command =
   | { action: 'stopRecording' }
   | { action: 'setMode'; mode: Mode }
   | { action: 'getStatus' }
-  | { action: 'ejectCode'; language?: string };
+  | { action: 'ejectCode'; language?: string }
+  | { action: 'replay'; steps: BrowserStep[]; targetUrl?: string; testIdAttr?: string }
+  | { action: 'stopReplay' };
+
+// Response returned for a `replay` command. `passed` is the overall result; `stopped` is set when the
+// replay was cancelled mid-run; `error` carries the failing step's message.
+export type ReplayResponse = {
+  success: boolean;
+  passed: boolean;
+  stopped?: boolean;
+  error?: string;
+};
 
 export type O2ToExtensionMessage = {
   type: 'synthetics-command';

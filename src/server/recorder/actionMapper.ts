@@ -240,3 +240,63 @@ export function mapActionsToBrowserSteps(
       .filter(a => a.action.name !== 'closePage')
       .map((a, i) => mapActionToBrowserStep(a, i, codes?.[i]));
 }
+
+// Reconstructs the Playwright Action for a BrowserStep. The forward mapper collapses several action
+// names into a coarser BrowserStepAction, so we reconstruct the exact action.name from the step's
+// action + which fields are present. Assert subtypes are fully recoverable; check/uncheck were recorded
+// as 'click' and replay as a click (which still toggles a checkbox).
+function buildActionFromStep(step: BrowserStep): Action {
+  const selector = step.selector ?? '';
+  switch (step.action) {
+    case 'navigate':
+      return { name: 'navigate', url: step.url ?? '', signals: [] };
+    case 'click':
+      return {
+        name: 'click',
+        selector,
+        button: step.button ?? 'left',
+        modifiers: step.modifiers ?? 0,
+        clickCount: 1,
+        position: step.position,
+        signals: [],
+      };
+    case 'type':
+      return { name: 'fill', selector, text: step.value ?? '', signals: [] };
+    case 'press':
+      return { name: 'press', selector, key: step.key ?? '', modifiers: step.modifiers ?? 0, signals: [] };
+    case 'select':
+      return { name: 'select', selector, options: step.options ?? [], signals: [] };
+    case 'setInputFiles':
+      return { name: 'setInputFiles', selector, files: step.files ?? [], signals: [] };
+    case 'assert':
+      if (step.snapshot !== undefined)
+        return { name: 'assertSnapshot', selector, snapshot: step.snapshot, signals: [] };
+      if (step.text !== undefined)
+        return { name: 'assertText', selector, text: step.text, substring: true, signals: [] };
+      if (step.value !== undefined)
+        return { name: 'assertValue', selector, value: step.value, signals: [] };
+      if (step.checked !== undefined)
+        return { name: 'assertChecked', selector, checked: step.checked, signals: [] };
+      return { name: 'assertVisible', selector, signals: [] };
+    default:
+      // 'waitFor' / 'screenshot' are not produced by recording and not supported by the player.
+      throw new Error(`Cannot replay step with action '${step.action}'`);
+  }
+}
+
+export function mapBrowserStepToAction(step: BrowserStep): ActionInContext {
+  return {
+    frame: {
+      pageAlias: step.pageAlias ?? 'page',
+      framePath: step.framePath ?? [],
+    },
+    action: buildActionFromStep(step),
+    startTime: step.startTime ?? 0,
+    endTime: step.endTime,
+    description: step.description,
+  };
+}
+
+export function mapBrowserStepsToActions(steps: BrowserStep[]): ActionInContext[] {
+  return steps.map(mapBrowserStepToAction);
+}

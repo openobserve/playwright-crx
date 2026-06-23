@@ -355,6 +355,19 @@ export class CrxApplication extends SdkObject {
     await this._crx.player.run(page ?? this._context, actions);
   }
 
+  // Replays pre-mapped actions directly (no code/parse round-trip). `actionsJson` is a JSON-serialized
+  // ActionInContext[] — kept as a string so the channel validator stays a simple tString.
+  async runActions(actionsJson: string, page?: Page) {
+    const actions = JSON.parse(actionsJson);
+    // eslint-disable-next-line no-console
+    console.log(actions);
+    await this._crx.player.run(page ?? this._context, actions);
+  }
+
+  async stop() {
+    await this._crx.player.stop();
+  }
+
   async parseForTest(originCode: string) {
     const [{ actions, options }] = parse(originCode);
     const jsLanguage = [...languageSet()].find(l => l.id === 'playwright-test');

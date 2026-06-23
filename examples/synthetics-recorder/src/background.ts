@@ -9,11 +9,11 @@
  * 4. Auto-stops on tab close
  */
 
-import playwright, { crx, Crx, SyntheticsRecorderApp } from 'playwright-crx';
+import playwright, { crx, Crx, SyntheticsRecorderApp, mapBrowserStepsToActions } from 'playwright-crx';
 import type { Mode } from '@recorder/recorderTypes';
 import type { CrxApplication } from 'playwright-crx';
 import type { BrowserStep, SyntheticsForwardMessage } from 'playwright-crx';
-import type { O2Command, O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage } from './messaging';
+import type { O2Command, O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage, ReplayResponse } from './messaging';
 
 // ---- State ----
 
@@ -24,12 +24,27 @@ let currentMode: Mode = 'none';
 let browserSteps: BrowserStep[] = [];
 let isRecording = false;
 
+// Replay state. isReplaying guards against overlapping replays; replayStopped distinguishes a cancelled
+// run (CrxPlayer.run swallows the Stopped error and returns normally) from a successful pass.
+let isReplaying = false;
+let replayStopped = false;
+
 // Long-lived connection back to the O2 web app running in a browser tab.
 // The O2 app opens this via chrome.runtime.connect(extensionId, { name: 'synthetics-recorder' }).
 let o2Port: chrome.runtime.Port | undefined;
 
 // Name the O2 web app must use when opening the connection.
 const O2_PORT_NAME = 'synthetics-recorder';
+
+// Playwright's native default test-id attribute. Used only when O2 doesn't send a (non-empty) testIdAttr —
+// we never impose 'class' or 'data-test'.
+const DEFAULT_TEST_ID_ATTR = 'data-testid';
+
+// Resolves the test-id attribute for a request: use exactly what O2 sends; fall back to Playwright's
+// default only when it's missing or blank (guards against `??` letting "" through).
+function resolveTestIdAttr(testIdAttr?: string): string {
+  return testIdAttr?.trim() || DEFAULT_TEST_ID_ATTR;
+}
 
 // ---- Initialization ----
 
@@ -45,8 +60,9 @@ function init() {
     return app;
   };
 
-  // Set default testIdAttributeName
-  playwright.selectors.setTestIdAttribute('data-test');
+  // Leave Playwright's native default test-id attribute ('data-testid'). Recording/replay use whatever
+  // O2 sends per request; we don't impose 'class' or 'data-test'.
+  playwright.selectors.setTestIdAttribute(DEFAULT_TEST_ID_ATTR);
 
   // Long-lived connection from the O2 web app — used to stream events back to it.
   chrome.runtime.onConnectExternal.addListener(handleO2Connect);
@@ -103,7 +119,7 @@ function runO2Command(command: O2Command, respond: (response?: any) => void): bo
   console.log("O2 command ---", command);
   switch (command.action) {
     case 'startRecording':
-      startRecording(command.mode ?? 'recording', command.testIdAttr ?? 'class', command.targetUrl)
+      startRecording(command.mode ?? 'recording', command.testIdAttr, command.targetUrl)
         .then(() => respond({ success: true }))
         .catch(err => respond({ success: false, error: err.message }));
       return true;
@@ -127,6 +143,18 @@ function runO2Command(command: O2Command, respond: (response?: any) => void): bo
     case 'ejectCode':
       respond({ code: '' }); // TBD
       return false;
+
+    case 'replay':
+      handleReplay(command.steps, command.targetUrl, command.testIdAttr)
+        .then(result => respond(result))
+        .catch(err => respond({ success: false, passed: false, error: err.message }));
+      return true;
+
+    case 'stopReplay':
+      handleStopReplay()
+        .then(() => respond({ success: true }))
+        .catch(err => respond({ success: false, error: err.message }));
+      return true;
   }
   return false;
 }
@@ -142,7 +170,10 @@ function handleInternalMessage(
     const tabId = sender.tab?.id ?? message.tabId;
     switch (message.action) {
       case 'stop':
-        stopRecording().catch(console.error);
+        if (isReplaying)
+          handleStopReplay().catch(console.error);
+        else
+          stopRecording().catch(console.error);
         break;
       case 'play':
         replayAll().catch(console.error);
@@ -300,8 +331,9 @@ async function prepareRecordingWindow(targetUrl: string): Promise<number> {
   return tab.id;
 }
 
-async function startRecording(mode: Mode = 'recording', testIdAttr: string = 'class', targetUrl: string = '') {
-  playwright.selectors.setTestIdAttribute(testIdAttr);
+async function startRecording(mode: Mode = 'recording', testIdAttr?: string, targetUrl: string = '') {
+  const attr = resolveTestIdAttr(testIdAttr);
+  playwright.selectors.setTestIdAttribute(attr);
 
   // Reuse an existing recorder window if present (resetting everything), else open a new one.
   recordingTabId = await prepareRecordingWindow(targetUrl);
@@ -315,7 +347,7 @@ async function startRecording(mode: Mode = 'recording', testIdAttr: string = 'cl
   // Show recorder (creates SyntheticsRecorderApp via factory override)
   await crxApp.recorder.show({
     mode,
-    testIdAttributeName: testIdAttr,
+    testIdAttributeName: attr,
   });
 
   // Attach to the recording tab
@@ -376,9 +408,9 @@ async function stopRecording() {
   await crxApp.close().catch(() => {});
   crxApp = undefined;
 
-  // Clear window tracking so the next start treats things as a clean slate. The window itself is
-  // left open (matching prior behavior) — only the tracking is reset.
-  await setOwnedWindowIds([]);
+  // NOTE: we intentionally keep the owned-window tracking after stop so a subsequent `replay` can reuse
+  // the just-recorded incognito window. The set is updated whenever a window is created/reused in
+  // prepareRecordingWindow.
 
   chrome.action.setBadgeText({ text: '' });
 }
@@ -403,6 +435,64 @@ function handleActionClick(tab: chrome.tabs.Tab) {
   } else {
     startRecording().catch(console.error);
   }
+}
+
+// ---- Replay (web app sends BrowserStep[]) ----
+
+function firstNavigateUrl(steps: BrowserStep[]): string | undefined {
+  return steps.find(s => s.action === 'navigate')?.url;
+}
+
+// Replays a recorded journey sent by the O2 web app. Reverse-maps BrowserStep[] → ActionInContext[],
+// reuses the recording incognito window (or opens one), and runs them via the server CrxPlayer. The player
+// isn't reachable from the client, so we drive it through crxApp.recorder.runActions(actions) — the actions
+// are passed directly (no code/parse round-trip). Stops at the first failing step; reports overall pass/fail.
+async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr?: string): Promise<ReplayResponse> {
+  if (isReplaying)
+    return { success: false, passed: false, error: 'A replay is already in progress' };
+
+  // Replay and recording can't share the incognito CRX app — stop recording first.
+  if (isRecording)
+    await stopRecording();
+
+  // Match the test-id attribute the recording used (sent by O2), otherwise internal:testid= selectors
+  // resolve against the wrong attribute and time out.
+  playwright.selectors.setTestIdAttribute(resolveTestIdAttr(testIdAttr));
+
+  replayStopped = false;
+  const actions = mapBrowserStepsToActions(steps);
+
+  console.log("Actions ----", actions);
+
+  // Reuse the recording window (or open a fresh incognito one), navigated to the first URL.
+  const tabId = await prepareRecordingWindow(targetUrl || firstNavigateUrl(steps) || 'about:blank');
+
+  try {
+    crxApp = await crx.start({ incognito: true });
+    await crxApp.attach(tabId);
+    isReplaying = true;
+
+    // runActions() stops at the first failing step and throws; on stopReplay the server swallows the
+    // Stopped error and returns normally, so we distinguish a cancel via the replayStopped flag.
+    await crxApp.recorder.runActions(actions);
+    return replayStopped
+      ? { success: true, passed: false, stopped: true }
+      : { success: true, passed: true };
+  } catch (err) {
+    return { success: true, passed: false, error: err?.message ?? String(err) };
+  } finally {
+    isReplaying = false;
+    await crxApp?.close().catch(() => {});
+    crxApp = undefined;
+  }
+}
+
+// Cancels an in-progress replay. The server CrxPlayer.stop() makes the in-flight action throw Stopped,
+// which run() catches and returns from — handleReplay then reports stopped:true.
+async function handleStopReplay(): Promise<void> {
+  if (!isReplaying || !crxApp) return;
+  replayStopped = true;
+  await crxApp.recorder.stop().catch(() => {});
 }
 
 // ---- Playback ----

@@ -120,6 +120,14 @@ export class CrxRecorder extends EventEmitter implements api.CrxRecorder {
   async run(code: string, page?: Page): Promise<void> {
     await this._channel.run({ code, page: page?._channel });
   }
+
+  async runActions(actions: any[]): Promise<void> {
+    await this._channel.runActions({ actions: JSON.stringify(actions) });
+  }
+
+  async stop(): Promise<void> {
+    await this._channel.stop();
+  }
 }
 
 export class CrxApplication extends ChannelOwner<channels.CrxApplicationChannel> implements api.CrxApplication {
