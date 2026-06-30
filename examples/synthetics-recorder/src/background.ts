@@ -75,9 +75,6 @@ function init() {
 
   // Auto-stop when recording tab is closed
   chrome.tabs.onRemoved.addListener(handleTabRemoved);
-
-  // Extension icon click → toggle recording
-  chrome.action.onClicked.addListener(handleActionClick);
 }
 
 // ---- O2 web app connection (externally_connectable Port) ----
@@ -429,14 +426,6 @@ function handleTabRemoved(tabId: number) {
   }
 }
 
-function handleActionClick(tab: chrome.tabs.Tab) {
-  if (isRecording) {
-    stopRecording().catch(console.error);
-  } else {
-    startRecording().catch(console.error);
-  }
-}
-
 // ---- Replay (web app sends BrowserStep[]) ----
 
 function firstNavigateUrl(steps: BrowserStep[]): string | undefined {
@@ -546,8 +535,8 @@ async function sendToOverlay(tabId: number, payload: OverlayMessage['payload']) 
   }
 }
 
-// Pushes an event to the O2 web app over the live Port. If no app is connected
-// (e.g. recording was started from the extension icon), the event is dropped.
+// Pushes an event to the O2 web app over the live Port. If no app is connected,
+// the event is dropped.
 function sendToO2(message: ExtensionToO2Message) {
   console.log("Send to o2 ---", message);
   console.log("O2 Port ----", o2Port);
