@@ -31,7 +31,6 @@ import { HeadlessRecorderWindow } from './headlessRecorderWindow';
 import type { RecorderEventData, RecorderMessage, RecorderWindow } from './crxRecorderApp';
 import { mapActionsToBrowserSteps } from './actionMapper';
 import type { BrowserStep } from './actionMapper';
-import { languageSet } from 'playwright-core/lib/server/codegen/languages';
 import { serverSideCallMetadata } from 'playwright-core/lib/server';
 
 export type SyntheticsForwardMessage = RecorderMessage & {
@@ -170,20 +169,8 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
     this._recordedActions = Array.from(actions);
     this._sources = Array.from(sources);
 
-    // Generate per-step Playwright code snippets using the language generator
-    const jsLanguage = [...languageSet()].find(l => l.id === 'playwright-test');
-    const codes = jsLanguage
-      ? actions.map(a => {
-        try {
-          return jsLanguage.generateAction(a);
-        } catch {
-          return undefined;
-        }
-      })
-      : undefined;
-
-    // Map to BrowserStep[] format
-    const browserSteps = mapActionsToBrowserSteps(actions, codes);
+    // Map to BrowserStep[] format (no generated code snippets)
+    const browserSteps = mapActionsToBrowserSteps(actions);
 
     const msg: SyntheticsForwardMessage = {
       type: 'recorder',

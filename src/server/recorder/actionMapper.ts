@@ -44,8 +44,6 @@ export interface BrowserStep {
   modifiers?: number;
   button?: 'left' | 'middle' | 'right';
   position?: { x: number; y: number };
-  // Generated code snippet
-  code?: string;
   // Metadata
   startTime: number;
   endTime?: number;
@@ -106,7 +104,6 @@ function buildStepName(action: Action, index: number): string {
 export function mapActionToBrowserStep(
   actionInContext: ActionInContext,
   actionIndex: number,
-  code?: string
 ): BrowserStep {
   const { action, frame, startTime, endTime, description } = actionInContext;
 
@@ -120,7 +117,6 @@ export function mapActionToBrowserStep(
     pageAlias: frame.pageAlias,
     framePath: frame.framePath,
     description,
-    code,
   };
 
   switch (action.name) {
@@ -234,11 +230,10 @@ export function mapActionToBrowserStep(
 
 export function mapActionsToBrowserSteps(
   actions: ActionInContext[],
-  codes?: string[]
 ): BrowserStep[] {
   return actions
       .filter(a => a.action.name !== 'closePage')
-      .map((a, i) => mapActionToBrowserStep(a, i, codes?.[i]));
+      .map((a, i) => mapActionToBrowserStep(a, i));
 }
 
 // Reconstructs the Playwright Action for a BrowserStep. The forward mapper collapses several action
