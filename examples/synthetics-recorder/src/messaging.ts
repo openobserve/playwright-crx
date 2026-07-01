@@ -40,7 +40,7 @@ export type ExtensionToO2Payload =
   | { method: 'elementPicked'; elementInfo: ElementInfo; userGesture?: boolean }
   | { method: 'recordingStarted'; tabId: number; url: string }
   | { method: 'recordingStopped'; totalSteps: number }
-  | { method: 'stepReplayResult'; stepId: string; passed: boolean; duration_ms: number; error?: string };
+  | { method: 'stepReplayResult'; stepId: string; stepName?: string; passed: boolean; duration_ms: number; error?: string };
 
 export type ExtensionToO2Message = {
   type: 'synthetics-recorder';

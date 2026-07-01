@@ -62,6 +62,13 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
       this._recorder.clearErrors();
       this.resetCallLogs().catch(() => {});
     });
+    this._crx.player.on('stepResult', (result: StepResultData) => {
+      this._forwardCallback({
+        type: 'recorder',
+        method: 'stepReplayResult',
+        stepResult: result,
+      });
+    });
   }
 
   async open(options?: channels.CrxApplicationShowRecorderParams) {

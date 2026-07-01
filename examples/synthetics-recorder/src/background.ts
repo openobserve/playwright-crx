@@ -12,7 +12,7 @@
 import playwright, { crx, Crx, SyntheticsRecorderApp, mapBrowserStepsToActions } from 'playwright-crx';
 import type { Mode } from '@recorder/recorderTypes';
 import type { CrxApplication } from 'playwright-crx';
-import type { BrowserStep, SyntheticsForwardMessage } from 'playwright-crx';
+import type { BrowserStep, SyntheticsForwardMessage, StepResultData } from 'playwright-crx';
 import type { O2Command, O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage, ReplayResponse } from './messaging';
 
 // ---- State ----
@@ -28,6 +28,8 @@ let isRecording = false;
 // run (CrxPlayer.run swallows the Stopped error and returns normally) from a successful pass.
 let isReplaying = false;
 let replayStopped = false;
+// The BrowserStep[] being replayed — used to map action indices back to step IDs for streaming.
+let replaySteps: BrowserStep[] = [];
 
 // Long-lived connection back to the O2 web app running in a browser tab.
 // The O2 app opens this via chrome.runtime.connect(extensionId, { name: 'synthetics-recorder' }).
@@ -249,6 +251,34 @@ function handleRecorderMessage(msg: SyntheticsForwardMessage) {
       });
       break;
     }
+    case 'stepReplayResult': {
+      const result = msg.stepResult;
+      if (!result) break;
+      const step = replaySteps[result.actionIndex];
+      const stepId = step?.id ?? `s${result.actionIndex + 1}`;
+      const stepName = step?.name;
+      sendToO2({
+        type: 'synthetics-recorder',
+        recordingId: recordingId ?? `replay_${Date.now()}`,
+        payload: {
+          method: 'stepReplayResult',
+          stepId,
+          stepName,
+          passed: result.passed,
+          duration_ms: result.duration_ms,
+          error: result.error,
+        },
+      });
+      if (recordingTabId) {
+        sendToOverlay(recordingTabId, {
+          method: 'stepResult',
+          stepId,
+          passed: result.passed,
+          error: result.error,
+        });
+      }
+      break;
+    }
   }
 }
 
@@ -449,6 +479,7 @@ async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr
   playwright.selectors.setTestIdAttribute(resolveTestIdAttr(testIdAttr));
 
   replayStopped = false;
+  replaySteps = steps;
   const actions = mapBrowserStepsToActions(steps);
 
   console.log("Actions ----", actions);
