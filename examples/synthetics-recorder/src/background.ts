@@ -12,7 +12,7 @@
 import playwright, { crx, Crx, SyntheticsRecorderApp, mapBrowserStepsToActions } from 'playwright-crx';
 import type { Mode } from '@recorder/recorderTypes';
 import type { CrxApplication } from 'playwright-crx';
-import type { BrowserStep, SyntheticsForwardMessage, StepResultData } from 'playwright-crx';
+import type { BrowserStep, SyntheticsForwardMessage, StepResultData, StructuredError } from 'playwright-crx';
 import type { O2Command, O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage, ReplayResponse } from './messaging';
 
 // ---- State ----
@@ -267,6 +267,7 @@ function handleRecorderMessage(msg: SyntheticsForwardMessage) {
           passed: result.passed,
           duration_ms: result.duration_ms,
           error: result.error,
+          structuredError: result.structuredError,
         },
       });
       if (recordingTabId) {
@@ -499,7 +500,17 @@ async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr
       ? { success: true, passed: false, stopped: true }
       : { success: true, passed: true };
   } catch (err) {
-    return { success: true, passed: false, error: err?.message ?? String(err) };
+    const e = err as Error;
+    return {
+      success: true,
+      passed: false,
+      error: e?.message ?? String(err),
+      structuredError: {
+        message: e?.message ?? String(err),
+        name: e?.name,
+        stack: e?.stack,
+      },
+    };
   } finally {
     isReplaying = false;
     await crxApp?.close().catch(() => {});

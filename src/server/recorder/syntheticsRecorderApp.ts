@@ -33,11 +33,33 @@ import { mapActionsToBrowserSteps } from './actionMapper';
 import type { BrowserStep } from './actionMapper';
 import { serverSideCallMetadata } from 'playwright-core/lib/server';
 
+export type StructuredError = {
+  message: string;
+  name?: string;
+  stack?: string;
+  /** The action that failed, e.g. "click", "fill", "navigate" */
+  actionName?: string;
+  /** The selector targeted by the failing action, if applicable */
+  selector?: string;
+};
+
+export type StepResultData = {
+  actionIndex: number;
+  passed: boolean;
+  duration_ms: number;
+  /** Raw error message (kept for backward compat). Prefer structuredError. */
+  error?: string;
+  /** Detailed, machine-readable error breakdown. */
+  structuredError?: StructuredError;
+};
+
 export type SyntheticsForwardMessage = RecorderMessage & {
   browserSteps?: BrowserStep[];
   // Full generated test code from setSources
   generatedCode?: string;
   generatedLanguage?: string;
+  // Per-step replay result streamed in real-time
+  stepResult?: StepResultData;
 };
 
 export type SyntheticsForwardCallback = (msg: SyntheticsForwardMessage) => void;

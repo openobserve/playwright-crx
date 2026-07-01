@@ -25,6 +25,7 @@ import { buildFullSelector } from 'playwright-core/lib/server/recorder/recorderU
 import { toKeyboardModifiers } from 'playwright-core/lib/server/codegen/language';
 import type { ActionInContextWithLocation, Location } from './parser';
 import type { ActionInContext, FrameDescription } from '@recorder/actions';
+import type { StructuredError } from './syntheticsRecorderApp';
 import { toClickOptions } from 'playwright-core/lib/server/recorder/recorderRunner';
 import { parseAriaSnapshotUnsafe } from 'playwright-core/lib/utils/isomorphic/ariaSnapshot';
 import { serverSideCallMetadata } from 'playwright-core/lib/server';
@@ -34,6 +35,25 @@ import { traceParamsForAction } from './recorderUtils';
 import { yaml } from 'playwright-core/lib/utilsBundle';
 
 class Stopped extends Error {}
+
+function buildStructuredError(
+  e: unknown,
+  serialized: ReturnType<typeof serializeError>,
+  action: PerformAction,
+): StructuredError {
+  const err = e as Error;
+  const errorData = serialized.error;
+  let selector: string | undefined;
+  if ('selector' in action.action)
+    selector = (action.action as any).selector;
+  return {
+    message: err.message ?? String(e),
+    name: errorData?.name ?? err.name,
+    stack: errorData?.stack ?? err.stack,
+    actionName: action.action.name,
+    selector,
+  };
+}
 
 export type PerformAction = ActionInContextWithLocation | {
   action: {
@@ -124,11 +144,13 @@ export default class CrxPlayer extends EventEmitter {
         } catch (e) {
           if (e instanceof Stopped)
             return;
+          const serialized = serializeError(e);
           this.emit('stepResult', {
             actionIndex,
             passed: false,
             duration_ms: Math.round((monotonicTime() - startTime) * 1000),
             error: (e as Error).message,
+            structuredError: buildStructuredError(e, serialized, action),
           });
           throw e;
         }

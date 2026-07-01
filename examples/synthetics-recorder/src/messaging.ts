@@ -4,7 +4,7 @@
 
 import type { Mode, Source, ElementInfo } from '@recorder/recorderTypes';
 import type { ActionInContext } from '@recorder/actions';
-import type { BrowserStep } from 'playwright-crx';
+import type { BrowserStep, StructuredError } from 'playwright-crx';
 
 // ---- O2 → Extension commands (via externally_connectable) ----
 
@@ -18,12 +18,14 @@ export type O2Command =
   | { action: 'stopReplay' };
 
 // Response returned for a `replay` command. `passed` is the overall result; `stopped` is set when the
-// replay was cancelled mid-run; `error` carries the failing step's message.
+// replay was cancelled mid-run; `error` carries the failing step's message; `structuredError` carries
+// a machine-readable breakdown (error name, stack, failing action/selector, etc.).
 export type ReplayResponse = {
   success: boolean;
   passed: boolean;
   stopped?: boolean;
   error?: string;
+  structuredError?: StructuredError;
 };
 
 export type O2ToExtensionMessage = {
@@ -40,7 +42,7 @@ export type ExtensionToO2Payload =
   | { method: 'elementPicked'; elementInfo: ElementInfo; userGesture?: boolean }
   | { method: 'recordingStarted'; tabId: number; url: string }
   | { method: 'recordingStopped'; totalSteps: number }
-  | { method: 'stepReplayResult'; stepId: string; stepName?: string; passed: boolean; duration_ms: number; error?: string };
+  | { method: 'stepReplayResult'; stepId: string; stepName?: string; passed: boolean; duration_ms: number; error?: string; structuredError?: StructuredError };
 
 export type ExtensionToO2Message = {
   type: 'synthetics-recorder';
