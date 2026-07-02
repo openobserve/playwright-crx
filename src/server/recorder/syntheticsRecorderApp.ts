@@ -43,6 +43,10 @@ export type StructuredError = {
   selector?: string;
 };
 
+export type StepStartedData = {
+  actionIndex: number;
+};
+
 export type StepResultData = {
   actionIndex: number;
   passed: boolean;
@@ -53,14 +57,22 @@ export type StepResultData = {
   structuredError?: StructuredError;
 };
 
-export type SyntheticsForwardMessage = RecorderMessage & {
-  browserSteps?: BrowserStep[];
-  // Full generated test code from setSources
-  generatedCode?: string;
-  generatedLanguage?: string;
-  // Per-step replay result streamed in real-time
-  stepResult?: StepResultData;
-};
+export type SyntheticsForwardMessage =
+  | (RecorderMessage & {
+      browserSteps?: BrowserStep[];
+      generatedCode?: string;
+      generatedLanguage?: string;
+    })
+  | {
+      type: 'recorder';
+      method: 'stepReplayStarted';
+      stepStarted: StepStartedData;
+    }
+  | {
+      type: 'recorder';
+      method: 'stepReplayResult';
+      stepResult: StepResultData;
+    };
 
 export type SyntheticsForwardCallback = (msg: SyntheticsForwardMessage) => void;
 
@@ -84,7 +96,18 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
       this._recorder.clearErrors();
       this.resetCallLogs().catch(() => {});
     });
+    this._crx.player.on('stepStarted', (data: StepStartedData) => {
+      // eslint-disable-next-line no-console
+      console.log('Step Started ----', data);
+      this._forwardCallback({
+        type: 'recorder',
+        method: 'stepReplayStarted',
+        stepStarted: data,
+      });
+    });
     this._crx.player.on('stepResult', (result: StepResultData) => {
+      // eslint-disable-next-line no-console
+      console.log('Step Result ----', result);
       this._forwardCallback({
         type: 'recorder',
         method: 'stepReplayResult',

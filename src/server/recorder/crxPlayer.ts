@@ -132,6 +132,7 @@ export default class CrxPlayer extends EventEmitter {
         if (action.action.name === 'openPage' && action.frame.pageAlias === 'page')
           continue;
         this._currAction = action;
+        this.emit('stepStarted', { actionIndex });
         const startTime = monotonicTime();
         try {
           await this._performAction(context, action);

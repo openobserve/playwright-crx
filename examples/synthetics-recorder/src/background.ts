@@ -12,7 +12,7 @@
 import playwright, { crx, Crx, SyntheticsRecorderApp, mapBrowserStepsToActions } from 'playwright-crx';
 import type { Mode } from '@recorder/recorderTypes';
 import type { CrxApplication } from 'playwright-crx';
-import type { BrowserStep, SyntheticsForwardMessage, StepResultData, StructuredError } from 'playwright-crx';
+import type { BrowserStep, SyntheticsForwardMessage, StepResultData, StepStartedData, StructuredError } from 'playwright-crx';
 import type { O2Command, O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage, ReplayResponse } from './messaging';
 
 // ---- State ----
@@ -251,12 +251,31 @@ function handleRecorderMessage(msg: SyntheticsForwardMessage) {
       });
       break;
     }
+    case 'stepReplayStarted': {
+      const started = msg.stepStarted;
+      if (!started) break;
+      const step = replaySteps[started.actionIndex];
+      const stepId = step?.id ?? `s${started.actionIndex + 1}`;
+      const stepName = step?.name;
+      sendToO2({
+        type: 'synthetics-recorder',
+        recordingId: recordingId ?? `replay_${Date.now()}`,
+        payload: {
+          method: 'stepReplayStarted',
+          stepId,
+          stepName,
+        },
+      });
+      break;
+    }
     case 'stepReplayResult': {
       const result = msg.stepResult;
+      console.log("stepReplayResult", !!result)
       if (!result) break;
       const step = replaySteps[result.actionIndex];
       const stepId = step?.id ?? `s${result.actionIndex + 1}`;
       const stepName = step?.name;
+      console.log("stepReplayResult", stepId, result)
       sendToO2({
         type: 'synthetics-recorder',
         recordingId: recordingId ?? `replay_${Date.now()}`,
@@ -493,6 +512,11 @@ async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr
     await crxApp.attach(tabId);
     isReplaying = true;
 
+    // show({ mode: 'none' }) triggers _createRecorderApp → factory → SyntheticsRecorderApp,
+    // which registers a stepResult listener on Crx.player so per-step results stream to O2 in
+    // real-time during replay. Mode 'none' avoids capturing any recording actions.
+    await crxApp.recorder.show({ mode: 'none' });
+
     // runActions() stops at the first failing step and throws; on stopReplay the server swallows the
     // Stopped error and returns normally, so we distinguish a cancel via the replayStopped flag.
     await crxApp.recorder.runActions(actions);
@@ -541,6 +565,7 @@ async function replayAll() {
 
 async function replayStep(stepId: string, tabId: number) {
   // Single-step replay: find the action by step index
+      console.log("Replay step");
   const stepIndex = parseInt(stepId.replace('s', ''), 10) - 1;
   if (isNaN(stepIndex) || stepIndex < 0 || stepIndex >= browserSteps.length) return;
 
@@ -548,6 +573,7 @@ async function replayStep(stepId: string, tabId: number) {
   // The SyntheticsRecorderApp handles this
   try {
     // Notify O2 of replay attempt
+    console.log("Replay step");
     sendToO2({
       type: 'synthetics-recorder',
       recordingId: recordingId ?? '',
