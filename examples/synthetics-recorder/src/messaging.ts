@@ -6,6 +6,17 @@ import type { Mode, Source, ElementInfo } from '@recorder/recorderTypes';
 import type { ActionInContext } from '@recorder/actions';
 import type { BrowserStep, StructuredError } from 'playwright-crx';
 
+// Auth config for basic HTTP authentication during replay.
+export type ReplayAuth = {
+  type: 'basic';
+  username: string;
+  password: string;
+};
+
+export type ReplayHeader = { key: string; value: string };
+
+export type ReplayCookie = { name: string; value: string; domain: string };
+
 // ---- O2 → Extension commands (via externally_connectable) ----
 
 export type O2Command =
@@ -14,7 +25,7 @@ export type O2Command =
   | { action: 'setMode'; mode: Mode }
   | { action: 'getStatus' }
   | { action: 'ejectCode'; language?: string }
-  | { action: 'replay'; steps: BrowserStep[]; targetUrl?: string; testIdAttr?: string }
+  | { action: 'replay'; steps: BrowserStep[]; targetUrl?: string; testIdAttr?: string; auth?: ReplayAuth; headers?: ReplayHeader[]; cookies?: ReplayCookie[] }
   | { action: 'stopReplay' };
 
 // Response returned for a `replay` command. `passed` is the overall result; `stopped` is set when the

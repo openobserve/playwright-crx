@@ -13,7 +13,7 @@ import playwright, { crx, Crx, SyntheticsRecorderApp, mapBrowserStepsToActions }
 import type { Mode } from '@recorder/recorderTypes';
 import type { CrxApplication } from 'playwright-crx';
 import type { BrowserStep, SyntheticsForwardMessage, StepResultData, StepStartedData, StructuredError } from 'playwright-crx';
-import type { O2Command, O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage, ReplayResponse } from './messaging';
+import type { O2Command, O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage, ReplayResponse, ReplayAuth, ReplayHeader, ReplayCookie } from './messaging';
 
 // ---- State ----
 
@@ -144,7 +144,7 @@ function runO2Command(command: O2Command, respond: (response?: any) => void): bo
       return false;
 
     case 'replay':
-      handleReplay(command.steps, command.targetUrl, command.testIdAttr)
+      handleReplay(command.steps, command.targetUrl, command.testIdAttr, command.auth, command.headers, command.cookies)
         .then(result => respond(result))
         .catch(err => respond({ success: false, passed: false, error: err.message }));
       return true;
@@ -486,7 +486,7 @@ function firstNavigateUrl(steps: BrowserStep[]): string | undefined {
 // reuses the recording incognito window (or opens one), and runs them via the server CrxPlayer. The player
 // isn't reachable from the client, so we drive it through crxApp.recorder.runActions(actions) — the actions
 // are passed directly (no code/parse round-trip). Stops at the first failing step; reports overall pass/fail.
-async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr?: string): Promise<ReplayResponse> {
+async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr?: string, auth?: ReplayAuth, headers?: ReplayHeader[], cookies?: ReplayCookie[]): Promise<ReplayResponse> {
   if (isReplaying)
     return { success: false, passed: false, error: 'A replay is already in progress' };
 
@@ -504,11 +504,41 @@ async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr
 
   console.log("Actions ----", actions);
 
-  // Reuse the recording window (or open a fresh incognito one), navigated to the first URL.
-  const tabId = await prepareRecordingWindow(targetUrl || firstNavigateUrl(steps) || 'about:blank');
+  // When auth/cookies/headers are configured, open the tab to about:blank so the context options
+  // (extraHTTPHeaders / storageState) are in place before any navigation happens. The first replay
+  // step (usually 'navigate') will then carry the set headers and cookies.
+  const needsContextSetup = !!(auth || (headers && headers.length > 0) || (cookies && cookies.length > 0));
+  const initialUrl = needsContextSetup ? 'about:blank' : (targetUrl || firstNavigateUrl(steps) || 'about:blank');
+  const tabId = await prepareRecordingWindow(initialUrl);
+
+  // Build context options for auth/headers/cookies.
+  const contextOptions: Record<string, any> = {};
+  const extraHeaders: Record<string, string> = {};
+  if (auth?.type === 'basic' && auth.username) {
+    const encoded = btoa(`${auth.username}:${auth.password}`);
+    extraHeaders['Authorization'] = `Basic ${encoded}`;
+  }
+  if (headers) {
+    for (const h of headers) {
+      extraHeaders[h.key] = h.value;
+    }
+  }
+  if (Object.keys(extraHeaders).length > 0) {
+    contextOptions.extraHTTPHeaders = Object.entries(extraHeaders).map(([name, value]) => ({ name, value }));
+  }
+  if (cookies && cookies.length > 0) {
+    contextOptions.storageState = {
+      cookies: cookies.map(c => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain || new URL(initialUrl !== 'about:blank' ? initialUrl : 'http://localhost').hostname,
+        path: '/',
+      })),
+    };
+  }
 
   try {
-    crxApp = await crx.start({ incognito: true });
+    crxApp = await crx.start({ incognito: true, contextOptions });
     await crxApp.attach(tabId);
     isReplaying = true;
 
