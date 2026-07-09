@@ -22,7 +22,7 @@ import type { ActionInContext, Action } from '@recorder/actions';
 export type SelectorType = 'css' | 'xpath' | 'text' | 'role' | 'data-test';
 
 export type BrowserStepAction =
-  'navigate' | 'click' | 'type' | 'press' | 'select' |
+  'navigate' | 'openPage' | 'click' | 'type' | 'press' | 'select' |
   'setInputFiles' | 'waitFor' | 'assert' | 'screenshot';
 
 export interface BrowserStep {
@@ -243,6 +243,8 @@ export function mapActionsToBrowserSteps(
 function buildActionFromStep(step: BrowserStep): Action {
   const selector = step.selector ?? '';
   switch (step.action) {
+    case 'openPage':
+      return { name: 'openPage', url: step.url ?? '', signals: [] };
     case 'navigate':
       return { name: 'navigate', url: step.url ?? '', signals: [] };
     case 'click':
@@ -293,5 +295,14 @@ export function mapBrowserStepToAction(step: BrowserStep): ActionInContext {
 }
 
 export function mapBrowserStepsToActions(steps: BrowserStep[]): ActionInContext[] {
-  return steps.map(mapBrowserStepToAction);
+  return steps.map((step, i) => {
+    // Backward compat: the first 'navigate' step was originally an 'openPage' during
+    // recording, but mapActionToBrowserStep collapses openPage → 'navigate'.
+    // Restore it here so the Player creates a new page in its pageAliases before
+    // navigating, rather than failing with "Internal error: page not found".
+    if (i === 0 && step.action === 'navigate' && step.url) {
+      return mapBrowserStepToAction({ ...step, action: 'openPage' as BrowserStepAction });
+    }
+    return mapBrowserStepToAction(step);
+  });
 }
