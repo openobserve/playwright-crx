@@ -30,6 +30,10 @@ let isReplaying = false;
 let replayStopped = false;
 // The BrowserStep[] being replayed — used to map action indices back to step IDs for streaming.
 let replaySteps: BrowserStep[] = [];
+/** When the first replay step is a 'navigate' with a URL, mapBrowserStepsToActions
+ *  converts it to 'openPage', which CrxPlayer.run() skips entirely (no events).
+ *  This shifts all subsequent actionIndex values by +1 relative to replaySteps. */
+let replayActionOffset = 0;
 
 // Long-lived connection back to the O2 web app running in a browser tab.
 // The O2 app opens this via chrome.runtime.connect(extensionId, { name: 'synthetics-recorder' }).
@@ -254,7 +258,8 @@ function handleRecorderMessage(msg: SyntheticsForwardMessage) {
     case 'stepReplayStarted': {
       const started = msg.stepStarted;
       if (!started) break;
-      const step = replaySteps[started.actionIndex];
+      const stepIndex = started.actionIndex + replayActionOffset;
+      const step = replaySteps[stepIndex];
       const stepId = step?.id ?? `s${started.actionIndex + 1}`;
       const stepName = step?.name;
       sendToO2({
@@ -272,7 +277,8 @@ function handleRecorderMessage(msg: SyntheticsForwardMessage) {
       const result = msg.stepResult;
       console.log("stepReplayResult", !!result)
       if (!result) break;
-      const step = replaySteps[result.actionIndex];
+      const stepIndex = result.actionIndex + replayActionOffset;
+      const step = replaySteps[stepIndex];
       const stepId = step?.id ?? `s${result.actionIndex + 1}`;
       const stepName = step?.name;
       console.log("stepReplayResult", stepId, result)
@@ -500,6 +506,9 @@ async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr
 
   replayStopped = false;
   replaySteps = steps;
+  // When the first step is a navigate with URL, mapBrowserStepsToActions converts
+  // it to openPage, which the player skips — offset action indices by +1.
+  replayActionOffset = (steps.length > 0 && steps[0].action === 'navigate' && !!steps[0].url) ? 1 : 0;
   const actions = mapBrowserStepsToActions(steps);
 
   console.log("Actions ----", actions);
@@ -567,6 +576,7 @@ async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr
     };
   } finally {
     isReplaying = false;
+    replayActionOffset = 0;
     await crxApp?.close().catch(() => {});
     crxApp = undefined;
   }
