@@ -118,7 +118,6 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
 
   async open(options?: channels.CrxApplicationShowRecorderParams) {
     const mode = options?.mode ?? 'recording';
-    const language = options?.language ?? 'playwright-test';
 
     if (this._window)
       await this._window.close();
@@ -131,8 +130,10 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
     this._window.onMessage = this._onMessage.bind(this);
     this._window.hideApp = this._hide.bind(this);
 
-    // Initialize recorder state
-    this._recorder.setOutput(language, undefined);
+    // Initialize recorder state — setOutput is intentionally skipped:
+    // the synthetics recorder is headless (no code editor), so calling
+    // setOutput would restart() the action collection and destroy the
+    // initial openPage step that install() just generated.
     this._recorder.setMode(mode);
 
     this.emit('show');
