@@ -366,9 +366,9 @@ async function prepareRecordingWindow(targetUrl: string): Promise<number> {
   const screenH = focusedWin?.height ?? 900;
   const screenL = focusedWin?.left ?? 0;
   const screenT = focusedWin?.top ?? 0;
-  const winWidth = Math.round(screenW * 0.8);
-  const winHeight = Math.round(screenH * 0.8);
-  const winLeft = screenL + Math.round((screenW - winWidth) / 2);
+  const winWidth = Math.round(screenW * 0.9);
+  const winHeight = Math.round(screenH * 0.9);
+  const winLeft = screenL + screenW - winWidth;
   const winTop = screenT + Math.round((screenH - winHeight) / 2);
 
   if (reuseWin?.id) {
