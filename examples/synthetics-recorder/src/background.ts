@@ -360,10 +360,21 @@ async function prepareRecordingWindow(targetUrl: string): Promise<number> {
       .map(w => chrome.windows.remove(w.id!).catch(() => {})),
   );
 
+  // Window dimensions: 80% of the last focused window, centered over it.
+  const focusedWin = await chrome.windows.getLastFocused();
+  const screenW = focusedWin?.width ?? 1440;
+  const screenH = focusedWin?.height ?? 900;
+  const screenL = focusedWin?.left ?? 0;
+  const screenT = focusedWin?.top ?? 0;
+  const winWidth = Math.round(screenW * 0.8);
+  const winHeight = Math.round(screenH * 0.8);
+  const winLeft = screenL + Math.round((screenW - winWidth) / 2);
+  const winTop = screenT + Math.round((screenH - winHeight) / 2);
+
   if (reuseWin?.id) {
     const reuseTab = reuseWin.tabs?.find(t => t.active) ?? reuseWin.tabs?.[0];
     if (reuseTab?.id) {
-      await chrome.windows.update(reuseWin.id, { focused: true });
+      await chrome.windows.update(reuseWin.id, { focused: true, width: winWidth, height: winHeight, left: winLeft, top: winTop });
       await chrome.tabs.update(reuseTab.id, { url: targetUrl || 'about:blank', active: true });
       await setOwnedWindowIds([reuseWin.id]);
       return reuseTab.id;
@@ -376,6 +387,10 @@ async function prepareRecordingWindow(targetUrl: string): Promise<number> {
     incognito: true,
     focused: true,
     url: targetUrl || 'about:blank',
+    width: winWidth,
+    height: winHeight,
+    left: winLeft,
+    top: winTop,
   });
   const tab = win?.tabs?.[0];
   if (!win?.id || !tab?.id) throw new Error('Failed to create incognito recording window');
