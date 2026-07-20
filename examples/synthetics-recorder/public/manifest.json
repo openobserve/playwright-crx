@@ -27,9 +27,7 @@
   "externally_connectable": {
     "matches": [
       "https://*.openobserve.ai/*",
-      "https://*.internal.zinclabs.dev/*",
-      "http://localhost:8081/*",
-      "http://localhost:5080/*"
+      "https://*.internal.zinclabs.dev/*"
     ]
   },
   "content_scripts": [
