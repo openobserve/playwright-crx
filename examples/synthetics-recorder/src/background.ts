@@ -81,6 +81,14 @@ function init() {
 
   // Auto-stop when recording tab is closed
   chrome.tabs.onRemoved.addListener(handleTabRemoved);
+
+  // Toolbar icon click: redirect to OpenObserve if not already there
+  chrome.action.onClicked.addListener(async (tab) => {
+    const url = tab?.url ?? '';
+    if (!url.includes('openobserve.ai')) {
+      await chrome.tabs.create({ url: 'https://cloud.openobserve.ai' });
+    }
+  });
 }
 
 // ---- O2 web app connection (externally_connectable Port) ----
