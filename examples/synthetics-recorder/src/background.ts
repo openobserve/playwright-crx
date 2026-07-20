@@ -94,7 +94,6 @@ function init() {
 // ---- O2 web app connection (externally_connectable Port) ----
 
 function handleO2Connect(port: chrome.runtime.Port) {
-  console.log(port);
   if (port.name !== O2_PORT_NAME) return;
 
   // Only one O2 app drives the recorder at a time; the latest connection wins.
@@ -102,13 +101,11 @@ function handleO2Connect(port: chrome.runtime.Port) {
 
   // Commands may also arrive over the port (so the app can use a single channel).
   port.onMessage.addListener((message: O2ToExtensionMessage) => {
-    console.log("O2 message ---", message);
     if (message?.type === 'synthetics-command')
       runO2Command(message.command, response => port.postMessage({ type: 'synthetics-response', response }));
   });
 
   port.onDisconnect.addListener(() => {
-    console.log("disconnect port --------------", o2Port);
     if (o2Port === port) o2Port = undefined;
   });
 }
@@ -127,7 +124,6 @@ function handleO2Message(
 // Runs a single O2 command, replying via `respond`. Returns true when the
 // response is sent asynchronously (required by chrome.runtime.onMessage*).
 function runO2Command(command: O2Command, respond: (response?: any) => void): boolean {
-  console.log("O2 command ---", command);
   switch (command.action) {
     case 'startRecording':
       startRecording(command.mode ?? 'recording', command.testIdAttr, command.targetUrl)
@@ -201,7 +197,6 @@ function handleInternalMessage(
 // ---- Recorder → background messages (from SyntheticsRecorderApp) ----
 
 function handleRecorderMessage(msg: SyntheticsForwardMessage) {
-  console.log("handleRecorderMessage ---", msg);
   switch (msg.method) {
     case 'setActions': {
       if (msg.browserSteps) {
@@ -283,13 +278,11 @@ function handleRecorderMessage(msg: SyntheticsForwardMessage) {
     }
     case 'stepReplayResult': {
       const result = msg.stepResult;
-      console.log("stepReplayResult", !!result)
       if (!result) break;
       const stepIndex = result.actionIndex + replayActionOffset;
       const step = replaySteps[stepIndex];
       const stepId = step?.id ?? `s${result.actionIndex + 1}`;
       const stepName = step?.name;
-      console.log("stepReplayResult", stepId, result)
       sendToO2({
         type: 'synthetics-recorder',
         recordingId: recordingId ?? `replay_${Date.now()}`,
@@ -534,8 +527,6 @@ async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr
   replayActionOffset = (steps.length > 0 && steps[0].action === 'navigate' && !!steps[0].url) ? 1 : 0;
   const actions = mapBrowserStepsToActions(steps);
 
-  console.log("Actions ----", actions);
-
   // When auth/cookies/headers are configured, open the tab to about:blank so the context options
   // (extraHTTPHeaders / storageState) are in place before any navigation happens. The first replay
   // step (usually 'navigate') will then carry the set headers and cookies.
@@ -628,15 +619,12 @@ async function replayAll() {
 
 async function replayStep(stepId: string, tabId: number) {
   // Single-step replay: find the action by step index
-      console.log("Replay step");
   const stepIndex = parseInt(stepId.replace('s', ''), 10) - 1;
   if (isNaN(stepIndex) || stepIndex < 0 || stepIndex >= browserSteps.length) return;
 
   // For now, replay all steps up to and including the target
   // The SyntheticsRecorderApp handles this
   try {
-    // Notify O2 of replay attempt
-    console.log("Replay step");
     sendToO2({
       type: 'synthetics-recorder',
       recordingId: recordingId ?? '',
@@ -669,15 +657,12 @@ async function sendToOverlay(tabId: number, payload: OverlayMessage['payload']) 
 // Pushes an event to the O2 web app over the live Port. If no app is connected,
 // the event is dropped.
 function sendToO2(message: ExtensionToO2Message) {
-  console.log("Send to o2 ---", message);
-  console.log("O2 Port ----", o2Port);
   if (!o2Port) return;
 
   try {
     o2Port.postMessage(message);
   } catch (err) {
     // Port may have disconnected between the check and the post.
-    console.error('[SyntheticsRecorder] Failed to send to O2 app:', err);
     o2Port = undefined;
   }
 }
