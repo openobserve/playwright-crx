@@ -85,8 +85,8 @@ function init() {
   // Toolbar icon click: redirect to OpenObserve if not already there
   chrome.action.onClicked.addListener(async (tab) => {
     const url = tab?.url ?? '';
-    if (!url.includes('openobserve.ai')) {
-      await chrome.tabs.create({ url: 'https://cloud.openobserve.ai' });
+    if (!/^https:\/\/[a-zA-Z0-9.-]*openobserve\.ai/.test(url)) {
+      await chrome.tabs.create({ url: 'https://cloud.openobserve.ai/web/synthetics' });
     }
   });
 }
