@@ -86,7 +86,7 @@ function init() {
   chrome.action.onClicked.addListener(async (tab) => {
     const url = tab?.url ?? '';
     if (!url.includes('openobserve.ai')) {
-      await chrome.tabs.create({ url: 'https://cloud.openobserve.ai/web/synthetics' });
+      await chrome.tabs.create({ url: 'https://cloud.openobserve.ai' });
     }
   });
 }
