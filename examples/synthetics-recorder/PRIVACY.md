@@ -31,10 +31,7 @@ The Extension records the following data **only while the user has explicitly st
 Recorded interaction data is transmitted **exclusively** via the Chrome Extension local messaging API (`chrome.runtime.connect`) to the OpenObserve web application:
 
 - Data is sent only to the OpenObserve web app running in the user's browser
-- The connection is restricted to the following origins:
-  - `https://*.openobserve.ai/*` (production)
-  - `https://*.internal.zinclabs.dev/*` (internal)
-  - `http://localhost:8081/*` and `http://localhost:5080/*` (local development)
+- The connection is restricted to `https://*.openobserve.ai/*`
 - No data is sent to third-party servers, analytics services, or advertising networks
 
 ### How Data Is Stored
