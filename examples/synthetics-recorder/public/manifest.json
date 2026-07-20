@@ -26,9 +26,7 @@
   ],
   "externally_connectable": {
     "matches": [
-      "https://*.openobserve.ai/*",
-      "https://*.internal.zinclabs.dev/*",
-      "https://dev.o2aks1.internal.zinclabs.dev/*"
+      "https://*.openobserve.ai/*"
     ]
   },
   "content_scripts": [
