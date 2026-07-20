@@ -300,9 +300,8 @@ export function mapBrowserStepsToActions(steps: BrowserStep[]): ActionInContext[
     // recording, but mapActionToBrowserStep collapses openPage → 'navigate'.
     // Restore it here so the Player creates a new page in its pageAliases before
     // navigating, rather than failing with "Internal error: page not found".
-    if (i === 0 && step.action === 'navigate' && step.url) {
+    if (i === 0 && step.action === 'navigate' && step.url)
       return mapBrowserStepToAction({ ...step, action: 'openPage' as BrowserStepAction });
-    }
     return mapBrowserStepToAction(step);
   });
 }
