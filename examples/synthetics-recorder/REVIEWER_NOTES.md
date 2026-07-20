@@ -44,8 +44,9 @@ recording state pushed from the background service worker.
 
 ### externally_connectable
 Only https://*.openobserve.ai/* — the production OpenObserve platform. The
-extension has no standalone UI and must be driven by the O2 web app via
-chrome.runtime.connect.
+extension is driven entirely by the OpenObserve web app via chrome.runtime.connect.
+Clicking the toolbar icon has no popup; the extension opens incognito
+windows programmatically in response to commands from the OpenObserve web app.
 
 ## Code Review Notes
 
@@ -80,10 +81,12 @@ take only hardcoded strings or local function references.
 
 ## Testing
 
-The extension requires the OpenObserve web app to function — there is no
-standalone UI or popup. A recording session is started from the O2 web app,
-which connects via chrome.runtime.connect(name: "synthetics-recorder").
+The extension is driven entirely by the OpenObserve web app — clicking the
+toolbar icon does nothing (no popup, no options page). The OpenObserve web app sends
+commands via chrome.runtime.sendMessage/connect, and the extension responds
+by opening incognito windows, injecting a recording overlay, and streaming
+recording/replay events back.
 
 To verify the extension loads correctly: install it and check that the
-service worker activates without errors in chrome://extensions. No further
-interaction is possible without the O2 web app.
+service worker activates without errors in chrome://extensions. The
+extension cannot be used independently without the OpenObserve web app.
