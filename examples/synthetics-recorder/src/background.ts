@@ -480,10 +480,9 @@ async function prepareRecordingWindow(targetUrl: string): Promise<number> {
 
   // No reusable window — open a fresh incognito window. crx.start({ incognito: true }) reuses the
   // active incognito tab (see _startIncognitoCrxApplication in crx.ts), keeping it to one window.
-  // First try incognito (production), fall back to regular window (dev/testing).
   let win: chrome.windows.Window | undefined;
   const windowOpts = {
-    focused: false,
+    focused: true,
     url: targetUrl || 'about:blank',
     width: winWidth,
     height: winHeight,
@@ -494,11 +493,11 @@ async function prepareRecordingWindow(targetUrl: string): Promise<number> {
   console.debug('[synthetics-recorder:sw] creating incognito window, url=' + (targetUrl || 'about:blank'));
   win = await chrome.windows.create({ ...windowOpts, incognito: true }).catch(() => undefined);
 
-  // Fallback: non-incognito window (Chromium or restricted environments)
-  if (!win?.id) {
-    console.warn('[synthetics-recorder:sw] incognito window failed (no window id) — falling back to non-incognito');
-    win = await chrome.windows.create({ ...windowOpts, incognito: false });
-  }
+  // If incognito creation failed, throw — a non-incognito window would cause
+  // crxApp.attach() to fail with "Tab is not in the expected browser context"
+  // because crx.start({ incognito: true }) expects an incognito tab.
+  if (!win?.id)
+    throw new Error('Failed to create incognito recording window');
 
 
   // Poll for the tab if it's not immediately available (Chromium quirk: tabs may
@@ -625,13 +624,12 @@ async function setMode(mode: Mode) {
 
 // ---- Tab lifecycle ----
 
-function handleTabRemoved(tabId: number) {
+async function handleTabRemoved(tabId: number) {
   if (tabId === recordingTabId && isRecording) {
     stopRecording().catch(console.error);
   }
   // O2 web app tab closed — tear down the bridge port
   if (tabId === o2TabId) {
-    console.log("O2 port ---- tab removed undefined");
     o2Port = undefined;
     o2TabId = undefined;
     o2Origin = undefined;
