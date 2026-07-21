@@ -302,28 +302,21 @@ function initBridge(): void {
   // Open the internal Port to the service worker. The SW's onConnect
   // listener (replaces onConnectExternal) receives this.
   function openPort(): boolean {
+    if (!chrome?.runtime?.connect) {
+      return false;
+    }
     try {
       port = chrome.runtime.connect({ name: 'synthetics-recorder' });
       port.onMessage.addListener(handlePortMessage);
       port.onDisconnect.addListener(() => {
-        console.debug('[synthetics-recorder:bridge] port.onDisconnect fired — reconnecting in 500ms');
         port = null;
-        // Auto-reconnect after a short delay. The port may have been closed
-        // because the OO page was backgrounded (bfcache) when incognito
-        // recording window stole focus. Reconnecting lets in-flight
-        // command responses reach the page.
-        setTimeout(() => {
-          if (!port) {
-            openPort();
-          }
-        }, 500);
         window.postMessage(
           { ch: BRIDGE_CHANNEL, dir: 'to-page', nonce: '', msg: { type: 'bridge-disconnected' } },
           '*',
         );
       });
       return true;
-    } catch {
+    } catch (e) {
       port = null;
       return false;
     }
@@ -387,7 +380,6 @@ function initBridge(): void {
 
     // Lazy-connect on first command
     if (!port && !openPort()) {
-      console.error('[synthetics-recorder:bridge] port not open and openPort failed — sending null response');
       // Extension not available — reply with null so the caller's timeout resolves
       window.postMessage(
         { ch: BRIDGE_CHANNEL, dir: 'to-page', nonce: event.data.nonce, msg: null },

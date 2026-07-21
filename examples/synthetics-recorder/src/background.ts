@@ -106,7 +106,7 @@ function handleO2Connect(port: chrome.runtime.Port) {
   // Only one O2 app drives the recorder at a time; the latest connection wins.
   // If there are pending responses from a previous disconnected port,
   // re-deliver them on the new port.
-  if (o2Port && pendingBridgeResponses.length > 0) {
+  if (pendingBridgeResponses.length > 0) {
     for (const pending of pendingBridgeResponses) {
       port.postMessage(pending);
     }
@@ -144,6 +144,7 @@ function handleO2Connect(port: chrome.runtime.Port) {
 // ---- Bridge port message handler ----
 
 function handleBridgePortMessage(message: any): void {
+  console.debug("Port message ---", message);
   // Trust actions from the content script (consent dialog)
   if (message?.type === 'synthetics-trust-grant' || message?.type === 'synthetics-trust-deny') {
     const trustMsg = message as BridgeTrustAction;
@@ -215,7 +216,14 @@ function handleBridgePortMessage(message: any): void {
 // Runs a single O2 command, replying via `respond`. Returns true when the
 // response is sent asynchronously (required by chrome.runtime.onMessage*).
 function runO2Command(command: O2Command, respond: (response?: any) => void): boolean {
+  console.debug("O2- command", command);
   switch (command.action) {
+    case 'replay':
+      console.log('[sw] runO2Command REPLAY — steps:', command.steps?.length, 'targetUrl:', command.targetUrl);
+      handleReplay(command.steps, command.targetUrl, command.testIdAttr, command.auth, command.headers, command.cookies)
+        .then(result => { console.log('[sw] replay finished:', result); respond(result); })
+        .catch(err => { console.log('[sw] replay error:', err.message); respond({ success: false, passed: false, error: err.message }); });
+      return true;
     case 'startRecording':
       startRecording(command.mode ?? 'recording', command.testIdAttr, command.targetUrl)
         .then(() => respond({ success: true }))
@@ -244,12 +252,6 @@ function runO2Command(command: O2Command, respond: (response?: any) => void): bo
     case 'ejectCode':
       respond({ code: '' }); // TBD
       return false;
-
-    case 'replay':
-      handleReplay(command.steps, command.targetUrl, command.testIdAttr, command.auth, command.headers, command.cookies)
-        .then(result => respond(result))
-        .catch(err => respond({ success: false, passed: false, error: err.message }));
-      return true;
 
     case 'stopReplay':
       handleStopReplay()
@@ -481,7 +483,7 @@ async function prepareRecordingWindow(targetUrl: string): Promise<number> {
   // First try incognito (production), fall back to regular window (dev/testing).
   let win: chrome.windows.Window | undefined;
   const windowOpts = {
-    focused: true,
+    focused: false,
     url: targetUrl || 'about:blank',
     width: winWidth,
     height: winHeight,
@@ -699,7 +701,12 @@ async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr
   }
 
   try {
-    crxApp = await crx.start({ incognito: true, contextOptions });
+    try {
+      crxApp = await crx.start({ incognito: true, contextOptions });
+    } catch (e) {
+      console.warn('[synthetics-recorder:sw] handleReplay crx.start({incognito:true}) failed — falling back to non-incognito:', e);
+      crxApp = await crx.start({ incognito: false, contextOptions });
+    }
     await crxApp.attach(tabId);
     isReplaying = true;
 
