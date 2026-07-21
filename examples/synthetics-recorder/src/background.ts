@@ -13,7 +13,8 @@ import playwright, { crx, Crx, SyntheticsRecorderApp, mapBrowserStepsToActions }
 import type { Mode } from '@recorder/recorderTypes';
 import type { CrxApplication } from 'playwright-crx';
 import type { BrowserStep, SyntheticsForwardMessage, StepResultData, StepStartedData, StructuredError } from 'playwright-crx';
-import type { O2Command, O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage, ReplayResponse, ReplayAuth, ReplayHeader, ReplayCookie } from './messaging';
+import type { O2Command, O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage, ReplayResponse, ReplayAuth, ReplayHeader, ReplayCookie, BridgePortMessage, BridgeTrustAction } from './messaging';
+import { checkTrust, grantTrust, denyOriginThisSession } from './trust';
 
 // ---- State ----
 
@@ -38,6 +39,14 @@ let replayActionOffset = 0;
 // Long-lived connection back to the O2 web app running in a browser tab.
 // The O2 app opens this via chrome.runtime.connect(extensionId, { name: 'synthetics-recorder' }).
 let o2Port: chrome.runtime.Port | undefined;
+
+// Pending responses that couldn't be delivered because the port was disconnected.
+// Re-delivered when a new port connects (e.g., after bfcache restore).
+let pendingBridgeResponses: any[] = [];
+
+// Track the tab that owns the bridge connection (sender of the Port).
+let o2TabId: number | undefined;
+let o2Origin: string | undefined;
 
 // Name the O2 web app must use when opening the connection.
 const O2_PORT_NAME = 'synthetics-recorder';
@@ -70,11 +79,9 @@ function init() {
   // O2 sends per request; we don't impose 'class' or 'data-test'.
   playwright.selectors.setTestIdAttribute(DEFAULT_TEST_ID_ATTR);
 
-  // Long-lived connection from the O2 web app — used to stream events back to it.
-  chrome.runtime.onConnectExternal.addListener(handleO2Connect);
-
-  // One-shot commands from the O2 web app (request/response).
-  chrome.runtime.onMessageExternal.addListener(handleO2Message);
+  // Long-lived connection from the O2 web app (bridge content script).
+  // Internal connect replaces external — the content script owns the Port.
+  chrome.runtime.onConnect.addListener(handleO2Connect);
 
   // Listen for actions from content script overlay
   chrome.runtime.onMessage.addListener(handleInternalMessage);
@@ -91,34 +98,118 @@ function init() {
   });
 }
 
-// ---- O2 web app connection (externally_connectable Port) ----
+// ---- O2 web app connection (bridge content-script Port) ----
 
 function handleO2Connect(port: chrome.runtime.Port) {
   if (port.name !== O2_PORT_NAME) return;
 
   // Only one O2 app drives the recorder at a time; the latest connection wins.
+  // If there are pending responses from a previous disconnected port,
+  // re-deliver them on the new port.
+  if (o2Port && pendingBridgeResponses.length > 0) {
+    for (const pending of pendingBridgeResponses) {
+      port.postMessage(pending);
+    }
+    pendingBridgeResponses = [];
+  }
+
+  console.log("O2 port ---- o2 connect", port);
   o2Port = port;
 
-  // Commands may also arrive over the port (so the app can use a single channel).
-  port.onMessage.addListener((message: O2ToExtensionMessage) => {
-    if (message?.type === 'synthetics-command')
-      runO2Command(message.command, response => port.postMessage({ type: 'synthetics-response', response }));
-  });
+  // Track the sender's tab and origin for trust checks + cleanup
+  if (port.sender?.tab?.id) {
+    o2TabId = port.sender.tab.id;
+  }
+  if (port.sender?.url) {
+    try {
+      o2Origin = new URL(port.sender.url).origin;
+    } catch {
+      o2Origin = undefined;
+    }
+  }
+
+  // Commands arrive over the port from the bridge content script.
+  port.onMessage.addListener(handleBridgePortMessage);
 
   port.onDisconnect.addListener(() => {
-    if (o2Port === port) o2Port = undefined;
+    if (o2Port === port) {
+      console.log("O2 port ---- disconnect undefined");
+      o2Port = undefined;
+      o2TabId = undefined;
+      o2Origin = undefined;
+    }
   });
 }
 
-// ---- O2 → Extension commands (externally_connectable) ----
+// ---- Bridge port message handler ----
 
-function handleO2Message(
-  message: O2ToExtensionMessage,
-  _sender: chrome.runtime.MessageSender,
-  sendResponse: (response?: any) => void
-): boolean {
-  if (message.type !== 'synthetics-command') return false;
-  return runO2Command(message.command, sendResponse);
+function handleBridgePortMessage(message: any): void {
+  // Trust actions from the content script (consent dialog)
+  if (message?.type === 'synthetics-trust-grant' || message?.type === 'synthetics-trust-deny') {
+    const trustMsg = message as BridgeTrustAction;
+    if (trustMsg.type === 'synthetics-trust-grant') {
+      grantTrust(trustMsg.origin).then(() => {
+        o2Port?.postMessage({
+          type: 'synthetics-response',
+          response: { type: 'trust-granted', origin: trustMsg.origin, approved: true },
+          _bridgeNonce: trustMsg.nonce,
+        });
+      });
+    } else {
+      denyOriginThisSession(trustMsg.origin);
+      o2Port?.postMessage({
+        type: 'synthetics-response',
+        response: { type: 'trust-denied', origin: trustMsg.origin, approved: false },
+        _bridgeNonce: trustMsg.nonce,
+      });
+    }
+    return;
+  }
+
+  // Bridge command from content script
+  if (message?.type === 'synthetics-command') {
+    const bridgeMsg = message as BridgePortMessage;
+    if (!bridgeMsg.command) return;
+
+    const respond = (response: any) => {
+      const msg = {
+        type: 'synthetics-response',
+        response,
+        _bridgeNonce: bridgeMsg._bridgeNonce,
+      };
+      if (o2Port) {
+        o2Port.postMessage(msg);
+      } else {
+        pendingBridgeResponses.push(msg);
+      }
+    };
+
+    // Trust middleware — guards access when externally_connectable is removed
+    const origin = bridgeMsg._bridgeOrigin ?? o2Origin;
+
+    if (!origin) {
+      // No origin available — allow through (shouldn't happen; content script
+      // always has a URL, and sender.url is available to internal connects)
+      runO2Command(bridgeMsg.command, respond);
+      return;
+    }
+
+    checkTrust(origin).then(status => {
+      switch (status) {
+        case 'trusted':
+          runO2Command(bridgeMsg.command, respond);
+          break;
+        case 'denied-this-session':
+          // Silent drop — don't acknowledge denied commands
+          break;
+        case 'unknown':
+          respond({ type: 'trust-required', origin });
+          break;
+      }
+    });
+
+    return;
+  }
 }
 
 // Runs a single O2 command, replying via `respond`. Returns true when the
@@ -128,7 +219,10 @@ function runO2Command(command: O2Command, respond: (response?: any) => void): bo
     case 'startRecording':
       startRecording(command.mode ?? 'recording', command.testIdAttr, command.targetUrl)
         .then(() => respond({ success: true }))
-        .catch(err => respond({ success: false, error: err.message }));
+        .catch(err => {
+          console.debug("error", err);
+          respond({ success: false, error: err.message })
+        });
       return true;
 
     case 'stopRecording':
@@ -384,17 +478,49 @@ async function prepareRecordingWindow(targetUrl: string): Promise<number> {
 
   // No reusable window — open a fresh incognito window. crx.start({ incognito: true }) reuses the
   // active incognito tab (see _startIncognitoCrxApplication in crx.ts), keeping it to one window.
-  const win = await chrome.windows.create({
-    incognito: true,
+  // First try incognito (production), fall back to regular window (dev/testing).
+  let win: chrome.windows.Window | undefined;
+  const windowOpts = {
     focused: true,
     url: targetUrl || 'about:blank',
     width: winWidth,
     height: winHeight,
     left: winLeft,
     top: winTop,
-  });
-  const tab = win?.tabs?.[0];
-  if (!win?.id || !tab?.id) throw new Error('Failed to create incognito recording window');
+  };
+
+  console.debug('[synthetics-recorder:sw] creating incognito window, url=' + (targetUrl || 'about:blank'));
+  win = await chrome.windows.create({ ...windowOpts, incognito: true }).catch(() => undefined);
+
+  // Fallback: non-incognito window (Chromium or restricted environments)
+  if (!win?.id) {
+    console.warn('[synthetics-recorder:sw] incognito window failed (no window id) — falling back to non-incognito');
+    win = await chrome.windows.create({ ...windowOpts, incognito: false });
+  }
+
+
+  // Poll for the tab if it's not immediately available (Chromium quirk: tabs may
+  // populate asynchronously after window.create resolves).
+  let tab = win?.tabs?.[0];
+  for (let attempt = 0; (!tab?.id) && (win?.id) && attempt < 20; attempt++) {
+
+    await new Promise(r => setTimeout(r, 250));
+    const w = await chrome.windows.get(win.id!, { populate: true }).catch(() => null);
+    tab = w?.tabs?.[0];
+  }
+
+  if (!win?.id) {
+    console.error('[synthetics-recorder:sw] window create failed — no window id');
+    throw new Error('Failed to create incognito recording window: no window id returned');
+  }
+  if (!tab?.id) {
+    console.error('[synthetics-recorder:sw] window created but no tab — win.id=' + win.id + ', tabs=' + JSON.stringify(win.tabs));
+    // Last resort: try chrome.tabs.query
+    const tabs = await chrome.tabs.query({ windowId: win.id });
+    tab = tabs?.[0] ?? tab;
+
+  }
+  if (!tab?.id) throw new Error('Failed to create incognito recording window: no tab in window ' + win.id);
 
   await setOwnedWindowIds([win.id]);
   return tab.id;
@@ -411,7 +537,12 @@ async function startRecording(mode: Mode = 'recording', testIdAttr?: string, tar
   currentMode = mode;
 
   // Start CRX in incognito — finds & reuses the incognito tab prepared above.
-  crxApp = await crx.start({ incognito: true });
+  try {
+    crxApp = await crx.start({ incognito: true });
+  } catch (e) {
+    console.warn('[synthetics-recorder:sw] crx.start({incognito:true}) failed — falling back to non-incognito:', e);
+    crxApp = await crx.start({ incognito: false });
+  }
 
   // Show recorder (creates SyntheticsRecorderApp via factory override)
   await crxApp.recorder.show({
@@ -495,6 +626,13 @@ async function setMode(mode: Mode) {
 function handleTabRemoved(tabId: number) {
   if (tabId === recordingTabId && isRecording) {
     stopRecording().catch(console.error);
+  }
+  // O2 web app tab closed — tear down the bridge port
+  if (tabId === o2TabId) {
+    console.log("O2 port ---- tab removed undefined");
+    o2Port = undefined;
+    o2TabId = undefined;
+    o2Origin = undefined;
   }
 }
 
@@ -657,12 +795,19 @@ async function sendToOverlay(tabId: number, payload: OverlayMessage['payload']) 
 // Pushes an event to the O2 web app over the live Port. If no app is connected,
 // the event is dropped.
 function sendToO2(message: ExtensionToO2Message) {
-  if (!o2Port) return;
+  console.log("Send to  O2 ---", o2Port);
+  if (!o2Port) {
+    pendingBridgeResponses.push(message);
+    return;
+  }
 
   try {
     o2Port.postMessage(message);
   } catch (err) {
     // Port may have disconnected between the check and the post.
+    // Buffer for re-delivery.
+    pendingBridgeResponses.push(message);
+    console.log("O2 port ---- undefined");
     o2Port = undefined;
   }
 }

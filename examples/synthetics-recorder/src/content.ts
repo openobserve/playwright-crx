@@ -4,7 +4,35 @@
 
 import type { Mode } from '@recorder/recorderTypes';
 import type { OverlayMessage, OverlayToBackgroundMessage } from './messaging';
+import { BRIDGE_CHANNEL } from './messaging';
 
+// ---- Context discriminator ----
+//
+// Default: overlay mode (recording target pages). Bridge mode activates
+// only when the OO web app sends 'oo-bridge-probe' (e.g. when the user
+// clicks "Record journey" or "Check again"). This avoids the recording
+// tab's content script from accidentally opening a bridge port and
+// stealing the single o2Port in the service worker.
+
+let __bridgeActivated = false;
+
+// Listen for the web app's probe. When received, switch to bridge mode.
+window.addEventListener('message', (event) => {
+  if (event.source === window && event.data?.ch === 'oo-bridge-probe') {
+    if (!__bridgeActivated) {
+      __bridgeActivated = true;
+      initBridge();
+    }
+  }
+});
+
+// Default: overlay mode. Runs immediately — no timer, no polling.
+// The web app sends the probe on demand when it needs the bridge.
+initOverlay();
+
+// ---- Overlay mode (recorded page) -------------------------------------------
+
+function initOverlay(): void {
 const OVERLAY_ID = '__synthetics_recorder_overlay';
 
 let overlayEl: HTMLDivElement | null = null;
@@ -257,4 +285,244 @@ function getOverlayHTML(): string {
     </div>
     <div id="__synth_step_list" class="__synth_body"></div>
   `;
+}
+
+// ---- End overlay mode block ----
+
+
+}
+
+// ── Bridge mode (OO web app page) ────────────────────────────────────────────
+
+function initBridge(): void {
+  (window as any).__ooBridgeActive = true;
+  let port: chrome.runtime.Port | null = null;
+  let pageOrigin = '*'; // set on first message from the page
+
+  // Open the internal Port to the service worker. The SW's onConnect
+  // listener (replaces onConnectExternal) receives this.
+  function openPort(): boolean {
+    try {
+      port = chrome.runtime.connect({ name: 'synthetics-recorder' });
+      port.onMessage.addListener(handlePortMessage);
+      port.onDisconnect.addListener(() => {
+        console.debug('[synthetics-recorder:bridge] port.onDisconnect fired — reconnecting in 500ms');
+        port = null;
+        // Auto-reconnect after a short delay. The port may have been closed
+        // because the OO page was backgrounded (bfcache) when incognito
+        // recording window stole focus. Reconnecting lets in-flight
+        // command responses reach the page.
+        setTimeout(() => {
+          if (!port) {
+            openPort();
+          }
+        }, 500);
+        window.postMessage(
+          { ch: BRIDGE_CHANNEL, dir: 'to-page', nonce: '', msg: { type: 'bridge-disconnected' } },
+          '*',
+        );
+      });
+      return true;
+    } catch {
+      port = null;
+      return false;
+    }
+  }
+
+  // Port → Page: forward SW responses and data pushes to the OO web app
+  function handlePortMessage(msg: any): void {
+    // Trust prompt — inject dialog rather than forwarding to page
+    if (msg?.type === 'synthetics-response' && msg.response?.type === 'trust-required') {
+      showTrustPrompt(msg.response.origin, msg._bridgeNonce ?? '');
+      return;
+    }
+
+    // Trust granted/denied ack from SW — forward to page so BridgeTransport can retry
+    if (
+      msg?.type === 'synthetics-response' &&
+      (msg.response?.type === 'trust-granted' || msg.response?.type === 'trust-denied')
+    ) {
+      window.postMessage(
+        {
+          ch: BRIDGE_CHANNEL,
+          dir: 'to-page',
+          nonce: msg._bridgeNonce ?? '',
+          msg: msg.response,
+        },
+        pageOrigin,
+      );
+      return;
+    }
+
+    // Command acks (synthetics-response): forward with the command's nonce
+    if (msg?.type === 'synthetics-response') {
+      window.postMessage(
+        {
+          ch: BRIDGE_CHANNEL,
+          dir: 'to-page',
+          nonce: msg._bridgeNonce ?? '',
+          msg: msg.response,
+        },
+        pageOrigin,
+      );
+      return;
+    }
+
+    // Data pushes (synthetics-recorder, etc.) — forward as-is
+    window.postMessage(
+      { ch: BRIDGE_CHANNEL, dir: 'to-page', nonce: '', msg },
+      pageOrigin,
+    );
+  }
+
+  // Page → Port: forward OO web app commands to the SW
+  window.addEventListener('message', (event: MessageEvent) => {
+    // Guard: only accept messages from our own window (not iframes)
+    if (event.source !== window) return;
+    if (event.data?.ch !== BRIDGE_CHANNEL) return;
+    if (event.data?.dir !== 'to-ext') return;
+
+
+    pageOrigin = event.origin;
+
+    // Lazy-connect on first command
+    if (!port && !openPort()) {
+      console.error('[synthetics-recorder:bridge] port not open and openPort failed — sending null response');
+      // Extension not available — reply with null so the caller's timeout resolves
+      window.postMessage(
+        { ch: BRIDGE_CHANNEL, dir: 'to-page', nonce: event.data.nonce, msg: null },
+        pageOrigin,
+      );
+      return;
+    }
+
+    // Forward the command envelope to the SW, attaching the nonce for correlation
+    port!.postMessage({
+      type: 'synthetics-command',
+      command: event.data.msg?.command,
+      _bridgeNonce: event.data.nonce,
+    });
+  });
+
+  // Warm the port so getStatus / early commands don't pay lazy-connect latency
+  const portWarmResult = openPort();
+
+  // ── Trust prompt UI ──
+
+  function showTrustPrompt(origin: string, nonce: string): void {
+    removeTrustPrompt();
+
+    const dialog = document.createElement('div');
+    dialog.id = '__oo_trust_dialog';
+    dialog.innerHTML = getTrustPromptHTML(origin);
+    document.body.appendChild(dialog);
+
+    const allowBtn = dialog.querySelector('#oo-trust-allow') as HTMLButtonElement | null;
+    const denyBtn = dialog.querySelector('#oo-trust-deny') as HTMLButtonElement | null;
+
+    allowBtn?.addEventListener('click', () => {
+      removeTrustPrompt();
+      // Send grant to SW (SW persists it and responds with trust-granted over the Port)
+      port?.postMessage({ type: 'synthetics-trust-grant', origin, nonce });
+    });
+
+    denyBtn?.addEventListener('click', () => {
+      removeTrustPrompt();
+      port?.postMessage({ type: 'synthetics-trust-deny', origin, nonce });
+    });
+  }
+
+  function removeTrustPrompt(): void {
+    document.getElementById('__oo_trust_dialog')?.remove();
+  }
+}
+
+function getTrustPromptHTML(origin: string): string {
+  return `
+    <style>
+      #__oo_trust_dialog {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0,0,0,0.5);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+      #__oo_trust_dialog .__oo_trust_card {
+        background: #1e1e2e;
+        color: #cdd6f4;
+        border-radius: 12px;
+        padding: 24px;
+        max-width: 400px;
+        width: 90%;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+        border: 1px solid #45475a;
+      }
+      #__oo_trust_dialog .__oo_trust_card h3 {
+        margin: 0 0 8px 0;
+        font-size: 16px;
+        color: #fff;
+      }
+      #__oo_trust_dialog .__oo_trust_card p {
+        margin: 0 0 16px 0;
+        font-size: 13px;
+        color: #a6adc8;
+        line-height: 1.5;
+      }
+      #__oo_trust_dialog .__oo_trust_card code {
+        background: #313244;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 12px;
+        color: #f38ba8;
+        word-break: break-all;
+      }
+      #__oo_trust_dialog .__oo_trust_actions {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+      #__oo_trust_dialog .__oo_trust_btn {
+        border: none;
+        border-radius: 6px;
+        padding: 8px 16px;
+        cursor: pointer;
+        font-size: 13px;
+        font-family: inherit;
+      }
+      #__oo_trust_dialog .__oo_trust_btn_deny {
+        background: #45475a;
+        color: #cdd6f4;
+      }
+      #__oo_trust_dialog .__oo_trust_btn_deny:hover {
+        background: #585b70;
+      }
+      #__oo_trust_dialog .__oo_trust_btn_allow {
+        background: #2ecc71;
+        color: #fff;
+      }
+      #__oo_trust_dialog .__oo_trust_btn_allow:hover {
+        background: #27ae60;
+      }
+    </style>
+    <div class="__oo_trust_card">
+      <h3>🔒 OpenObserve Recorder</h3>
+      <p>
+        Allow <code>${escapeTrustHtml(origin)}</code> to control the synthetics recorder?
+        This lets this OpenObserve instance start and stop recordings in your browser.
+      </p>
+      <div class="__oo_trust_actions">
+        <button id="oo-trust-deny" class="__oo_trust_btn __oo_trust_btn_deny">Deny</button>
+        <button id="oo-trust-allow" class="__oo_trust_btn __oo_trust_btn_allow">Allow</button>
+      </div>
+    </div>
+  `;
+}
+
+function escapeTrustHtml(str: string): string {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
 }
