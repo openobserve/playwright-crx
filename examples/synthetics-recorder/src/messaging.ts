@@ -86,3 +86,38 @@ export type OverlayToBackgroundMessage = {
   action: 'stop' | 'play' | 'playStep';
   stepId?: string;
 };
+
+// ---- Bridge message envelope (postMessage between OO web app ↔ content script) ----
+
+export const BRIDGE_CHANNEL = 'oo-bridge';
+
+export type BridgeDirection = 'to-ext' | 'to-page';
+
+export interface BridgeEnvelope<T = unknown> {
+  ch: 'oo-bridge';
+  dir: BridgeDirection;
+  nonce: string;
+  msg: T;
+}
+
+// ---- Trust message types ----
+
+export type TrustResponseMessage =
+  | { type: 'trust-required'; origin: string; nonce: string }
+  | { type: 'trust-granted'; origin: string; nonce: string }
+  | { type: 'trust-denied'; origin: string; nonce: string }
+  | { type: 'bridge-disconnected' };
+
+// Internal port messages: trust grant/deny from content script → SW
+export type BridgeTrustAction =
+  | { type: 'synthetics-trust-grant'; origin: string; nonce: string }
+  | { type: 'synthetics-trust-deny'; origin: string; nonce: string };
+
+// ---- Bridge-port command (used over SW internal Port) ----
+
+export interface BridgePortMessage {
+  type: 'synthetics-command';
+  command: O2Command;
+  _bridgeNonce?: string;
+  _bridgeOrigin?: string;
+}

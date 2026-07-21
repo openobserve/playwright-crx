@@ -20,6 +20,7 @@ export default defineConfig({
       input: {
         background: path.resolve(__dirname, 'src/background.ts'),
         content: path.resolve(__dirname, 'src/content.ts'),
+        options: path.resolve(__dirname, 'src/options.ts'),
       },
       output: {
         entryFileNames: '[name].js',

@@ -16,6 +16,7 @@
   "action": {
     "default_title": "Synthetics Recorder"
   },
+  "options_page": "options.html",
   "permissions": [
     "debugger",
     "tabs",
@@ -24,11 +25,6 @@
   "host_permissions": [
     "<all_urls>"
   ],
-  "externally_connectable": {
-    "matches": [
-      "https://*.openobserve.ai/*"
-    ]
-  },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
