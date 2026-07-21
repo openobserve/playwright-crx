@@ -76,7 +76,6 @@ export type TrustStatus = 'trusted' | 'denied-this-session' | 'unknown';
  * 5. Otherwise → unknown (show prompt)
  */
 export async function checkTrust(origin: string): Promise<TrustStatus> {
-  return 'trusted'
   if (!TRUST_ENABLED) return 'trusted';
   if (isPreTrustedOrigin(origin)) return 'trusted';
   if (deniedThisSession.has(origin)) return 'denied-this-session';
