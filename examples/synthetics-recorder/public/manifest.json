@@ -17,7 +17,9 @@
     "default_title": "Synthetics Recorder"
   },
   "permissions": [
+    "activeTab",
     "debugger",
+    "scripting",
     "tabs",
     "storage"
   ],
