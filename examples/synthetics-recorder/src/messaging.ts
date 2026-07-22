@@ -100,24 +100,10 @@ export interface BridgeEnvelope<T = unknown> {
   msg: T;
 }
 
-// ---- Trust message types ----
-
-export type TrustResponseMessage =
-  | { type: 'trust-required'; origin: string; nonce: string }
-  | { type: 'trust-granted'; origin: string; nonce: string }
-  | { type: 'trust-denied'; origin: string; nonce: string }
-  | { type: 'bridge-disconnected' };
-
-// Internal port messages: trust grant/deny from content script → SW
-export type BridgeTrustAction =
-  | { type: 'synthetics-trust-grant'; origin: string; nonce: string }
-  | { type: 'synthetics-trust-deny'; origin: string; nonce: string };
-
 // ---- Bridge-port command (used over SW internal Port) ----
 
 export interface BridgePortMessage {
   type: 'synthetics-command';
   command: O2Command;
   _bridgeNonce?: string;
-  _bridgeOrigin?: string;
 }

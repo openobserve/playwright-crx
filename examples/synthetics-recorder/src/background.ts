@@ -13,8 +13,7 @@ import playwright, { crx, Crx, SyntheticsRecorderApp, mapBrowserStepsToActions }
 import type { Mode } from '@recorder/recorderTypes';
 import type { CrxApplication } from 'playwright-crx';
 import type { BrowserStep, SyntheticsForwardMessage, StepResultData, StepStartedData, StructuredError } from 'playwright-crx';
-import type { O2Command, O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage, ReplayResponse, ReplayAuth, ReplayHeader, ReplayCookie, BridgePortMessage, BridgeTrustAction } from './messaging';
-import { checkTrust, grantTrust, denyOriginThisSession } from './trust';
+import type { O2Command, O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage, ReplayResponse, ReplayAuth, ReplayHeader, ReplayCookie, BridgePortMessage } from './messaging';
 
 // ---- State ----
 
@@ -46,7 +45,6 @@ let pendingBridgeResponses: any[] = [];
 
 // Track the tab that owns the bridge connection (sender of the Port).
 let o2TabId: number | undefined;
-let o2Origin: string | undefined;
 
 // Name the O2 web app must use when opening the connection.
 const O2_PORT_NAME = 'synthetics-recorder';
@@ -120,13 +118,6 @@ function handleO2Connect(port: chrome.runtime.Port) {
   if (port.sender?.tab?.id) {
     o2TabId = port.sender.tab.id;
   }
-  if (port.sender?.url) {
-    try {
-      o2Origin = new URL(port.sender.url).origin;
-    } catch {
-      o2Origin = undefined;
-    }
-  }
 
   // Commands arrive over the port from the bridge content script.
   port.onMessage.addListener(handleBridgePortMessage);
@@ -136,7 +127,6 @@ function handleO2Connect(port: chrome.runtime.Port) {
       console.log("O2 port ---- disconnect undefined");
       o2Port = undefined;
       o2TabId = undefined;
-      o2Origin = undefined;
     }
   });
 }
@@ -144,29 +134,6 @@ function handleO2Connect(port: chrome.runtime.Port) {
 // ---- Bridge port message handler ----
 
 function handleBridgePortMessage(message: any): void {
-  console.debug("Port message ---", message);
-  // Trust actions from the content script (consent dialog)
-  if (message?.type === 'synthetics-trust-grant' || message?.type === 'synthetics-trust-deny') {
-    const trustMsg = message as BridgeTrustAction;
-    if (trustMsg.type === 'synthetics-trust-grant') {
-      grantTrust(trustMsg.origin).then(() => {
-        o2Port?.postMessage({
-          type: 'synthetics-response',
-          response: { type: 'trust-granted', origin: trustMsg.origin, approved: true },
-          _bridgeNonce: trustMsg.nonce,
-        });
-      });
-    } else {
-      denyOriginThisSession(trustMsg.origin);
-      o2Port?.postMessage({
-        type: 'synthetics-response',
-        response: { type: 'trust-denied', origin: trustMsg.origin, approved: false },
-        _bridgeNonce: trustMsg.nonce,
-      });
-    }
-    return;
-  }
-
   // Bridge command from content script
   if (message?.type === 'synthetics-command') {
     const bridgeMsg = message as BridgePortMessage;
@@ -185,31 +152,7 @@ function handleBridgePortMessage(message: any): void {
       }
     };
 
-    // Trust middleware — guards access when externally_connectable is removed
-    const origin = bridgeMsg._bridgeOrigin ?? o2Origin;
-
-    if (!origin) {
-      // No origin available — allow through (shouldn't happen; content script
-      // always has a URL, and sender.url is available to internal connects)
-      runO2Command(bridgeMsg.command, respond);
-      return;
-    }
-
-    checkTrust(origin).then(status => {
-      switch (status) {
-        case 'trusted':
-          runO2Command(bridgeMsg.command, respond);
-          break;
-        case 'denied-this-session':
-          // Silent drop — don't acknowledge denied commands
-          break;
-        case 'unknown':
-          respond({ type: 'trust-required', origin });
-          break;
-      }
-    });
-
-    return;
+    runO2Command(bridgeMsg.command, respond);
   }
 }
 
@@ -632,7 +575,6 @@ async function handleTabRemoved(tabId: number) {
   if (tabId === o2TabId) {
     o2Port = undefined;
     o2TabId = undefined;
-    o2Origin = undefined;
   }
 }
 

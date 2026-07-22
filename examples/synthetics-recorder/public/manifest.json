@@ -16,7 +16,6 @@
   "action": {
     "default_title": "Synthetics Recorder"
   },
-  "options_page": "options.html",
   "permissions": [
     "debugger",
     "tabs",
