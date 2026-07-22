@@ -6,6 +6,11 @@ import type { Mode } from '@recorder/recorderTypes';
 import type { OverlayMessage, OverlayToBackgroundMessage } from './messaging';
 import { BRIDGE_CHANNEL } from './messaging';
 
+// Announce presence to the OO web app. When injected on demand (toolbar
+// icon click by a user who installed mid-session), this lets the web app
+// auto-detect the extension without a manual "Check again".
+window.postMessage({ ch: 'oo-bridge-ready' }, '*');
+
 // ---- Context discriminator ----
 //
 // Default: overlay mode (recording target pages). Bridge mode activates
