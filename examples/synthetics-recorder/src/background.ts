@@ -79,6 +79,7 @@ function init() {
 
   // Long-lived connection from the O2 web app (bridge content script).
   // Internal connect replaces external — the content script owns the Port.
+  console.log('[sw] init() — SW started, registering onConnect');
   chrome.runtime.onConnect.addListener(handleO2Connect);
 
   // Listen for actions from content script overlay
@@ -103,6 +104,7 @@ function init() {
 // ---- O2 web app connection (bridge content-script Port) ----
 
 function handleO2Connect(port: chrome.runtime.Port) {
+  console.log('[sw] onConnect: port.name=' + port.name + ' sender.url=' + (port.sender?.url || 'none'));
   if (port.name !== O2_PORT_NAME) return;
 
   // Only one O2 app drives the recorder at a time; the latest connection wins.
@@ -150,8 +152,10 @@ function handleBridgePortMessage(message: any): void {
         _bridgeNonce: bridgeMsg._bridgeNonce,
       };
       if (o2Port) {
+        console.log('[sw] respond() via o2Port: ' + JSON.stringify(response).slice(0,80));
         o2Port.postMessage(msg);
       } else {
+        console.log('[sw] respond() buffering — o2Port is null');
         pendingBridgeResponses.push(msg);
       }
     };

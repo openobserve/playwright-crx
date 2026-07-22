@@ -25,13 +25,14 @@ let __bridgeOpenPort: (() => boolean) | null = null;
 // or re-open the port if it died (SW suspend, tab backgrounding).
 window.addEventListener('message', (event) => {
   if (event.source === window && event.data?.ch === 'oo-bridge-probe') {
+    console.log('[bridge] received oo-bridge-probe, bridgeOpenPort=', !!__bridgeOpenPort);
     if (!__bridgeOpenPort) {
-      // First probe — initialise bridge and keep a reference to openPort.
+      console.log('[bridge] first probe — calling initBridge()');
       initBridge();
     } else {
-      // Subsequent probes — port may have died. Re-open without re-registering
-      // listeners (they were set up on the first initBridge call).
-      __bridgeOpenPort();
+      console.log('[bridge] subsequent probe — calling __bridgeOpenPort()');
+      const result = __bridgeOpenPort();
+      console.log('[bridge] __bridgeOpenPort() result:', result);
     }
   }
 });
@@ -326,9 +327,12 @@ function initBridge(): void {
       return false;
     }
     try {
+      console.log('[bridge] calling chrome.runtime.connect({ name: "synthetics-recorder" })');
       port = chrome.runtime.connect({ name: 'synthetics-recorder' });
+      console.log('[bridge] chrome.runtime.connect SUCCESS, port=', port);
       port.onMessage.addListener(handlePortMessage);
       port.onDisconnect.addListener(() => {
+        console.log('[bridge] port.onDisconnect fired');
         port = null;
         window.postMessage(
           { ch: BRIDGE_CHANNEL, dir: 'to-page', nonce: '', msg: { type: 'bridge-disconnected' } },
@@ -337,6 +341,7 @@ function initBridge(): void {
       });
       return true;
     } catch (e) {
+      console.error('[bridge] chrome.runtime.connect FAILED:', e?.message || e);
       port = null;
       return false;
     }
@@ -390,11 +395,13 @@ function initBridge(): void {
     }
 
     // Forward the command envelope to the SW, attaching the nonce for correlation
+    console.log('[bridge] forwarding to SW: cmd=', event.data.msg?.command?.action, ' nonce=', (event.data.nonce || '').slice(0,12));
     port!.postMessage({
       type: 'synthetics-command',
       command: event.data.msg?.command,
       _bridgeNonce: event.data.nonce,
     });
+    console.log('[bridge] forwarded to SW OK');
   });
 
   // Warm the port so getStatus / early commands don't pay lazy-connect latency
