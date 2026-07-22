@@ -30,6 +30,16 @@ window.addEventListener('message', (event) => {
 // The web app sends the probe on demand when it needs the bridge.
 initOverlay();
 
+// ---- bfcache-resilient fallback channel -------------------------------------
+// The bridge Port dies when Chrome bfcaches the OO tab. chrome.runtime.sendMessage
+// is queued and delivered on reactivation. The SW falls back to this when o2Port
+// is dead. Works regardless of mode (bridge or overlay).
+chrome.runtime.onMessage.addListener((message: any, _sender, _sendResponse) => {
+  if (message?.type === 'oo-bridge-data') {
+    window.postMessage(message.payload, '*');
+  }
+});
+
 // ---- Overlay mode (recorded page) -------------------------------------------
 
 function initOverlay(): void {

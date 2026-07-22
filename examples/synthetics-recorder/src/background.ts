@@ -87,11 +87,15 @@ function init() {
   // Auto-stop when recording tab is closed
   chrome.tabs.onRemoved.addListener(handleTabRemoved);
 
-  // Toolbar icon click: redirect to OpenObserve if not already there
+  // Toolbar icon click: inject content script into the active tab for users
+  // who installed the extension while the OO page was already open (Chrome
+  // doesn't retroactively inject content scripts).
   chrome.action.onClicked.addListener(async (tab) => {
-    const url = tab?.url ?? '';
-    if (!/^https:\/\/[a-zA-Z0-9.-]*openobserve\.ai/.test(url)) {
-      await chrome.tabs.create({ url: 'https://cloud.openobserve.ai/web/synthetics' });
+    if (tab?.id) {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['content.js'],
+      }).catch(() => {});
     }
   });
 }
