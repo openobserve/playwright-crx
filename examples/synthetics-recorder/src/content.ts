@@ -19,14 +19,19 @@ window.postMessage({ ch: 'oo-bridge-ready' }, '*');
 // tab's content script from accidentally opening a bridge port and
 // stealing the single o2Port in the service worker.
 
-let __bridgeActivated = false;
+let __bridgeOpenPort: (() => boolean) | null = null;
 
-// Listen for the web app's probe. When received, switch to bridge mode.
+// Listen for the web app's probe. When received, switch to bridge mode
+// or re-open the port if it died (SW suspend, tab backgrounding).
 window.addEventListener('message', (event) => {
   if (event.source === window && event.data?.ch === 'oo-bridge-probe') {
-    if (!__bridgeActivated) {
-      __bridgeActivated = true;
+    if (!__bridgeOpenPort) {
+      // First probe — initialise bridge and keep a reference to openPort.
       initBridge();
+    } else {
+      // Subsequent probes — port may have died. Re-open without re-registering
+      // listeners (they were set up on the first initBridge call).
+      __bridgeOpenPort();
     }
   }
 });
@@ -336,6 +341,10 @@ function initBridge(): void {
       return false;
     }
   }
+
+  // Expose openPort so subsequent oo-bridge-probe messages can re-open
+  // the port if it died (SW suspend, tab bfcache, etc.).
+  __bridgeOpenPort = openPort;
 
   // Port → Page: forward SW responses and data pushes to the OO web app
   function handlePortMessage(msg: any): void {
