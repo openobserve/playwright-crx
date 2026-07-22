@@ -79,7 +79,6 @@ function init() {
 
   // Long-lived connection from the O2 web app (bridge content script).
   // Internal connect replaces external — the content script owns the Port.
-  console.log('[sw] init() — SW started, registering onConnect');
   chrome.runtime.onConnect.addListener(handleO2Connect);
 
   // Listen for actions from content script overlay
@@ -116,8 +115,6 @@ function handleO2Connect(port: chrome.runtime.Port) {
     }
     pendingBridgeResponses = [];
   }
-
-  console.log("O2 port ---- o2 connect", port);
   o2Port = port;
 
   // Track the sender's tab and origin for trust checks + cleanup
@@ -130,7 +127,6 @@ function handleO2Connect(port: chrome.runtime.Port) {
 
   port.onDisconnect.addListener(() => {
     if (o2Port === port) {
-      console.log("O2 port ---- disconnect undefined");
       o2Port = undefined;
       o2TabId = undefined;
     }
@@ -155,7 +151,6 @@ function handleBridgePortMessage(message: any): void {
         console.log('[sw] respond() via o2Port: ' + JSON.stringify(response).slice(0,80));
         o2Port.postMessage(msg);
       } else {
-        console.log('[sw] respond() buffering — o2Port is null');
         pendingBridgeResponses.push(msg);
       }
     };
@@ -167,10 +162,8 @@ function handleBridgePortMessage(message: any): void {
 // Runs a single O2 command, replying via `respond`. Returns true when the
 // response is sent asynchronously (required by chrome.runtime.onMessage*).
 function runO2Command(command: O2Command, respond: (response?: any) => void): boolean {
-  console.debug("O2- command", command);
   switch (command.action) {
     case 'replay':
-      console.log('[sw] runO2Command REPLAY — steps:', command.steps?.length, 'targetUrl:', command.targetUrl);
       handleReplay(command.steps, command.targetUrl, command.testIdAttr, command.auth, command.headers, command.cookies)
         .then(result => { console.log('[sw] replay finished:', result); respond(result); })
         .catch(err => { console.log('[sw] replay error:', err.message); respond({ success: false, passed: false, error: err.message }); });
@@ -179,7 +172,6 @@ function runO2Command(command: O2Command, respond: (response?: any) => void): bo
       startRecording(command.mode ?? 'recording', command.testIdAttr, command.targetUrl)
         .then(() => respond({ success: true }))
         .catch(err => {
-          console.debug("error", err);
           respond({ success: false, error: err.message })
         });
       return true;
@@ -750,7 +742,6 @@ async function sendToOverlay(tabId: number, payload: OverlayMessage['payload']) 
 // Pushes an event to the O2 web app over the live Port. If no app is connected,
 // the event is dropped.
 function sendToO2(message: ExtensionToO2Message) {
-  console.log("Send to  O2 ---", o2Port);
   if (!o2Port) {
     pendingBridgeResponses.push(message);
     return;
@@ -762,7 +753,6 @@ function sendToO2(message: ExtensionToO2Message) {
     // Port may have disconnected between the check and the post.
     // Buffer for re-delivery.
     pendingBridgeResponses.push(message);
-    console.log("O2 port ---- undefined");
     o2Port = undefined;
   }
 }

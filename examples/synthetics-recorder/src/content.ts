@@ -25,7 +25,6 @@ let __bridgeOpenPort: (() => boolean) | null = null;
 // or re-open the port if it died (SW suspend, tab backgrounding).
 window.addEventListener('message', (event) => {
   if (event.source === window && event.data?.ch === 'oo-bridge-probe') {
-    console.log('[bridge] received oo-bridge-probe, bridgeOpenPort=', !!__bridgeOpenPort);
     if (!__bridgeOpenPort) {
       console.log('[bridge] first probe — calling initBridge()');
       initBridge();
@@ -329,10 +328,8 @@ function initBridge(): void {
     try {
       console.log('[bridge] calling chrome.runtime.connect({ name: "synthetics-recorder" })');
       port = chrome.runtime.connect({ name: 'synthetics-recorder' });
-      console.log('[bridge] chrome.runtime.connect SUCCESS, port=', port);
       port.onMessage.addListener(handlePortMessage);
       port.onDisconnect.addListener(() => {
-        console.log('[bridge] port.onDisconnect fired');
         port = null;
         window.postMessage(
           { ch: BRIDGE_CHANNEL, dir: 'to-page', nonce: '', msg: { type: 'bridge-disconnected' } },
@@ -341,7 +338,6 @@ function initBridge(): void {
       });
       return true;
     } catch (e) {
-      console.error('[bridge] chrome.runtime.connect FAILED:', e?.message || e);
       port = null;
       return false;
     }
@@ -401,7 +397,6 @@ function initBridge(): void {
       command: event.data.msg?.command,
       _bridgeNonce: event.data.nonce,
     });
-    console.log('[bridge] forwarded to SW OK');
   });
 
   // Warm the port so getStatus / early commands don't pay lazy-connect latency
