@@ -31,7 +31,15 @@ export interface BrowserStep {
   selector?: string;
   selector_type?: SelectorType;
   name: string;
-  timeout_ms: number;
+  /**
+   * Absent by design. The recorder must never stamp a timeout — a recorded value
+   * encodes the recording session's timing, not the application's contract, and
+   * the previous hardcoded 10000 was the direct cause of the observed production
+   * failures (`locator.waitFor: Timeout 10000ms exceeded`). The runner owns
+   * defaults per action category; an author may still set one in the step editor.
+   * See docs/synthetics/synthetics-recorded-test-reliability-spec.md P1.1.
+   */
+  timeout_ms?: number;
   // Action-specific fields
   url?: string;
   value?: string;
@@ -111,7 +119,7 @@ export function mapActionToBrowserStep(
     id: `s${actionIndex + 1}`,
     action: 'click', // placeholder, overridden below
     name: description ?? buildStepName(action, actionIndex),
-    timeout_ms: 10000,
+    // No timeout_ms — see the field's doc comment. The runner decides.
     startTime,
     endTime,
     pageAlias: frame.pageAlias,
@@ -276,9 +284,38 @@ function buildActionFromStep(step: BrowserStep): Action {
         return { name: 'assertChecked', selector, checked: step.checked, signals: [] };
       return { name: 'assertVisible', selector, signals: [] };
     default:
-      // 'waitFor' / 'screenshot' are not produced by recording and not supported by the player.
-      throw new Error(`Cannot replay step with action '${step.action}'`);
+      // Unreplayable step (see UNSUPPORTED_REPLAY_ACTIONS). Substitute a no-op
+      // rather than throwing: the throw aborted the ENTIRE replay before step 1,
+      // which is why none of the production monitors — every one of which carries
+      // a legacy `wait` step — could be test-replayed at all.
+      //
+      // 'pause' is the player's own no-op (crxPlayer.ts:239) and keeps the action
+      // list index-aligned with the step list, which background.ts relies on to
+      // map results back to step ids. The consumer is responsible for reporting
+      // these as "not simulated" rather than as a pass — a silent green here
+      // would reproduce the false-green the probe already gives `scroll`.
+      return { name: 'pause' } as unknown as Action;
   }
+}
+
+/**
+ * Step actions the player cannot execute. Upstream Playwright's recorder action
+ * model (ActionName in @recorder/actions) has no hover/scroll/wait/screenshot, so
+ * these have never been replayable — they enter journeys only from O2's manual
+ * step editor or from legacy monitors. They are retired from the v2 vocabulary;
+ * this list exists so existing journeys still replay, with the step reported
+ * honestly. See spec X-9 and P1.R.2a.
+ */
+export const UNSUPPORTED_REPLAY_ACTIONS: readonly string[] = [
+  'hover',
+  'scroll',
+  'wait',
+  'waitFor',
+  'screenshot',
+];
+
+export function isUnsupportedReplayAction(action: string): boolean {
+  return UNSUPPORTED_REPLAY_ACTIONS.includes(action);
 }
 
 export function mapBrowserStepToAction(step: BrowserStep): ActionInContext {

@@ -230,7 +230,21 @@ export default class CrxPlayer extends EventEmitter {
     };
 
     // similar to playwright/packages/playwright-core/src/server/recorder/recorderRunner.ts
-    const kActionTimeout = isUnderTest() ? 2000 : 5000;
+    //
+    // 60s, flat — NOT the upstream 5s, and deliberately not mirroring the probe's
+    // 60s/30s split. The preview must never be STRICTER than production (spec
+    // X-8.1): a Test that fails where the scheduled run passes teaches authors to
+    // insert sleeps, which is the exact behaviour this design exists to remove.
+    // The largest timeout any step can have in the probe is 60s — the category
+    // defaults are 60s (navigate/assert) and 30s (interaction), and an explicit
+    // per-step timeout_ms is validated into 100..=60000 — so a flat 60s here is
+    // provably never stricter, for any step, and needs no fork of Playwright's
+    // Action type to carry a per-step timeout.
+    //
+    // Cost, accepted: a genuinely broken step now takes 60s to report instead of
+    // 5s. Mitigated in the UI (elapsed time per step + a reachable cancel), not
+    // by shortening this — a fast wrong answer is what produced the sleeps.
+    const kActionTimeout = isUnderTest() ? 2000 : 60_000;
 
     const { action } = actionInContext;
     const pageAliases = this._pageAliases;
