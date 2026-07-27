@@ -289,12 +289,19 @@ function buildActionFromStep(step: BrowserStep): Action {
       // which is why none of the production monitors — every one of which carries
       // a legacy `wait` step — could be test-replayed at all.
       //
-      // 'pause' is the player's own no-op (crxPlayer.ts:239) and keeps the action
-      // list index-aligned with the step list, which background.ts relies on to
-      // map results back to step ids. The consumer is responsible for reporting
-      // these as "not simulated" rather than as a pass — a silent green here
-      // would reproduce the false-green the probe already gives `scroll`.
-      return { name: 'pause' } as unknown as Action;
+      // 'noop' is an internal marker the player returns from immediately
+      // (see CrxPlayer._performAction). It keeps the action list index-aligned
+      // with the step list, which background.ts relies on to map results back to
+      // step ids.
+      //
+      // Deliberately NOT 'pause': that action carries apiName 'page.pause' into
+      // the recorder instrumentation, which puts the session into a paused state
+      // and hangs the replay instead of skipping the step.
+      //
+      // The consumer is responsible for reporting these as "not simulated"
+      // rather than as a pass — a silent green here would reproduce the
+      // false-green the probe already gives `scroll`.
+      return { name: 'noop', signals: [] } as unknown as Action;
   }
 }
 

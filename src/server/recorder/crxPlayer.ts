@@ -250,6 +250,15 @@ export default class CrxPlayer extends EventEmitter {
     const pageAliases = this._pageAliases;
     const context = browserContext;
 
+    // Internal marker emitted by actionMapper for steps the player cannot
+    // execute (hover/scroll/wait/screenshot — none exist in Playwright's
+    // recorder action model). Return before any instrumentation so the step is
+    // genuinely skipped: it must not reach onBeforeCall, or the recorder reacts
+    // to it. The consumer reports these as "not simulated"; they must never be
+    // presented to an author as a pass.
+    if ((action as any).name === 'noop')
+      return;
+
     if (action.name === 'pause')
       return await innerPerformAction(null, actionInContext, () => Promise.resolve());
 
