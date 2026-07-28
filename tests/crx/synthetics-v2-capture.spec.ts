@@ -16,6 +16,7 @@ import {
   buildLocatorBundle,
   classifySelector,
   isPositionalSelector,
+  setLocatorTestIdAttribute,
   MAX_LOCATOR_CANDIDATES,
 } from '../../src/server/recorder/locatorBundle';
 import {
@@ -656,4 +657,33 @@ test('with no options, capture behaves exactly as before', () => {
     R('https://x.test/api/default/_search', { method: 'POST' }),
   ]);
   expect(patterns).toHaveLength(1);
+});
+
+
+// ── Phase 2: the configured test-id attribute ───────────────────────────────
+
+test('a customer attribute outside upstream\'s fallback list is still a test attribute', () => {
+  // Upstream hardcodes only data-testid / data-test-id / data-test, so an app on
+  // data-qa had its strongest attribute stored as plain `css` — rank 3, behind
+  // text. O2 worked by luck: `data-test` happens to be on that list.
+  expect(classifySelector('[data-qa="submit"]')).toBe('css');
+  setLocatorTestIdAttribute('data-qa');
+  try {
+    expect(classifySelector('[data-qa="submit"]')).toBe('test_attribute');
+    // Upstream's own list keeps working alongside the configured one.
+    expect(classifySelector('[data-test="submit"]')).toBe('test_attribute');
+    expect(classifySelector('internal:testid=[data-qa="submit"]')).toBe('test_attribute');
+  } finally {
+    setLocatorTestIdAttribute('data-testid');
+  }
+});
+
+test('a blank configured attribute falls back rather than matching everything', () => {
+  setLocatorTestIdAttribute('   ');
+  try {
+    expect(classifySelector('[data-testid="x"]')).toBe('test_attribute');
+    expect(classifySelector('.plain-class')).toBe('css');
+  } finally {
+    setLocatorTestIdAttribute('data-testid');
+  }
 });

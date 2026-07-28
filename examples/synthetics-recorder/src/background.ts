@@ -9,7 +9,7 @@
  * 4. Auto-stops on tab close
  */
 
-import playwright, { crx, Crx, SyntheticsRecorderApp, mapBrowserStepsToActions, describeReplayFidelity } from 'playwright-crx';
+import playwright, { crx, Crx, SyntheticsRecorderApp, mapBrowserStepsToActions, describeReplayFidelity, setLocatorTestIdAttribute } from 'playwright-crx';
 import type { StepFidelity } from 'playwright-crx';
 import type { Mode } from '@recorder/recorderTypes';
 import type { CrxApplication } from 'playwright-crx';
@@ -82,6 +82,7 @@ function init() {
   // Leave Playwright's native default test-id attribute ('data-testid'). Recording/replay use whatever
   // O2 sends per request; we don't impose 'class' or 'data-test'.
   playwright.selectors.setTestIdAttribute(DEFAULT_TEST_ID_ATTR);
+  setLocatorTestIdAttribute(DEFAULT_TEST_ID_ATTR);
 
   // Long-lived connection from the O2 web app (bridge content script).
   // Internal connect replaces external — the content script owns the Port.
@@ -469,6 +470,7 @@ async function prepareRecordingWindow(targetUrl: string): Promise<number> {
 
 async function startRecording(mode: Mode = 'recording', testIdAttr?: string, targetUrl: string = '') {
   const attr = resolveTestIdAttr(testIdAttr);
+  setLocatorTestIdAttribute(attr);
   playwright.selectors.setTestIdAttribute(attr);
 
   // Reuse an existing recorder window if present (resetting everything), else open a new one.
@@ -596,6 +598,7 @@ async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr
   // Match the test-id attribute the recording used (sent by O2), otherwise internal:testid= selectors
   // resolve against the wrong attribute and time out.
   playwright.selectors.setTestIdAttribute(resolveTestIdAttr(testIdAttr));
+  setLocatorTestIdAttribute(resolveTestIdAttr(testIdAttr));
 
   replayStopped = false;
   replaySteps = steps;

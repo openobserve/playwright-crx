@@ -93,9 +93,44 @@ export function isPositionalSelector(selector: string): boolean {
  * …), so reading the prefix is exact for one token — which is why the runner no
  * longer has to sniff the selector string with a regex.
  */
+/**
+ * The test-id attribute the current recording session was configured with.
+ *
+ * Upstream's generator hardcodes a fallback list — `data-testid`, `data-test-id`,
+ * `data-test` — at `kOtherTestIdScore`, just behind whatever
+ * `selectors.setTestIdAttribute` was given. O2's own markup uses `data-test`,
+ * which happens to be on that list, so O2 recordings produce `test_attribute`
+ * candidates by luck rather than by configuration.
+ *
+ * A customer on `data-qa`, `data-cy`, `data-pw` or `data-automation-id` gets
+ * none: their strongest attribute is emitted as a plain CSS selector, the
+ * hardcoded regex below does not recognise it, and it is stored as `css` —
+ * rank 3, behind text. Their best selector becomes their fourth choice, silently.
+ *
+ * A module-level setting rather than a threaded parameter, mirroring
+ * `playwright.selectors.setTestIdAttribute` which is global for the same reason:
+ * the generator is called from deep inside the recorder with no config in scope.
+ */
+let configuredTestIdAttribute = 'data-testid';
+
+/** Keep in step with `playwright.selectors.setTestIdAttribute` — see above. */
+export function setLocatorTestIdAttribute(attr: string): void {
+  configuredTestIdAttribute = attr.trim() || 'data-testid';
+}
+
+/** Upstream's own fallback list, which it scores just behind the configured one. */
+const UPSTREAM_TEST_ID_ATTRS = ['data-testid', 'data-test-id', 'data-test'];
+
+function isTestIdToken(s: string): boolean {
+  if (s.startsWith('internal:testid=') || s.startsWith('data-testid='))
+    return true;
+  return [configuredTestIdAttribute, ...UPSTREAM_TEST_ID_ATTRS].some(attr =>
+    s.startsWith(`[${attr}=`) || s.startsWith(`[${attr}]`));
+}
+
 function classifyToken(token: string): LocatorKind {
   const s = token.trim();
-  if (s.startsWith('internal:testid=') || s.startsWith('data-testid=') || /^\[data-test/.test(s))
+  if (isTestIdToken(s))
     return 'test_attribute';
   if (s.startsWith('internal:role=') || s.startsWith('role='))
     return 'role';
