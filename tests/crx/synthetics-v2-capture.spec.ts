@@ -266,6 +266,179 @@ test('check and uncheck survive the round trip instead of degrading to a click',
   expect(actions.map(a => a.action.name)).toEqual(['check', 'uncheck']);
 });
 
+// ── P2.4.3 / P2.S: what a stored v2 step replays against ────────────────────
+//
+// A stored v2 step carries NO bare `selector` — the saved schema has no such
+// field, its identity is the bundle. The mapper used to read `step.selector`
+// alone, so every element action was built with an empty selector and the
+// player failed parsing it before the step ran:
+//   Unexpected token "" while parsing css selector "".
+// That made every saved v2 journey unreplayable from the editor.
+
+function storedV2Step(overrides: Partial<BrowserStep>): BrowserStep {
+  return {
+    id: 's1', action: 'click', name: 'Step', startTime: 0,
+    pageAlias: 'page', framePath: [], ...overrides,
+  } as BrowserStep;
+}
+
+test('a stored v2 step replays against its primary candidate, not an empty selector', () => {
+  const [action] = mapBrowserStepsToActions([
+    storedV2Step({
+      locator: {
+        candidates: [
+          { kind: 'test_attribute', value: '[data-test="login-as-internal-user"]' },
+          { kind: 'text', value: 'internal:text="Login as internal user"i' },
+          { kind: 'css', value: 'a' },
+        ],
+      },
+    }),
+  ]);
+  expect((action.action as any).selector).toBe('[data-test="login-as-internal-user"]');
+});
+
+test('a pinned locator is used exclusively, never the primary candidate', () => {
+  // P2.4.3 — an author who pinned asked for that locator and no other.
+  const [action] = mapBrowserStepsToActions([
+    storedV2Step({
+      locator: {
+        candidates: [{ kind: 'test_attribute', value: '[data-test="a"]' }],
+        user_override: { kind: 'css', value: '#pinned' },
+      },
+    }),
+  ]);
+  expect((action.action as any).selector).toBe('#pinned');
+});
+
+test('a version-1 step still replays against its bare selector', () => {
+  const [action] = mapBrowserStepsToActions([storedV2Step({ selector: '#legacy' })]);
+  expect((action.action as any).selector).toBe('#legacy');
+});
+
+test('the bundle wins over a stale bare selector on the same step', () => {
+  // A lifted v1 step carries both; the bundle is the v2 identity.
+  const [action] = mapBrowserStepsToActions([
+    storedV2Step({
+      selector: '#stale',
+      locator: { candidates: [{ kind: 'css', value: '#current' }] },
+    }),
+  ]);
+  expect((action.action as any).selector).toBe('#current');
+});
+
+test('every element action shape resolves the bundle, not just click', () => {
+  const locator = { candidates: [{ kind: 'css' as const, value: '#el' }] };
+  const actions = mapBrowserStepsToActions([
+    storedV2Step({ action: 'type', value: 'hello', locator }),
+    storedV2Step({ action: 'press', key: 'Enter', locator }),
+    storedV2Step({ action: 'select', options: ['India'], locator }),
+    storedV2Step({ action: 'check', locator }),
+    storedV2Step({ action: 'uncheck', locator }),
+    storedV2Step({ action: 'setInputFiles', files: ['/tmp/a.pdf'], locator }),
+    storedV2Step({ action: 'assert', assertion: { kind: 'element_visible' }, locator }),
+  ]);
+  for (const action of actions)
+    expect((action.action as any).selector).toBe('#el');
+});
+
+// ── X-9.1 / P2.2.5: the stored v2 vocabulary ────────────────────────────────
+//
+// `fill` replaces the `type` alias and `upload` is the v2 name for
+// setInputFiles. A saved journey arrives with those names; the mapper only knew
+// the recorder's internal ones, so both fell through to the `noop` default and
+// were skipped while still being reported as passes.
+
+test('a stored v2 fill types, rather than silently becoming a no-op', () => {
+  const [action] = mapBrowserStepsToActions([
+    storedV2Step({
+      action: 'fill' as any,
+      value: 'omkar@openobserve.ai',
+      locator: { candidates: [{ kind: 'test_attribute', value: '[data-test="login-user-id-field"]' }] },
+    }),
+  ]);
+  expect(action.action.name).toBe('fill');
+  expect((action.action as any).text).toBe('omkar@openobserve.ai');
+  expect((action.action as any).selector).toBe('[data-test="login-user-id-field"]');
+});
+
+test('a stored v2 upload maps to setInputFiles', () => {
+  const [action] = mapBrowserStepsToActions([
+    storedV2Step({
+      action: 'upload' as any,
+      files: ['/tmp/report.pdf'],
+      locator: { candidates: [{ kind: 'css', value: '#file' }] },
+    }),
+  ]);
+  expect(action.action.name).toBe('setInputFiles');
+  expect((action.action as any).files).toEqual(['/tmp/report.pdf']);
+});
+
+test('an upload is reported not-simulated under either spelling', () => {
+  // P2.S — the player rejects setInputFiles, so a green here would be a false
+  // claim about a file that was never uploaded.
+  for (const action of ['setInputFiles', 'upload']) {
+    const fidelity = describeStepFidelity(storedV2Step({
+      action: action as any,
+      locator: { candidates: [{ kind: 'css', value: '#file' }] },
+    }), 0);
+    expect(fidelity.level, action).toBe('not_simulated');
+  }
+});
+
+// ── P5.1 / P5.S: typed assertions on a stored step ──────────────────────────
+
+test('a stored element_text assertion actually checks the text', () => {
+  const [action] = mapBrowserStepsToActions([
+    storedV2Step({
+      action: 'assert',
+      assertion: { kind: 'element_text', expected: 'Signed in' },
+      locator: { candidates: [{ kind: 'css', value: '#greeting' }] },
+    }),
+  ]);
+  expect(action.action.name).toBe('assertText');
+  expect((action.action as any).text).toBe('Signed in');
+});
+
+test('a stored element_visible assertion checks visibility', () => {
+  const [action] = mapBrowserStepsToActions([
+    storedV2Step({
+      action: 'assert',
+      assertion: { kind: 'element_visible' },
+      locator: { candidates: [{ kind: 'css', value: '#greeting' }] },
+    }),
+  ]);
+  expect(action.action.name).toBe('assertVisible');
+});
+
+test('assertion kinds the player cannot evaluate are skipped, not downgraded', () => {
+  // P5.S.2 — running assertVisible for a url_matches would be a different,
+  // weaker check reported as a pass; the page-level kinds carry no locator at
+  // all, so it would fail on an empty selector anyway.
+  for (const kind of ['element_not_visible', 'url_matches', 'page_title', 'element_attribute']) {
+    const [action] = mapBrowserStepsToActions([
+      storedV2Step({ action: 'assert', assertion: { kind: kind as any, expected: 'x' } }),
+    ]);
+    expect(action.action.name, kind).toBe('noop');
+  }
+});
+
+test('a version-1 assert still recovers its subtype from the legacy fields', () => {
+  const [text, checked] = mapBrowserStepsToActions([
+    storedV2Step({ action: 'assert', selector: '#a', text: 'Welcome' }),
+    storedV2Step({ action: 'assert', selector: '#b', checked: true }),
+  ]);
+  expect(text.action.name).toBe('assertText');
+  expect(checked.action.name).toBe('assertChecked');
+});
+
+test('a bundle-less, selector-less step still yields an empty selector', () => {
+  // navigate carries no element; nothing to resolve and nothing to invent.
+  const [action] = mapBrowserStepsToActions([
+    storedV2Step({ action: 'navigate', url: 'https://x.test' }),
+  ]);
+  expect((action.action as any).url).toBe('https://x.test');
+});
+
 test('recorded asserts arrive as typed assertions', () => {
   const steps = mapActionsToBrowserSteps([
     actionInContext({ name: 'assertVisible', selector: '#a', selectors: ['#a'], signals: [] }),

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Stored v2 journey fixture</title>
+</head>
+<body>
+  <!--
+    Fixture for replaying a STORED version-2 journey — the shape a journey has
+    after it has been saved and reloaded for editing, which is where replay was
+    broken:
+
+      * steps identify their element with a `locator` bundle and carry NO bare
+        `selector` (the saved schema has no such field), and
+      * steps use the v2 action vocabulary (X-9.1): `fill`, not the `type` alias.
+
+    The greeting only appears when BOTH fields actually contain text. That is
+    deliberate: a `fill` step that the mapper turns into a no-op leaves the
+    inputs empty, so the final assertion fails. A passing replay is therefore
+    evidence that the fills really ran, not merely that nothing threw.
+  -->
+  <h1>Stored v2 journey fixture</h1>
+
+  <input data-test="login-user-id-field" placeholder="email" />
+  <input data-test="login-password-field" type="password" placeholder="password" />
+  <button data-test="login-sign-in">Sign In</button>
+
+  <div id="app"></div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const delayMs = Number(params.get('delay') ?? 500);
+
+    document.querySelector('[data-test="login-sign-in"]').addEventListener('click', () => {
+      const email = document.querySelector('[data-test="login-user-id-field"]').value;
+      const password = document.querySelector('[data-test="login-password-field"]').value;
+      // A no-op fill leaves these empty — nothing is rendered and the journey's
+      // closing assertion fails, which is the point of the fixture.
+      if (!email || !password)
+        return;
+
+      setTimeout(() => {
+        const greeting = document.createElement('div');
+        greeting.setAttribute('data-test', 'header-my-account-profile-icon');
+        greeting.id = 'greeting';
+        greeting.textContent = 'Signed in as ' + email;
+        document.getElementById('app').appendChild(greeting);
+      }, delayMs);
+    });
+  </script>
+</body>
+</html>

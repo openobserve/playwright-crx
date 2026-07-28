@@ -18,7 +18,7 @@
  */
 
 import type { ActionInContext, Action } from '@recorder/actions';
-import { buildLocatorBundle } from './locatorBundle';
+import { buildLocatorBundle, effectiveSelector } from './locatorBundle';
 import type { StepLocator } from './locatorBundle';
 import { generalizeUrlPattern } from './urlPattern';
 import type { SettleResponsePattern } from './networkCapture';
@@ -389,9 +389,35 @@ export function mapActionsToBrowserSteps(
 // reconstruct the exact action.name from the step's action + which fields are
 // present. Assert subtypes are fully recoverable, and check/uncheck now survive
 // the round trip intact (X-9.3) rather than degrading to a click.
+/**
+ * The stored version-2 vocabulary (X-9.1), mapped onto the recorder's internal
+ * action names.
+ *
+ * A journey that has been saved and reloaded arrives with the v2 names, because
+ * that is what the schema stores: `fill` replaces the `type` alias and `upload`
+ * is the v2 name for `setInputFiles` (P2.2.5 rejects `type` outright). The
+ * recorder's own in-memory steps still use the internal names, so both spellings
+ * must reach the same action.
+ *
+ * Without this a reloaded `fill` fell through to the `noop` default and was
+ * skipped silently — reported as a pass for a step that never typed anything,
+ * which is precisely the false green X-8.2 exists to prevent.
+ */
+const V2_ACTION_ALIASES: Record<string, BrowserStepAction> = {
+  fill: 'type',
+  upload: 'setInputFiles',
+};
+
 function buildActionFromStep(step: BrowserStep): Action {
-  const selector = step.selector ?? '';
-  switch (step.action) {
+  // A version-2 step's identity is its locator bundle, and a stored v2 step
+  // carries NO bare `selector` — the field does not exist in the saved schema.
+  // Reading `step.selector` alone therefore built every element action with an
+  // empty selector, and Playwright failed parsing it before the step ran:
+  //   Unexpected token "" while parsing css selector "".
+  // The bundle resolves first (pin, else primary — see effectiveSelector);
+  // `selector` remains the fallback for v1 steps, which have no bundle.
+  const selector = effectiveSelector(step.locator) ?? step.selector ?? '';
+  switch (V2_ACTION_ALIASES[step.action] ?? step.action) {
     case 'openPage':
       return { name: 'openPage', url: step.url ?? '', signals: [] };
     case 'navigate':
@@ -418,7 +444,28 @@ function buildActionFromStep(step: BrowserStep): Action {
       return { name: 'uncheck', selector, signals: [] };
     case 'setInputFiles':
       return { name: 'setInputFiles', selector, files: step.files ?? [], signals: [] };
-    case 'assert':
+    case 'assert': {
+      // A stored v2 assert is typed (`assertion.kind`, P5.1) and carries none of
+      // the legacy fields below. Reading only those made every reloaded
+      // assertion degrade to assertVisible — including `element_text`, which
+      // replayFidelity then labelled "evaluated approximately". A visibility
+      // check reported as a text check is the false claim X-8.2 exists to stop.
+      const kind = step.assertion?.kind;
+      if (kind === 'element_text')
+        return { name: 'assertText', selector, text: step.assertion?.expected ?? '', substring: true, signals: [] };
+      if (kind === 'element_visible')
+        return { name: 'assertVisible', selector, signals: [] };
+      if (kind) {
+        // P5.S.2 — the other four kinds have no player equivalent. A noop keeps
+        // the action list index-aligned and lets replayFidelity report
+        // "assertion not simulated", instead of the player quietly running a
+        // different, weaker check. The page-level kinds (url_matches,
+        // page_title) legitimately carry no locator at all, so executing
+        // anything here would fail on an empty selector.
+        return { name: 'noop', signals: [] } as unknown as Action;
+      }
+      // v1 / recorder-internal asserts: the subtype is recovered from whichever
+      // field is set.
       if (step.snapshot !== undefined)
         return { name: 'assertSnapshot', selector, snapshot: step.snapshot, signals: [] };
       if (step.text !== undefined)
@@ -428,6 +475,7 @@ function buildActionFromStep(step: BrowserStep): Action {
       if (step.checked !== undefined)
         return { name: 'assertChecked', selector, checked: step.checked, signals: [] };
       return { name: 'assertVisible', selector, signals: [] };
+    }
     default:
       // Unreplayable step (see UNSUPPORTED_REPLAY_ACTIONS). Substitute a no-op
       // rather than throwing: the throw aborted the ENTIRE replay before step 1,

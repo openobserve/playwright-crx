@@ -80,7 +80,10 @@ export function describeStepFidelity(step: BrowserStep, stepIndex: number): Step
     levels.push('not_simulated');
   }
 
-  if (step.action === 'setInputFiles') {
+  // Both spellings: a stored v2 step says `upload` (X-9.1), the recorder's own
+  // in-memory step says `setInputFiles`. Checking only the latter let a reloaded
+  // journey's upload step through unreported (P2.S requires `not simulated`).
+  if (step.action === 'setInputFiles' || step.action === 'upload') {
     // crxPlayer rejects setInputFiles outright; reporting the step as a pass
     // would be a false green about a file that was never uploaded.
     notes.push('File uploads are not simulated in the preview.');

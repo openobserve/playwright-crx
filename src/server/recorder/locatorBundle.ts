@@ -122,3 +122,23 @@ export function buildLocatorBundle(selectors: string[] | undefined, primary?: st
   // step look deliberately pinned.
   return { candidates };
 }
+
+/**
+ * The one selector a bundle resolves to for replay.
+ *
+ * A pin wins outright — an author who set `user_override` asked for that locator
+ * and no other, so it is used exclusively and never falls back (spec P2.4.3).
+ * Otherwise the primary candidate: the player resolves a single selector string
+ * and does not implement the ordered fallback the probe does, so it replays
+ * against `candidates[0]` and the step is reported `primary locator only`
+ * (spec P2.S, X-8.2).
+ *
+ * Returns undefined for a bundle-less v1 step, whose identity is its bare
+ * `selector` instead.
+ */
+export function effectiveSelector(locator: StepLocator | undefined): string | undefined {
+  const pinned = locator?.user_override?.value;
+  if (pinned)
+    return pinned;
+  return locator?.candidates?.[0]?.value || undefined;
+}
