@@ -37,6 +37,14 @@ import type { Response } from 'playwright-core/lib/server/network';
 import { monotonicTime } from 'playwright-core/lib/utils';
 import { NetworkRecorder, buildSettlePatterns } from './networkCapture';
 
+/**
+ * How long after an action finishes a response may still be attributed to it.
+ *
+ * Shared by the action windows and the idle-window complement, so a response
+ * cannot be counted as both caused and background.
+ */
+const SETTLE_TAIL_MS = 1000;
+
 export type StructuredError = {
   message: string;
   name?: string;
@@ -106,6 +114,14 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
     // P4.1.1 — the source is the extension's real Playwright context, not raw
     // CDP. It is the same API the probe waits on, so one matcher serves both
     // sides and a recorded pattern cannot be one the runner could never match.
+    // When each request BEGAN, so a response that merely landed inside an
+    // action's window can be told apart from one the action actually caused
+    // (P4 / §3.5). Weakly held: the map must not keep a finished request alive
+    // for the length of the recording session.
+    const requestStartedAt = new WeakMap<object, number>();
+    context?.on(BrowserContext.Events.Request, (request: object) => {
+      requestStartedAt.set(request, monotonicTime());
+    });
     context?.on(BrowserContext.Events.Response, (response: Response) => {
       this._network.record({
         url: response.url(),
@@ -115,6 +131,7 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
         // The same clock `recorderCollection` stamps actions with. Mixing
         // Date.now() in here would make every action window miss.
         timestamp: monotonicTime(),
+        initiatedAt: requestStartedAt.get(response.request()),
       });
     });
     this._crx.player.on('start', () => {
@@ -273,12 +290,23 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
 
     const origin = this._journeyOrigin();
 
+    // Everything observed OUTSIDE every action window is background by
+    // definition — nothing the author did was in flight. Computed once for the
+    // whole recording so each step is classified against the same evidence.
+    const actionWindows = actions
+      .filter(a => a.endTime !== undefined)
+      .map(a => ({ start: a.startTime, end: a.endTime as number + SETTLE_TAIL_MS }));
+    const idleResponses = this._network.outside(actionWindows);
+
     // Map to BrowserStep[] format (no generated code snippets)
     const browserSteps = mapActionsToBrowserSteps(actions, action => {
       if (!origin || action.endTime === undefined)
         return undefined;
-      const responses = this._network.between(action.startTime, action.endTime);
-      const patterns = buildSettlePatterns(origin, responses);
+      const responses = this._network.between(action.startTime, action.endTime, SETTLE_TAIL_MS);
+      const patterns = buildSettlePatterns(origin, responses, {
+        actionStart: action.startTime,
+        idleResponses,
+      });
       return patterns.length ? patterns : undefined;
     });
 

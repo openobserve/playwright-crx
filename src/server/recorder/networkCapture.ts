@@ -45,7 +45,31 @@ export type CapturedResponse = {
   contentType: string;
   /** When the response arrived, so it can be attributed to an action window. */
   timestamp: number;
+  /**
+   * When the REQUEST began.
+   *
+   * A response that arrived inside an action's window is not necessarily caused
+   * by it: a call that normally fires before the action, delayed during
+   * recording, lands in the window and is stored as that step's signal. On
+   * replay the probe arms its watcher at the start of the step, the call has
+   * already fired during the PREVIOUS step, and the signal is reported stale on
+   * every run forever — burning the full settle budget each time and poisoning
+   * the failure attribution of the next real failure.
+   *
+   * Optional so an older caller that does not supply it keeps today's behaviour
+   * rather than having every response silently discarded.
+   */
+  initiatedAt?: number;
 };
+
+/**
+ * A stretch of the recording when nothing the author did was in flight.
+ *
+ * The complement of the action windows. Anything observed here is background —
+ * polling, telemetry, websocket keepalives, token refresh — regardless of how
+ * many action windows it also appears in.
+ */
+export type IdleWindow = { start: number; end: number };
 
 export type SettleResponsePattern = {
   url_pattern: string;
@@ -144,22 +168,73 @@ export function isCandidateSignal(pageUrl: string, response: CapturedResponse): 
 }
 
 /**
+ * Was this response caused by the action, or merely concurrent with it?
+ *
+ * A request that BEGAN before the action began was not caused by it. This is the
+ * one test that separates the two deterministically; everything else about
+ * attribution is a time window and therefore approximate (§7.4).
+ *
+ * A response with no `initiatedAt` is accepted, so a caller that does not yet
+ * supply the field keeps today's behaviour instead of silently recording nothing.
+ */
+export function isCausedBy(response: CapturedResponse, actionStart: number): boolean {
+  return response.initiatedAt === undefined || response.initiatedAt >= actionStart;
+}
+
+/**
+ * Did this pattern also appear while nothing was happening?
+ *
+ * The discriminator for background traffic is **periodicity, not repetition**.
+ * Counting how often a pattern appears is the wrong test: three "Run Query"
+ * steps each firing `**\/_search` should all keep it — identical steps producing
+ * identical signals is evidence of correctness. The right question is whether
+ * the pattern also fires when the author did nothing, which no amount of
+ * repetition across action windows can answer.
+ *
+ * This reaches what the deny-list cannot: a customer's own first-party analytics
+ * passes the same-site, content-type, static-asset and known-vendor tests.
+ */
+export function isBackground(
+  response: CapturedResponse,
+  idleResponses: CapturedResponse[],
+): boolean {
+  const pattern = generalizeEndpointPattern(response.url);
+  if (!pattern) return false;
+  const method = response.method.toUpperCase();
+  return idleResponses.some(
+    r => r.method.toUpperCase() === method && generalizeEndpointPattern(r.url) === pattern,
+  );
+}
+
+/**
  * Turn the responses observed during one action into settle patterns.
  *
- * Ranking is by stability, not by recency: a pattern with fewer wildcards
- * describes a more specific endpoint and is less likely to be matched by
- * something unrelated. Ties break on observation order, so a deterministic
- * recording produces a deterministic bundle.
+ * Two filters run before ranking, and both remove signals that would otherwise
+ * cost a full settle budget on every single run of the monitor:
+ *
+ *  - **caused, not merely concurrent** — see `isCausedBy`.
+ *  - **not background** — see `isBackground`.
+ *
+ * Ranking then puts causal confidence ahead of specificity. Ranking by wildcard
+ * count alone meant a clean background path (`/api/v1/config`) outranked the
+ * causal call whose ids had been wildcarded (`/api/*\/orgs/*\/search`), so with
+ * more than five candidates the cap evicted the signal that mattered.
  */
 export function buildSettlePatterns(
   pageUrl: string,
   responses: CapturedResponse[],
+  options: { actionStart?: number; idleResponses?: CapturedResponse[] } = {},
 ): SettleResponsePattern[] {
+  const { actionStart, idleResponses = [] } = options;
   const seen = new Set<string>();
   const candidates: Array<{ pattern: SettleResponsePattern; wildcards: number; order: number }> = [];
 
   responses.forEach((response, order) => {
     if (!isCandidateSignal(pageUrl, response))
+      return;
+    if (actionStart !== undefined && !isCausedBy(response, actionStart))
+      return;
+    if (isBackground(response, idleResponses))
       return;
     const url_pattern = generalizeEndpointPattern(response.url);
     if (!url_pattern)
@@ -219,6 +294,19 @@ export class NetworkRecorder {
   /** Responses that landed within `[startTime, endTime + tail]`. */
   between(startTime: number, endTime: number, tailMs = 1000): CapturedResponse[] {
     return this._responses.filter(r => r.timestamp >= startTime && r.timestamp <= endTime + tailMs);
+  }
+
+  /**
+   * Responses that landed while no action window was open.
+   *
+   * `windows` are the action windows, in any order. Everything outside all of
+   * them was observed while the author did nothing, which is what makes it
+   * background rather than evidence.
+   */
+  outside(windows: IdleWindow[]): CapturedResponse[] {
+    return this._responses.filter(
+      r => !windows.some(w => r.timestamp >= w.start && r.timestamp <= w.end),
+    );
   }
 
   clear() {

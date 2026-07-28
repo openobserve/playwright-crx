@@ -25,7 +25,9 @@ import {
 } from '../../src/server/recorder/urlPattern';
 import {
   buildSettlePatterns,
+  isBackground,
   isCandidateSignal,
+  isCausedBy,
   isSameSite,
   MAX_SETTLE_PATTERNS,
   NetworkRecorder,
@@ -584,4 +586,74 @@ test('flow control is reported rather than silently ignored', () => {
 test('a retired action and an upload are never reported as a pass', () => {
   expect(describeStepFidelity(step({ action: 'waitFor' as any }), 0).level).toBe('not_simulated');
   expect(describeStepFidelity(step({ action: 'setInputFiles' }), 0).level).toBe('not_simulated');
+});
+
+
+// ── Phase 3: settle capture fidelity ────────────────────────────────────────
+//
+// Two failure modes, opposite directions, both verified against a real
+// recording. Neither can fail a run — settle signals are advisory — but a
+// permanently-stale signal burns the full 30s settle budget on EVERY run and
+// poisons the failure attribution of the next real failure.
+
+const R = (url: string, over: Partial<Parameters<typeof isCausedBy>[0]> = {}) => ({
+  url,
+  method: 'GET',
+  status: 200,
+  contentType: 'application/json',
+  timestamp: 1000,
+  ...over,
+});
+
+test('a request that began before the action was not caused by it', () => {
+  // The mis-attribution case: a call that normally fires during the PREVIOUS
+  // step, delayed into this one's window. On replay the probe arms its watcher
+  // at the start of this step, the call has already fired, and the signal is
+  // stale forever.
+  expect(isCausedBy(R('https://x.test/a', { initiatedAt: 900 }), 1000)).toBe(false);
+  expect(isCausedBy(R('https://x.test/a', { initiatedAt: 1100 }), 1000)).toBe(true);
+  // No timing available — keep today's behaviour rather than drop everything.
+  expect(isCausedBy(R('https://x.test/a'), 1000)).toBe(true);
+});
+
+test('a pattern seen while nothing was happening is background', () => {
+  const idle = [R('https://x.test/api/v1/config', { timestamp: 5000 })];
+  expect(isBackground(R('https://x.test/api/v1/config'), idle)).toBe(true);
+  expect(isBackground(R('https://x.test/api/default/_search'), idle)).toBe(false);
+});
+
+test('identical steps keep identical signals — repetition is not the test', () => {
+  // Three "Run Query" steps each firing **/_search SHOULD all carry it.
+  // Counting occurrences across action windows would wrongly drop it; only
+  // presence in an IDLE window marks a pattern as background.
+  const idle = [R('https://x.test/api/v1/config', { timestamp: 5000 })];
+  const search = R('https://x.test/api/default/_search', { method: 'POST' });
+  for (let i = 0; i < 3; i++)
+    expect(isBackground(search, idle)).toBe(false);
+});
+
+test('buildSettlePatterns drops background and uncaused responses', () => {
+  const page = 'https://x.test/web/logs';
+  const idle = [R('https://x.test/api/v1/config', { timestamp: 5000 })];
+  const patterns = buildSettlePatterns(
+    page,
+    [
+      // caused, first-party, not background — kept
+      R('https://x.test/api/default/_search', { method: 'POST', initiatedAt: 1100 }),
+      // polls during idle — dropped however often it appears here
+      R('https://x.test/api/v1/config', { initiatedAt: 1100 }),
+      // began before the action — dropped
+      R('https://x.test/api/default/streams', { initiatedAt: 900 }),
+    ],
+    { actionStart: 1000, idleResponses: idle },
+  );
+  expect(patterns.map(p => p.url_pattern)).toEqual(['**/api/default/_search']);
+});
+
+test('with no options, capture behaves exactly as before', () => {
+  // Existing callers must not silently start recording nothing.
+  const patterns = buildSettlePatterns('https://x.test/web', [
+    R('https://x.test/api/default/_search', { method: 'POST' }),
+  ]);
+  expect(patterns).toHaveLength(1);
 });
