@@ -61,15 +61,40 @@ const KIND_RANK: Record<LocatorKind, number> = {
 };
 
 /**
- * Classify one of Playwright's generated selectors.
+ * Engine tokens that select by position rather than by identity.
  *
- * The generator emits its own engine prefixes (`internal:testid=`,
- * `internal:role=`, …). Reading the prefix is exact, which is why the runner no
- * longer has to sniff the selector string with a regex to decide how strictly to
- * match it.
+ * Playwright appends one only when nothing identified the element uniquely
+ * (`selectorGenerator.ts` `chooseFirstSelector`: it returns the tokens unchanged
+ * on `result.length === 1`, and otherwise appends `nth`). Their presence is
+ * therefore a direct record of "the recorder could not tell these elements
+ * apart" — and their ABSENCE is a proof that the selector resolved to exactly
+ * one element at record time. That proof is what makes demoting them safe: it
+ * promotes verified-unique evidence over known-ambiguous evidence, never
+ * something weaker.
  */
-export function classifySelector(selector: string): LocatorKind {
-  const s = selector.trim();
+const POSITIONAL_TOKEN = /(?:^|>>)\s*nth=|:nth-match\(|:nth-child\(/;
+
+/**
+ * Does this selector depend on how many siblings happen to be on the page?
+ *
+ * Cheap and deliberately syntactic. A false positive is a demotion, never a
+ * dropped candidate, so the failure mode is a slightly worse ordering rather
+ * than a broken step. (A literal `:nth-child(` inside recorded text would be
+ * one; no real page has produced it.)
+ */
+export function isPositionalSelector(selector: string): boolean {
+  return POSITIONAL_TOKEN.test(selector);
+}
+
+/**
+ * Classify a single engine token.
+ *
+ * The generator emits its own prefixes (`internal:testid=`, `internal:role=`,
+ * …), so reading the prefix is exact for one token — which is why the runner no
+ * longer has to sniff the selector string with a regex.
+ */
+function classifyToken(token: string): LocatorKind {
+  const s = token.trim();
   if (s.startsWith('internal:testid=') || s.startsWith('data-testid=') || /^\[data-test/.test(s))
     return 'test_attribute';
   if (s.startsWith('internal:role=') || s.startsWith('role='))
@@ -87,6 +112,36 @@ export function classifySelector(selector: string): LocatorKind {
   if (s.startsWith('xpath=') || s.startsWith('//') || s.startsWith('..'))
     return 'xpath';
   return 'css';
+}
+
+/**
+ * The least stable identifying token in a chain.
+ *
+ * `A >> B` finds B within A, so the chain is only as stable as its least stable
+ * link — a testid parent does not rescue a class-name child. A trailing `nth=`
+ * is excluded because it says WHICH match to take, not HOW the element was
+ * found; positionality is tracked separately by `isPositionalSelector`. Folding
+ * it into the kind would destroy the information that identification WAS by test
+ * attribute, which is exactly what the editor needs to explain the step.
+ */
+function weakestLink(selector: string): string {
+  const parts = selector.split('>>').map(p => p.trim()).filter(Boolean);
+  const identifying = parts.filter(p => !/^nth=/.test(p));
+  if (!identifying.length)
+    return selector.trim();
+  return identifying.reduce((worst, part) =>
+    KIND_RANK[classifyToken(part)] > KIND_RANK[classifyToken(worst)] ? part : worst);
+}
+
+/**
+ * Classify one of Playwright's generated selectors, chain included.
+ *
+ * Prefix-only classification called `internal:testid=[data-test="row"] >> div.name`
+ * a `test_attribute` and put it at the top of the rank. It is a class name away
+ * from breaking, so it is `css`.
+ */
+export function classifySelector(selector: string): LocatorKind {
+  return classifyToken(weakestLink(selector));
 }
 
 /**
@@ -110,8 +165,23 @@ export function buildLocatorBundle(selectors: string[] | undefined, primary?: st
         seen.add(s);
         return true;
       })
-      .map((value, index) => ({ candidate: { kind: classifySelector(value), value }, index }))
-      .sort((a, b) => KIND_RANK[a.candidate.kind] - KIND_RANK[b.candidate.kind] || a.index - b.index)
+      .map((value, index) => ({
+        candidate: { kind: classifySelector(value), value },
+        positional: isPositionalSelector(value),
+        index,
+      }))
+      // Positionality outranks kind, because Playwright's own scoring says so:
+      // `kNthScore` is 10000 against kind scores of 500-530. A candidate without
+      // an index matched exactly one element when it was recorded; one with an
+      // index did not. Better evidence of a WORSE kind still beats worse
+      // evidence of a better one, and this restores the ordering spec P2.3.2
+      // asks us to preserve rather than override. Sorting positional last
+      // additionally means the cap below can no longer evict the only
+      // unambiguous way to find the element.
+      .sort((a, b) =>
+        Number(a.positional) - Number(b.positional) ||
+        KIND_RANK[a.candidate.kind] - KIND_RANK[b.candidate.kind] ||
+        a.index - b.index)
       .slice(0, MAX_LOCATOR_CANDIDATES)
       .map(c => c.candidate);
 

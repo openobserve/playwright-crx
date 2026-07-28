@@ -15,6 +15,7 @@ import { expect, test } from '@playwright/test';
 import {
   buildLocatorBundle,
   classifySelector,
+  isPositionalSelector,
   MAX_LOCATOR_CANDIDATES,
 } from '../../src/server/recorder/locatorBundle';
 import {
@@ -80,6 +81,77 @@ test('drops duplicates and falls back to the primary when there is no list', () 
 
 test('the recorder never pins — user_override is author intent only', () => {
   expect(buildLocatorBundle(['.a'])?.user_override).toBeUndefined();
+});
+
+// ── Phase 2a: positional locators ───────────────────────────────────────────
+
+test('recognises every positional shape the generator emits', () => {
+  // `nth=` engine token — chooseFirstSelector's last resort.
+  expect(isPositionalSelector('[data-test="row"] >> nth=1')).toBe(true);
+  // Chained CSS positional — joinTokens.
+  expect(isPositionalSelector('div >> :nth-match(button, 2)')).toBe(true);
+  // Ancestor-chain positional — cssFallback.
+  expect(isPositionalSelector('body > div:nth-child(3) > span')).toBe(true);
+  // Not positional.
+  expect(isPositionalSelector('[data-test="login-sign-in"]')).toBe(false);
+  expect(isPositionalSelector('internal:role=button[name="Sign In"i]')).toBe(false);
+  // `nth` inside a text payload is content, not an index.
+  expect(isPositionalSelector('internal:text="10th anniversary"i')).toBe(false);
+});
+
+test('a chain is classified by its weakest link, not by its prefix', () => {
+  // Prefix-only classification called this `test_attribute` and put it at the
+  // top of the rank. It is a class name away from breaking, so it is `css`.
+  expect(classifySelector('internal:testid=[data-test="row"] >> div.name')).toBe('css');
+  // The trailing index says WHICH match to take, not HOW the element was found,
+  // so it must not drag the whole chain down to `css`.
+  expect(classifySelector('[data-test="row"] >> nth=1')).toBe('test_attribute');
+  expect(classifySelector('internal:role=button[name="Save"i] >> nth=0')).toBe('role');
+  // Text reached through a structural parent is only as good as that parent.
+  expect(classifySelector('div >> internal:has-text=/^Acme Corp$/ >> nth=0')).toBe('css');
+  // Single-token behaviour is unchanged.
+  expect(classifySelector('.btn-primary > span')).toBe('css');
+});
+
+test('a verified-unique candidate outranks a positional one of any kind', () => {
+  // The observed production shape: the recorder could not identify the
+  // org-switcher, so its test-attribute candidate carries an index. Ranking on
+  // kind alone put that ambiguous candidate first.
+  const bundle = buildLocatorBundle([
+    '[data-test="organization-menu-item-label-item-label"] >> nth=1',
+    'internal:role=button[name="Save draft"i]',
+  ]);
+  expect(bundle?.candidates[0].value).toBe('internal:role=button[name="Save draft"i]');
+  expect(bundle?.candidates[1].value).toContain('nth=1');
+});
+
+test('the cap can no longer evict the only unambiguous candidate', () => {
+  // Five positional candidates plus one clean one. Under kind-only ordering the
+  // clean candidate could be sliced off entirely and never stored.
+  const bundle = buildLocatorBundle([
+    '[data-test="a"] >> nth=0',
+    '[data-test="b"] >> nth=1',
+    '[data-test="c"] >> nth=2',
+    '[data-test="d"] >> nth=3',
+    '[data-test="e"] >> nth=4',
+    'internal:role=link[name="Only unique"i]',
+  ]);
+  expect(bundle?.candidates).toHaveLength(MAX_LOCATOR_CANDIDATES);
+  expect(bundle?.candidates[0].value).toBe('internal:role=link[name="Only unique"i]');
+});
+
+test('an all-positional bundle keeps its generator order — ranking alone cannot help', () => {
+  // Both candidates are positional, so re-sorting them changes nothing. This is
+  // why the editor notice is not an optional extra: the flag has to drive
+  // behaviour, not just order.
+  const bundle = buildLocatorBundle([
+    '[data-test="row"] >> nth=1',
+    'div >> internal:has-text=/^Acme$/ >> nth=0',
+  ]);
+  expect(bundle?.candidates.map(c => c.value)).toEqual([
+    '[data-test="row"] >> nth=1',
+    'div >> internal:has-text=/^Acme$/ >> nth=0',
+  ]);
 });
 
 // ── T3-1: URL generalization ────────────────────────────────────────────────
