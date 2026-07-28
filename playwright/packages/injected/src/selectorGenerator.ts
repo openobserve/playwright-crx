@@ -101,7 +101,16 @@ export function generateSelector(injectedScript: InjectedScript, targetElement: 
           targetElement = interactiveParent;
       }
       if (options.multiple) {
-        const withText = generateSelectorFor(cache, injectedScript, targetElement, options);
+        // The PRIMARY must stay byte-identical to what the single-selector path
+        // below produces, because it is what gets recorded and replayed. Without
+        // the cssFallback here the two diverge whenever the with-text pass finds
+        // nothing — a <textarea>, for instance, where the single path yields
+        // `textarea` and this one silently yielded the no-text pass's
+        // `internal:role=textbox`, which matches every textbox on the page.
+        // Widening the candidate list must never change which element the step
+        // acts on.
+        const withText = generateSelectorFor(cache, injectedScript, targetElement, options)
+            || cssFallback(injectedScript, targetElement, options);
         const withoutText = generateSelectorFor(cache, injectedScript, targetElement, { ...options, noText: true });
         let tokens = [withText, withoutText];
 
@@ -113,6 +122,19 @@ export function generateSelector(injectedScript: InjectedScript, targetElement: 
           tokens.push(generateSelectorFor(cache, injectedScript, targetElement, { ...options, noCSSId: true }));
         if (withoutText && hasCSSIdToken(withoutText))
           tokens.push(generateSelectorFor(cache, injectedScript, targetElement, { ...options, noText: true, noCSSId: true }));
+
+        // A test attribute outranks everything else, so without this the list
+        // collapses to a single testid selector — several spellings of the same
+        // idea rather than several independent ways to find the element. That
+        // matters precisely in the case fallback exists for: when the test
+        // attribute is RENAMED, every testid-derived candidate breaks together
+        // and a fallback list made only of them is worth nothing.
+        cache.allowText.clear();
+        cache.disallowText.clear();
+        tokens.push(generateSelectorFor(cache, injectedScript, targetElement, { ...options, noTestId: true }));
+        cache.allowText.clear();
+        cache.disallowText.clear();
+        tokens.push(generateSelectorFor(cache, injectedScript, targetElement, { ...options, noText: true, noTestId: true }));
 
         tokens = tokens.filter(Boolean);
         if (!tokens.length) {
@@ -145,7 +167,7 @@ function filterRegexTokens(textCandidates: SelectorToken[][]): SelectorToken[][]
   return textCandidates.filter(c => c[0].selector[0] !== '/');
 }
 
-type InternalOptions = GenerateSelectorOptions & { noText?: boolean, noCSSId?: boolean };
+type InternalOptions = GenerateSelectorOptions & { noText?: boolean, noCSSId?: boolean, noTestId?: boolean };
 
 function generateSelectorFor(cache: Cache, injectedScript: InjectedScript, targetElement: Element, options: InternalOptions): SelectorToken[] | null {
   if (options.root && !isInsideScope(options.root, targetElement))
@@ -235,7 +257,7 @@ function buildNoTextCandidates(injectedScript: InjectedScript, element: Element,
   // CSS selectors are applicable to elements via locator() and iframes via frameLocator().
   {
     for (const attr of ['data-testid', 'data-test-id', 'data-test']) {
-      if (attr !== options.testIdAttributeName && element.getAttribute(attr))
+      if (!options.noTestId && attr !== options.testIdAttributeName && element.getAttribute(attr))
         candidates.push({ engine: 'css', selector: `[${attr}=${quoteCSSAttributeValue(element.getAttribute(attr)!)}]`, score: kOtherTestIdScore });
     }
 
@@ -255,7 +277,7 @@ function buildNoTextCandidates(injectedScript: InjectedScript, element: Element,
     }
 
     // Locate by testId via CSS selector.
-    if (element.getAttribute(options.testIdAttributeName))
+    if (!options.noTestId && element.getAttribute(options.testIdAttributeName))
       candidates.push({ engine: 'css', selector: `[${options.testIdAttributeName}=${quoteCSSAttributeValue(element.getAttribute(options.testIdAttributeName)!)}]`, score: kTestIdScore });
 
     penalizeScoreForLength([candidates]);
@@ -263,7 +285,7 @@ function buildNoTextCandidates(injectedScript: InjectedScript, element: Element,
   }
 
   // Everything below is not applicable to iframes (getBy* methods).
-  if (element.getAttribute(options.testIdAttributeName))
+  if (!options.noTestId && element.getAttribute(options.testIdAttributeName))
     candidates.push({ engine: 'internal:testid', selector: `[${options.testIdAttributeName}=${escapeForAttributeSelector(element.getAttribute(options.testIdAttributeName)!, true)}]`, score: kTestIdScore });
 
   if (element.nodeName === 'INPUT' || element.nodeName === 'TEXTAREA') {

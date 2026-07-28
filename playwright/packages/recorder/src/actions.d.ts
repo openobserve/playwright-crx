@@ -40,6 +40,14 @@ export type ActionBase = {
 
 export type ActionWithSelector = ActionBase & {
   selector: string,
+  // Every selector the generator produced for this element, ordered
+  // most-stable-first. `selector` is `selectors[0]`.
+  //
+  // The generator has always been able to return the whole ranked list
+  // (`generateSelector(..., { multiple: true })`); the recorder simply threw it
+  // away. Carrying it here is what lets a monitor survive a cosmetic markup
+  // change instead of breaking on it.
+  selectors?: string[],
 };
 
 export type ClickAction = ActionWithSelector & {
@@ -80,6 +88,7 @@ export type ClosesPageAction = ActionBase & {
 export type PressAction = ActionBase & {
   name: 'press',
   selector: string,
+  selectors?: string[],
   key: string,
   modifiers: number,
 };
