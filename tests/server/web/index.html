@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Dashboard</title>
+</head>
+<body>
+  <!-- The post-login page. Its element is the one production times out on. -->
+  <div id="app"></div>
+  <script>
+    setTimeout(() => {
+      const icon = document.createElement('button');
+      icon.setAttribute('data-test', 'header-my-account-profile-icon');
+      icon.textContent = 'Profile';
+      document.getElementById('app').appendChild(icon);
+    }, 300);
+  </script>
+</body>
+</html>

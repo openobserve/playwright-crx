@@ -54,7 +54,25 @@ export type ExtensionToO2Payload =
   | { method: 'recordingStarted'; tabId: number; url: string }
   | { method: 'recordingStopped'; totalSteps: number }
   | { method: 'stepReplayStarted'; stepId: string; stepName?: string }
-  | { method: 'stepReplayResult'; stepId: string; stepName?: string; passed: boolean; duration_ms: number; error?: string; structuredError?: StructuredError };
+  | {
+    method: 'stepReplayResult';
+    stepId: string;
+    stepName?: string;
+    passed: boolean;
+    duration_ms: number;
+    error?: string;
+    structuredError?: StructuredError;
+    /**
+     * What the preview could not evaluate for this step (spec P2.S/P3.S/P4.S/P5.S).
+     *
+     * Present only when there is something to say. A green result WITH notes is a
+     * weaker claim than a green result without, and the difference has to reach
+     * the author — a sleep-free journey can replay faster than the application
+     * responds and fail here on a step the probe would pass, and an author who
+     * reads that as a step problem will re-add a sleep.
+     */
+    fidelity?: { level: 'exact' | 'approximate' | 'not_simulated'; notes: string[] };
+  };
 
 export type ExtensionToO2Message = {
   type: 'synthetics-recorder';

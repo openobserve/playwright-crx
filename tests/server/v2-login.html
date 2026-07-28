@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Version-2 capture fixture</title>
+</head>
+<body>
+  <!--
+    The journey Phases 2-4 exist for, in miniature.
+
+    Signing in makes a same-site API call and then navigates. That gives the
+    recorder all three kinds of evidence at once: several ways to find the
+    button (a test attribute, a role, a CSS path), a response worth waiting on,
+    and a navigation to generalize into a URL pattern.
+
+    Selectors mirror tests/ui-testing/pages/generalPages/loginPage.js so the
+    fixture exercises the same locator shapes as the real monitored journey.
+  -->
+  <h1>Version-2 capture fixture</h1>
+
+  <input data-test="login-user-id-field" placeholder="email" />
+  <input data-test="login-password-field" type="password" placeholder="password" />
+  <button data-test="login-sign-in" class="btn btn-primary">Sign In</button>
+
+  <script>
+    document.querySelector('[data-test="login-sign-in"]').addEventListener('click', () => {
+      // The pause is not decoration. The injected recorder stalls a single
+      // click for 200ms in case a double-click follows, so a page that
+      // navigates faster than that tears the recorder down before the click is
+      // ever committed — and the step simply never appears.
+      //
+      // The margin is deliberately generous rather than just-enough: at 300ms
+      // this test failed intermittently when several extension suites ran
+      // together, because the commit timer is wall-clock and a loaded machine
+      // eats the difference. A real login round-trip is slower than this, so a
+      // tight margin would be testing an unrealistic race rather than the
+      // recorder.
+      fetch('/api/session.json')
+          .then(() => { setTimeout(() => { location.href = '/web/index.html'; }, 1500); });
+    });
+  </script>
+</body>
+</html>

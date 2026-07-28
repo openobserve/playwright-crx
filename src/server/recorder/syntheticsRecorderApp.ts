@@ -32,6 +32,10 @@ import type { RecorderEventData, RecorderMessage, RecorderWindow } from './crxRe
 import { mapActionsToBrowserSteps } from './actionMapper';
 import type { BrowserStep } from './actionMapper';
 import { serverSideCallMetadata } from 'playwright-core/lib/server';
+import { BrowserContext } from 'playwright-core/lib/server/browserContext';
+import type { Response } from 'playwright-core/lib/server/network';
+import { monotonicTime } from 'playwright-core/lib/utils';
+import { NetworkRecorder, buildSettlePatterns } from './networkCapture';
 
 export type StructuredError = {
   message: string;
@@ -86,12 +90,33 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
   private _sources?: Source[];
   private _forwardCallback: SyntheticsForwardCallback;
   private _playInIncognito = false;
+  private _network = new NetworkRecorder();
 
-  constructor(crx: Crx, recorder: Recorder, forwardCallback: SyntheticsForwardCallback) {
+  constructor(
+    crx: Crx,
+    recorder: Recorder,
+    forwardCallback: SyntheticsForwardCallback,
+    context?: BrowserContext,
+  ) {
     super();
     this._crx = crx;
     this._recorder = recorder;
     this._forwardCallback = forwardCallback;
+
+    // P4.1.1 — the source is the extension's real Playwright context, not raw
+    // CDP. It is the same API the probe waits on, so one matcher serves both
+    // sides and a recorded pattern cannot be one the runner could never match.
+    context?.on(BrowserContext.Events.Response, (response: Response) => {
+      this._network.record({
+        url: response.url(),
+        method: response.request().method(),
+        status: response.status(),
+        contentType: response.headerValue('content-type') ?? '',
+        // The same clock `recorderCollection` stamps actions with. Mixing
+        // Date.now() in here would make every action window miss.
+        timestamp: monotonicTime(),
+      });
+    });
     this._crx.player.on('start', () => {
       this._recorder.clearErrors();
       this.resetCallLogs().catch(() => {});
@@ -161,6 +186,15 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
   }
 
   async setMode(mode: Mode) {
+    // P4.S.2 — network evidence is collected only while RECORDING. Replay runs
+    // incognito on the author's machine, so its timings and its traffic are
+    // incomparable to a probe location; letting a replay update settle patterns
+    // would quietly overwrite production evidence with laptop evidence.
+    if (this._recorder._isRecording())
+      this._network.enable();
+    else
+      this._network.disable();
+
     if (!this._recorder._isRecording())
       this._crx.player.pause().catch(() => {});
     else
@@ -216,14 +250,37 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
     this._sendMessage({ type: 'recorder', method: 'updateCallLogs', callLogs });
   }
 
+  /**
+   * The origin a recorded request is judged "same-site" against.
+   *
+   * Taken from the journey's own first navigation rather than from whatever page
+   * happens to be focused: that is the site the monitor is about, it is stable
+   * for the whole recording, and it needs no per-request frame walking.
+   */
+  private _journeyOrigin(): string | undefined {
+    for (const a of this._recordedActions) {
+      if (a.action.name === 'navigate' || a.action.name === 'openPage')
+        return a.action.url;
+    }
+    return undefined;
+  }
+
   async setActions(actions: ActionInContext[], sources: Source[]) {
     // eslint-disable-next-line no-console
     console.log('setActions ---', actions, sources);
     this._recordedActions = Array.from(actions);
     this._sources = Array.from(sources);
 
+    const origin = this._journeyOrigin();
+
     // Map to BrowserStep[] format (no generated code snippets)
-    const browserSteps = mapActionsToBrowserSteps(actions);
+    const browserSteps = mapActionsToBrowserSteps(actions, action => {
+      if (!origin || action.endTime === undefined)
+        return undefined;
+      const responses = this._network.between(action.startTime, action.endTime);
+      const patterns = buildSettlePatterns(origin, responses);
+      return patterns.length ? patterns : undefined;
+    });
 
     const msg: SyntheticsForwardMessage = {
       type: 'recorder',

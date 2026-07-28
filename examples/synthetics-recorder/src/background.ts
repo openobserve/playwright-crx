@@ -9,7 +9,8 @@
  * 4. Auto-stops on tab close
  */
 
-import playwright, { crx, Crx, SyntheticsRecorderApp, mapBrowserStepsToActions } from 'playwright-crx';
+import playwright, { crx, Crx, SyntheticsRecorderApp, mapBrowserStepsToActions, describeReplayFidelity } from 'playwright-crx';
+import type { StepFidelity } from 'playwright-crx';
 import type { Mode } from '@recorder/recorderTypes';
 import type { CrxApplication } from 'playwright-crx';
 import type { BrowserStep, SyntheticsForwardMessage, StepResultData, StepStartedData, StructuredError } from 'playwright-crx';
@@ -34,6 +35,10 @@ let replaySteps: BrowserStep[] = [];
  *  converts it to 'openPage', which CrxPlayer.run() skips entirely (no events).
  *  This shifts all subsequent actionIndex values by +1 relative to replaySteps. */
 let replayActionOffset = 0;
+/** Per-step record of what the preview could NOT simulate (spec P2.S/P3.S/P4.S/P5.S).
+ *  Computed once per replay so every step result can carry its own caveats and no
+ *  skipped step is ever reported as a plain pass. */
+let replayFidelity: StepFidelity[] = [];
 
 // Long-lived connection back to the O2 web app running in a browser tab.
 // The O2 app opens this via chrome.runtime.connect(extensionId, { name: 'synthetics-recorder' }).
@@ -64,7 +69,8 @@ function resolveTestIdAttr(testIdAttr?: string): string {
 function init() {
   // Set the factory override BEFORE any CRX operations
   Crx.recorderAppFactoryOverride = async (crxInstance, recorder, _context) => {
-    const app = new SyntheticsRecorderApp(crxInstance, recorder, handleRecorderMessage);
+    // The context is what the app listens on for response evidence (Phase 4).
+    const app = new SyntheticsRecorderApp(crxInstance, recorder, handleRecorderMessage, _context);
     app.on('show', () => { /* headless — no UI */ });
     app.on('hide', () => { /* headless — no UI */ });
     app.on('modeChanged', ({ mode }) => {
@@ -333,6 +339,11 @@ function handleRecorderMessage(msg: SyntheticsForwardMessage) {
           duration_ms: result.duration_ms,
           error: result.error,
           structuredError: result.structuredError,
+          // What the preview did not actually evaluate for this step. A green
+          // result with notes is not the same claim as a green result without.
+          fidelity: replayFidelity[stepIndex]?.notes?.length
+            ? { level: replayFidelity[stepIndex].level, notes: replayFidelity[stepIndex].notes }
+            : undefined,
         },
       });
       if (recordingTabId) {
@@ -602,6 +613,7 @@ async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr
 
   replayStopped = false;
   replaySteps = steps;
+  replayFidelity = describeReplayFidelity(steps);
   // When the first step is a navigate with URL, mapBrowserStepsToActions converts
   // it to openPage, which the player skips — offset action indices by +1.
   replayActionOffset = (steps.length > 0 && steps[0].action === 'navigate' && !!steps[0].url) ? 1 : 0;

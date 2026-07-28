@@ -1,0 +1,342 @@
+/**
+ * Version-2 capture: unit-level proof for the pure parts of Phases 2–5.
+ *
+ * These are the pieces that decide what a recorded journey MEANS — which
+ * selectors survive, which URL patterns will still match next month, which
+ * network calls are worth waiting on, and what the preview is honest about not
+ * simulating. All of them are pure functions on purpose (spec P3.1.3), so they
+ * can be pinned down here without a browser and without a recording session.
+ *
+ * The browser-level proof that the recorder actually produces this shape lives
+ * in synthetics-v2-recording.spec.ts.
+ */
+import { expect, test } from '@playwright/test';
+
+import {
+  buildLocatorBundle,
+  classifySelector,
+  MAX_LOCATOR_CANDIDATES,
+} from '../../src/server/recorder/locatorBundle';
+import {
+  generalizeEndpointPattern,
+  generalizeUrlPattern,
+  isDynamicSegment,
+} from '../../src/server/recorder/urlPattern';
+import {
+  buildSettlePatterns,
+  isCandidateSignal,
+  isSameSite,
+  MAX_SETTLE_PATTERNS,
+  NetworkRecorder,
+} from '../../src/server/recorder/networkCapture';
+import { describeStepFidelity } from '../../src/server/recorder/replayFidelity';
+import {
+  mapActionsToBrowserSteps,
+  mapBrowserStepsToActions,
+} from '../../src/server/recorder/actionMapper';
+import type { BrowserStep } from '../../src/server/recorder/actionMapper';
+
+// ── T2-3: locator bundles ───────────────────────────────────────────────────
+
+test('classifies every selector shape the generator emits', () => {
+  expect(classifySelector('internal:testid=[data-testid="login-sign-in"]s')).toBe('test_attribute');
+  expect(classifySelector('[data-test="login-sign-in"]')).toBe('test_attribute');
+  expect(classifySelector('internal:role=button[name="Sign In"i]')).toBe('role');
+  expect(classifySelector('internal:text="Sign In"i')).toBe('text');
+  expect(classifySelector('internal:label="Password"i')).toBe('text');
+  expect(classifySelector('xpath=//button[1]')).toBe('xpath');
+  expect(classifySelector('//button[1]')).toBe('xpath');
+  expect(classifySelector('.btn-primary > span')).toBe('css');
+});
+
+test('orders a bundle most-survivable-first, not generator-first', () => {
+  // The generator's own order puts a text-based selector first here. Rank has to
+  // win: once markup changes, a lower-ranked candidate may match a DIFFERENT
+  // element, so the runner needs the most stable one at the front.
+  const bundle = buildLocatorBundle([
+    'internal:text="Sign In"i',
+    '.btn.btn-primary',
+    'internal:testid=[data-testid="login-sign-in"]s',
+    'internal:role=button[name="Sign In"i]',
+  ]);
+  expect(bundle?.candidates.map(c => c.kind)).toEqual(['test_attribute', 'role', 'text', 'css']);
+});
+
+test('keeps the generator order between candidates of the same kind', () => {
+  const bundle = buildLocatorBundle(['.a', '.b', '.c']);
+  expect(bundle?.candidates.map(c => c.value)).toEqual(['.a', '.b', '.c']);
+});
+
+test('caps the bundle — the fifth way to find an element buys almost nothing', () => {
+  const bundle = buildLocatorBundle(['.a', '.b', '.c', '.d', '.e', '.f', '.g']);
+  expect(bundle?.candidates).toHaveLength(MAX_LOCATOR_CANDIDATES);
+});
+
+test('drops duplicates and falls back to the primary when there is no list', () => {
+  expect(buildLocatorBundle(['.a', '.a', '.b'])?.candidates).toHaveLength(2);
+  expect(buildLocatorBundle(undefined, '#only')?.candidates).toEqual([{ kind: 'css', value: '#only' }]);
+  expect(buildLocatorBundle([], undefined)).toBeUndefined();
+});
+
+test('the recorder never pins — user_override is author intent only', () => {
+  expect(buildLocatorBundle(['.a'])?.user_override).toBeUndefined();
+});
+
+// ── T3-1: URL generalization ────────────────────────────────────────────────
+
+test('recognises values masquerading as path segments', () => {
+  expect(isDynamicSegment('3f2504e0-4f89-11d3-9a0c-0305e82c3301')).toBe(true);
+  expect(isDynamicSegment('10025512')).toBe(true);
+  expect(isDynamicSegment('1721030400000')).toBe(true);
+  expect(isDynamicSegment('order-10025512')).toBe(true);
+  expect(isDynamicSegment('5f4dcc3b5aa765d61d8327deb882cf99')).toBe(true);
+  // …and leaves names alone.
+  expect(isDynamicSegment('web')).toBe(false);
+  expect(isDynamicSegment('logs')).toBe(false);
+  expect(isDynamicSegment('v2')).toBe(false);
+});
+
+test('generalizes the canonical login redirect to the spec pattern', () => {
+  // The reference target from tests/ui-testing/pages/generalPages/loginPage.js:
+  // page.waitForURL(BASE + "/web/") becomes **/web/**.
+  expect(generalizeUrlPattern('https://o2.introspect.dev/web/')).toBe('**/web/**');
+  expect(generalizeUrlPattern('https://o2.introspect.dev/web')).toBe('**/web/**');
+});
+
+test('wildcards ids and strips the query string (X-4)', () => {
+  expect(generalizeUrlPattern('https://app.example.com/orgs/10025512/logs?token=abc'))
+      .toBe('**/orgs/*/logs/**');
+  expect(generalizeUrlPattern('https://app.example.com/web/#/logs')).toBe('**/web/**');
+});
+
+test('refuses to invent a pattern for a bare origin', () => {
+  // "it navigated to the root" generalizes to something that matches nearly
+  // everything, which is not a wait condition. The X-6 backstop covers it.
+  expect(generalizeUrlPattern('https://app.example.com/')).toBeNull();
+  expect(generalizeUrlPattern('not a url')).toBeNull();
+});
+
+test('an endpoint pattern does not absorb everything after it', () => {
+  // **/api/users must not also match /api/users/1/delete.
+  expect(generalizeEndpointPattern('https://app.example.com/api/users?page=2')).toBe('**/api/users');
+  expect(generalizeEndpointPattern('https://app.example.com/api/users/10025512'))
+      .toBe('**/api/users/*');
+});
+
+// ── T4-1: network capture filtering ─────────────────────────────────────────
+
+test('same-site covers the origin and its subdomains, and nothing else', () => {
+  expect(isSameSite('https://app.example.com/login', 'https://app.example.com/api/x')).toBe(true);
+  expect(isSameSite('https://example.com/login', 'https://api.example.com/x')).toBe(true);
+  expect(isSameSite('https://api.example.com/login', 'https://example.com/x')).toBe(true);
+  expect(isSameSite('https://app.example.com/login', 'https://evil.com/x')).toBe(false);
+});
+
+test('keeps same-site JSON and drops assets, beacons and third parties', () => {
+  const page = 'https://app.example.com/login';
+  const base = { method: 'POST', status: 200, timestamp: 0 };
+
+  expect(isCandidateSignal(page, {
+    ...base, url: 'https://app.example.com/auth/login', contentType: 'application/json; charset=utf-8',
+  })).toBe(true);
+
+  expect(isCandidateSignal(page, {
+    ...base, url: 'https://app.example.com/static/main.js', contentType: 'application/javascript',
+  })).toBe(false);
+  expect(isCandidateSignal(page, {
+    ...base, url: 'https://www.google-analytics.com/collect', contentType: 'application/json',
+  })).toBe(false);
+  expect(isCandidateSignal(page, {
+    ...base, url: 'https://cdn.other.com/data.json', contentType: 'application/json',
+  })).toBe(false);
+  expect(isCandidateSignal(page, {
+    ...base, url: 'https://app.example.com/page', contentType: 'text/html',
+  })).toBe(false);
+  expect(isCandidateSignal(page, {
+    ...base, url: 'https://app.example.com/auth/login', contentType: 'application/json', status: 500,
+  })).toBe(false);
+});
+
+test('ranks patterns by stability, caps them, and never marks one required', () => {
+  const page = 'https://app.example.com/login';
+  const responses = [
+    // Most wildcards — least specific, so it must rank last despite being first.
+    { url: 'https://app.example.com/api/orgs/10025512/items/998877', method: 'GET', status: 200, contentType: 'application/json', timestamp: 1 },
+    { url: 'https://app.example.com/auth/login', method: 'POST', status: 200, contentType: 'application/json', timestamp: 2 },
+    { url: 'https://app.example.com/api/orgs/10025512/profile', method: 'GET', status: 200, contentType: 'application/json', timestamp: 3 },
+  ];
+  const patterns = buildSettlePatterns(page, responses);
+  expect(patterns.map(p => p.url_pattern)).toEqual([
+    '**/auth/login',
+    '**/api/orgs/*/profile',
+    '**/api/orgs/*/items/*',
+  ]);
+  // P4.1.5 — requiring a signal is an author act, never a recording.
+  expect(patterns.every(p => p.required === false)).toBe(true);
+});
+
+test('deduplicates by method and pattern, and honours the cap', () => {
+  const page = 'https://app.example.com/x';
+  const many = Array.from({ length: 12 }, (_, i) => ({
+    url: `https://app.example.com/api/e${i}`,
+    method: 'GET', status: 200, contentType: 'application/json', timestamp: i,
+  }));
+  const dupes = [
+    { url: 'https://app.example.com/api/a?page=1', method: 'GET', status: 200, contentType: 'application/json', timestamp: 0 },
+    { url: 'https://app.example.com/api/a?page=2', method: 'GET', status: 200, contentType: 'application/json', timestamp: 1 },
+  ];
+  expect(buildSettlePatterns(page, many)).toHaveLength(MAX_SETTLE_PATTERNS);
+  expect(buildSettlePatterns(page, dupes)).toHaveLength(1);
+});
+
+test('the recorder only collects while enabled, and windows responses per action', () => {
+  const recorder = new NetworkRecorder();
+  const res = (timestamp: number) => ({
+    url: 'https://app.example.com/api/x', method: 'GET', status: 200,
+    contentType: 'application/json', timestamp,
+  });
+
+  // Disabled by default: a replay must never overwrite recorded evidence (P4.S.2).
+  recorder.record(res(1));
+  expect(recorder.between(0, 100)).toHaveLength(0);
+
+  recorder.enable();
+  recorder.record(res(10));
+  recorder.record(res(50));
+  recorder.record(res(5000));
+  expect(recorder.between(0, 100)).toHaveLength(2);
+  expect(recorder.between(4000, 4500)).toHaveLength(1);
+
+  recorder.disable();
+  expect(recorder.between(0, 10000)).toHaveLength(0);
+});
+
+// ── T2-4 / T3-2 / X-9.3: the mapper ─────────────────────────────────────────
+
+function actionInContext(action: any, startTime = 0, endTime?: number) {
+  return {
+    frame: { pageAlias: 'page', framePath: [] },
+    action,
+    startTime,
+    endTime,
+  };
+}
+
+test('a click carries its whole bundle, and the primary stays where v1 consumers look', () => {
+  const [step] = mapActionsToBrowserSteps([
+    actionInContext({
+      name: 'click',
+      selector: 'internal:testid=[data-testid="login-sign-in"]s',
+      selectors: [
+        'internal:testid=[data-testid="login-sign-in"]s',
+        'internal:role=button[name="Sign In"i]',
+        '.btn-primary',
+      ],
+      button: 'left', modifiers: 0, clickCount: 1, signals: [],
+    }),
+  ]);
+  expect(step.selector).toBe('internal:testid=[data-testid="login-sign-in"]s');
+  expect(step.locator?.candidates.map(c => c.kind)).toEqual(['test_attribute', 'role', 'css']);
+});
+
+test('a navigation signal becomes a settle block instead of being discarded', () => {
+  const [step] = mapActionsToBrowserSteps([
+    actionInContext({
+      name: 'click',
+      selector: '[data-test="login-sign-in"]',
+      selectors: ['[data-test="login-sign-in"]'],
+      button: 'left', modifiers: 0, clickCount: 1,
+      signals: [{ name: 'navigation', url: 'https://o2.introspect.dev/web/' }],
+    }, 1_000, 3_400),
+  ]);
+  expect(step.settle?.navigation).toEqual({ url_pattern: '**/web/**' });
+  // Reporting only — never read as a timeout.
+  expect(step.settle?.observed_duration_ms).toBe(2_400);
+});
+
+test('check and uncheck survive the round trip instead of degrading to a click', () => {
+  const [check, uncheck] = mapActionsToBrowserSteps([
+    actionInContext({ name: 'check', selector: '#terms', selectors: ['#terms'], signals: [] }),
+    actionInContext({ name: 'uncheck', selector: '#news', selectors: ['#news'], signals: [] }),
+  ]);
+  expect(check.action).toBe('check');
+  expect(uncheck.action).toBe('uncheck');
+
+  const actions = mapBrowserStepsToActions([check, uncheck]);
+  expect(actions.map(a => a.action.name)).toEqual(['check', 'uncheck']);
+});
+
+test('recorded asserts arrive as typed assertions', () => {
+  const steps = mapActionsToBrowserSteps([
+    actionInContext({ name: 'assertVisible', selector: '#a', selectors: ['#a'], signals: [] }),
+    actionInContext({ name: 'assertText', selector: '#b', selectors: ['#b'], text: 'Welcome', substring: true, signals: [] }),
+    actionInContext({ name: 'assertValue', selector: '#c', selectors: ['#c'], value: 'omkar', signals: [] }),
+    actionInContext({ name: 'assertChecked', selector: '#d', selectors: ['#d'], checked: true, signals: [] }),
+  ]);
+  expect(steps.map(s => s.assertion)).toEqual([
+    { kind: 'element_visible' },
+    { kind: 'element_text', expected: 'Welcome' },
+    { kind: 'element_attribute', attribute: 'value', expected: 'omkar' },
+    { kind: 'element_attribute', attribute: 'checked', expected: 'true' },
+  ]);
+});
+
+// ── P2.S / P3.S / P4.S / P5.S: preview honesty ──────────────────────────────
+
+function step(overrides: Partial<BrowserStep>): BrowserStep {
+  return {
+    id: 's1', action: 'click', name: 'Step', startTime: 0,
+    pageAlias: 'page', framePath: [], ...overrides,
+  } as BrowserStep;
+}
+
+test('an ordinary step claims nothing it did not do', () => {
+  const fidelity = describeStepFidelity(step({ locator: { candidates: [{ kind: 'css', value: '#a' }] } }), 0);
+  expect(fidelity.level).toBe('exact');
+  expect(fidelity.notes).toEqual([]);
+});
+
+test('a bundle with fallbacks is reported as primary-locator-only', () => {
+  const fidelity = describeStepFidelity(step({
+    locator: { candidates: [{ kind: 'test_attribute', value: '#a' }, { kind: 'css', value: '.b' }] },
+  }), 0);
+  expect(fidelity.level).toBe('approximate');
+  expect(fidelity.notes.join(' ')).toContain('Primary locator only');
+});
+
+test('a settle block is reported as not simulated, and a required signal is flagged on top', () => {
+  const fidelity = describeStepFidelity(step({
+    settle: {
+      navigation: { url_pattern: '**/web/**' },
+      responses: [{ url_pattern: '**/auth/login', method: 'POST', required: true }],
+    },
+  }), 0);
+  expect(fidelity.level).toBe('not_simulated');
+  expect(fidelity.notes.join(' ')).toContain('Settle not simulated');
+  // P4.S.1 — an author who escalated a signal must not see a green preview that
+  // never evaluated it.
+  expect(fidelity.notes.join(' ')).toContain('required signal was not evaluated');
+});
+
+test('assertions the player can approximate are labelled, and the rest are not simulated', () => {
+  expect(describeStepFidelity(step({ action: 'assert', assertion: { kind: 'element_visible' } }), 0).level)
+      .toBe('approximate');
+  expect(describeStepFidelity(step({ action: 'assert', assertion: { kind: 'element_text', expected: 'x' } }), 0).level)
+      .toBe('approximate');
+  for (const kind of ['element_not_visible', 'url_matches', 'page_title', 'element_attribute'] as const) {
+    const fidelity = describeStepFidelity(step({ action: 'assert', assertion: { kind, expected: 'x' } }), 0);
+    expect(fidelity.level, kind).toBe('not_simulated');
+    expect(fidelity.notes.join(' '), kind).toContain('not simulated');
+  }
+});
+
+test('flow control is reported rather than silently ignored', () => {
+  const fidelity = describeStepFidelity(step({ optional: true }), 0);
+  expect(fidelity.level).toBe('not_simulated');
+  expect(fidelity.notes.join(' ')).toContain('Flow control not simulated');
+});
+
+test('a retired action and an upload are never reported as a pass', () => {
+  expect(describeStepFidelity(step({ action: 'waitFor' as any }), 0).level).toBe('not_simulated');
+  expect(describeStepFidelity(step({ action: 'setInputFiles' }), 0).level).toBe('not_simulated');
+});
