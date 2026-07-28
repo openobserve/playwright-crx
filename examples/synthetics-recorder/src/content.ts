@@ -26,12 +26,9 @@ let __bridgeOpenPort: (() => boolean) | null = null;
 window.addEventListener('message', (event) => {
   if (event.source === window && event.data?.ch === 'oo-bridge-probe') {
     if (!__bridgeOpenPort) {
-      console.log('[bridge] first probe — calling initBridge()');
       initBridge();
     } else {
-      console.log('[bridge] subsequent probe — calling __bridgeOpenPort()');
-      const result = __bridgeOpenPort();
-      console.log('[bridge] __bridgeOpenPort() result:', result);
+      __bridgeOpenPort();
     }
   }
 });
@@ -143,20 +140,10 @@ function updateStepList(steps: Array<{ id: string; name: string }>) {
 
   stepListEl.innerHTML = steps.map(s =>
     `<div class="__synth_step_row" data-step-id="${s.id}">
-      <button class="__synth_step_replay" data-step-id="${s.id}">▶</button>
       <span class="__synth_step_name">${escapeHtml(s.name)}</span>
       <span class="__synth_step_status" data-step-id="${s.id}">—</span>
     </div>`
   ).join('');
-
-  stepListEl.querySelectorAll('.__synth_step_replay').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      const stepId = (e.target as HTMLElement).dataset.stepId;
-      if (stepId) {
-        sendToBackground({ action: 'playStep', stepId });
-      }
-    });
-  });
 }
 
 function updateStepResult(stepId: string, passed: boolean, error?: string) {
@@ -176,22 +163,17 @@ function updateStepResult(stepId: string, passed: boolean, error?: string) {
 
 // ---- Helpers ----
 
-function sendToBackground(action: OverlayToBackgroundMessage['action'], stepId?: string) {
+function sendToBackground(action: OverlayToBackgroundMessage['action']) {
   chrome.runtime.sendMessage({
     type: 'synthetics-overlay-action',
     tabId: 0, // filled by background from sender.tab
     action,
-    stepId,
   } as OverlayToBackgroundMessage).catch(() => {});
 }
 
 function bindEvents() {
   overlayEl?.querySelector('#__synth_stop_btn')?.addEventListener('click', () => {
     sendToBackground('stop');
-  });
-
-  overlayEl?.querySelector('#__synth_play_btn')?.addEventListener('click', () => {
-    sendToBackground('play');
   });
 }
 
@@ -249,19 +231,6 @@ function getOverlayHTML(): string {
         padding: 4px 0;
         font-size: 12px;
       }
-      #${OVERLAY_ID} .__synth_step_replay {
-        background: #45475a;
-        color: #cdd6f4;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 10px;
-        padding: 2px 6px;
-        flex-shrink: 0;
-      }
-      #${OVERLAY_ID} .__synth_step_replay:hover {
-        background: #585b70;
-      }
       #${OVERLAY_ID} .__synth_step_name {
         flex: 1;
         overflow: hidden;
@@ -287,10 +256,6 @@ function getOverlayHTML(): string {
         color: white;
         margin-left: auto;
       }
-      #${OVERLAY_ID} .__synth_btn_play {
-        background: #2ecc71;
-        color: white;
-      }
       @keyframes __synth_pulse {
         0%, 100% { opacity: 1; }
         50% { opacity: 0.3; }
@@ -300,7 +265,6 @@ function getOverlayHTML(): string {
       <span id="__synth_status_dot" class="__synth_dot recording"></span>
       <span id="__synth_status_text">Recording</span>
       <span id="__synth_step_count" style="background:#45475a;border-radius:8px;padding:2px 8px;font-size:11px;">0 steps</span>
-      <button id="__synth_play_btn" class="__synth_btn __synth_btn_play">▶ Play</button>
       <button id="__synth_stop_btn" class="__synth_btn __synth_btn_stop">Stop</button>
     </div>
     <div id="__synth_step_list" class="__synth_body"></div>
@@ -326,7 +290,6 @@ function initBridge(): void {
       return false;
     }
     try {
-      console.log('[bridge] calling chrome.runtime.connect({ name: "synthetics-recorder" })');
       port = chrome.runtime.connect({ name: 'synthetics-recorder' });
       port.onMessage.addListener(handlePortMessage);
       port.onDisconnect.addListener(() => {
@@ -391,7 +354,6 @@ function initBridge(): void {
     }
 
     // Forward the command envelope to the SW, attaching the nonce for correlation
-    console.log('[bridge] forwarding to SW: cmd=', event.data.msg?.command?.action, ' nonce=', (event.data.nonce || '').slice(0,12));
     port!.postMessage({
       type: 'synthetics-command',
       command: event.data.msg?.command,

@@ -109,7 +109,6 @@ function init() {
 // ---- O2 web app connection (bridge content-script Port) ----
 
 function handleO2Connect(port: chrome.runtime.Port) {
-  console.log('[sw] onConnect: port.name=' + port.name + ' sender.url=' + (port.sender?.url || 'none'));
   if (port.name !== O2_PORT_NAME) return;
 
   // Only one O2 app drives the recorder at a time; the latest connection wins.
@@ -154,7 +153,6 @@ function handleBridgePortMessage(message: any): void {
         _bridgeNonce: bridgeMsg._bridgeNonce,
       };
       if (o2Port) {
-        console.log('[sw] respond() via o2Port: ' + JSON.stringify(response).slice(0,80));
         o2Port.postMessage(msg);
       } else {
         pendingBridgeResponses.push(msg);
@@ -171,8 +169,8 @@ function runO2Command(command: O2Command, respond: (response?: any) => void): bo
   switch (command.action) {
     case 'replay':
       handleReplay(command.steps, command.targetUrl, command.testIdAttr, command.auth, command.headers, command.cookies)
-        .then(result => { console.log('[sw] replay finished:', result); respond(result); })
-        .catch(err => { console.log('[sw] replay error:', err.message); respond({ success: false, passed: false, error: err.message }); });
+        .then(result => respond(result))
+        .catch(err => respond({ success: false, passed: false, error: err.message }));
       return true;
     case 'startRecording':
       startRecording(command.mode ?? 'recording', command.testIdAttr, command.targetUrl)
@@ -198,10 +196,6 @@ function runO2Command(command: O2Command, respond: (response?: any) => void): bo
       respond({ isRecording, mode: currentMode, tabId: recordingTabId, stepCount: browserSteps.length });
       return false;
 
-    case 'ejectCode':
-      respond({ code: '' }); // TBD
-      return false;
-
     case 'stopReplay':
       handleStopReplay()
         .then(() => respond({ success: true }))
@@ -215,23 +209,16 @@ function runO2Command(command: O2Command, respond: (response?: any) => void): bo
 
 function handleInternalMessage(
   message: any,
-  sender: chrome.runtime.MessageSender,
+  _sender: chrome.runtime.MessageSender,
   _sendResponse: (response?: any) => void
 ): boolean {
   if (message.type === 'synthetics-overlay-action') {
-    const tabId = sender.tab?.id ?? message.tabId;
     switch (message.action) {
       case 'stop':
         if (isReplaying)
           handleStopReplay().catch(console.error);
         else
           stopRecording().catch(console.error);
-        break;
-      case 'play':
-        replayAll().catch(console.error);
-        break;
-      case 'playStep':
-        if (message.stepId) replayStep(message.stepId, tabId).catch(console.error);
         break;
     }
     return false;
@@ -444,7 +431,6 @@ async function prepareRecordingWindow(targetUrl: string): Promise<number> {
     top: winTop,
   };
 
-  console.debug('[synthetics-recorder:sw] creating incognito window, url=' + (targetUrl || 'about:blank'));
   win = await chrome.windows.create({ ...windowOpts, incognito: true }).catch(() => undefined);
 
   // If incognito creation failed, throw — a non-incognito window would cause
@@ -699,42 +685,6 @@ async function handleStopReplay(): Promise<void> {
   if (!isReplaying || !crxApp) return;
   replayStopped = true;
   await crxApp.recorder.stop().catch(() => {});
-}
-
-// ---- Playback ----
-
-async function replayAll() {
-  // Triggered from overlay "Play" button
-  // SyntheticsRecorderApp._run() handles the actual playback
-  // This requires wiring the event through the message system
-  if (crxApp) {
-    await crxApp.recorder.setMode('none');
-    await crxApp.recorder.setMode('recording');
-    // Replay is triggered by the recorder's resume event
-  }
-}
-
-async function replayStep(stepId: string, tabId: number) {
-  // Single-step replay: find the action by step index
-  const stepIndex = parseInt(stepId.replace('s', ''), 10) - 1;
-  if (isNaN(stepIndex) || stepIndex < 0 || stepIndex >= browserSteps.length) return;
-
-  // For now, replay all steps up to and including the target
-  // The SyntheticsRecorderApp handles this
-  try {
-    sendToO2({
-      type: 'synthetics-recorder',
-      recordingId: recordingId ?? '',
-      payload: {
-        method: 'stepReplayResult',
-        stepId,
-        passed: true, // Placeholder — actual result from CrxPlayer
-        duration_ms: 0,
-      },
-    });
-  } catch (err) {
-    console.error('[SyntheticsRecorder] Step replay failed:', err);
-  }
 }
 
 // ---- Communication helpers ----

@@ -17,14 +17,13 @@ export type ReplayHeader = { key: string; value: string };
 
 export type ReplayCookie = { name: string; value: string; domain: string };
 
-// ---- O2 → Extension commands (via externally_connectable) ----
+// ---- O2 → Extension commands ----
 
 export type O2Command =
   | { action: 'startRecording'; mode?: Mode; testIdAttr?: string; targetUrl?: string }
   | { action: 'stopRecording' }
   | { action: 'setMode'; mode: Mode }
   | { action: 'getStatus' }
-  | { action: 'ejectCode'; language?: string }
   | { action: 'replay'; steps: BrowserStep[]; targetUrl?: string; testIdAttr?: string; auth?: ReplayAuth; headers?: ReplayHeader[]; cookies?: ReplayCookie[] }
   | { action: 'stopReplay' };
 
@@ -101,8 +100,7 @@ export type OverlayMessage = {
 export type OverlayToBackgroundMessage = {
   type: 'synthetics-overlay-action';
   tabId: number;
-  action: 'stop' | 'play' | 'playStep';
-  stepId?: string;
+  action: 'stop';
 };
 
 // ---- Bridge message envelope (postMessage between OO web app ↔ content script) ----
