@@ -31,7 +31,14 @@ export interface BrowserStep {
   selector?: string;
   selector_type?: SelectorType;
   name: string;
-  timeout_ms: number;
+  /**
+   * Per-step timeout override. Left unset by the recorder on purpose: a step
+   * that carries a timeout wins over the check-level `config.timeout_ms` in the
+   * runner, so stamping a value here silently caps every recorded journey at a
+   * number the check settings never show. Only set when the author edits the
+   * per-step field in the journey editor.
+   */
+  timeout_ms?: number;
   // Action-specific fields
   url?: string;
   value?: string;
@@ -111,7 +118,6 @@ export function mapActionToBrowserStep(
     id: `s${actionIndex + 1}`,
     action: 'click', // placeholder, overridden below
     name: description ?? buildStepName(action, actionIndex),
-    timeout_ms: 10000,
     startTime,
     endTime,
     pageAlias: frame.pageAlias,
