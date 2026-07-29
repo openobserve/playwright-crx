@@ -294,8 +294,8 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
     // definition — nothing the author did was in flight. Computed once for the
     // whole recording so each step is classified against the same evidence.
     const actionWindows = actions
-      .filter(a => a.endTime !== undefined)
-      .map(a => ({ start: a.startTime, end: a.endTime as number + SETTLE_TAIL_MS }));
+        .filter(a => a.endTime !== undefined)
+        .map(a => ({ start: a.startTime, end: a.endTime as number + SETTLE_TAIL_MS }));
     const idleResponses = this._network.outside(actionWindows);
 
     // Map to BrowserStep[] format (no generated code snippets)

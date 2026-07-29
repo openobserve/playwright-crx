@@ -199,10 +199,11 @@ export function isBackground(
   idleResponses: CapturedResponse[],
 ): boolean {
   const pattern = generalizeEndpointPattern(response.url);
-  if (!pattern) return false;
+  if (!pattern)
+    return false;
   const method = response.method.toUpperCase();
   return idleResponses.some(
-    r => r.method.toUpperCase() === method && generalizeEndpointPattern(r.url) === pattern,
+      r => r.method.toUpperCase() === method && generalizeEndpointPattern(r.url) === pattern,
   );
 }
 
@@ -305,7 +306,7 @@ export class NetworkRecorder {
    */
   outside(windows: IdleWindow[]): CapturedResponse[] {
     return this._responses.filter(
-      r => !windows.some(w => r.timestamp >= w.start && r.timestamp <= w.end),
+        r => !windows.some(w => r.timestamp >= w.start && r.timestamp <= w.end),
     );
   }
 
