@@ -87,6 +87,43 @@ export function isPositionalSelector(selector: string): boolean {
 }
 
 /**
+ * Ids and classes a component library mints per render.
+ *
+ * Upstream emits `#id` at `kCSSIdScore` (500) — ahead of tag-name CSS — and
+ * filters only GUID-like values through `isGuidLike`. A per-render id is neither
+ * GUID-like nor stable: `#reka-popover-trigger-v-21` appeared in a real
+ * recording and changes on the next mount, so it is a candidate guaranteed to
+ * break on the next deploy sitting above one that would not.
+ *
+ * Each pattern is anchored on the library's own prefix and requires the volatile
+ * part, so an author-written `#main-content` or `.css-grid-wrapper` is untouched.
+ * A false positive here is a demotion, never a dropped candidate.
+ */
+const FRAMEWORK_ID_PATTERNS: RegExp[] = [
+  // Reka UI / Radix: #reka-popover-trigger-v-21, #radix-:r3:
+  /[#[]?"?(?:reka|radix)-[\w-]*v?-?\d+/i,
+  // React useId: :r0:, :r1a:. A CSS selector escapes both colons, so the closing
+  // one arrives as `\:` — matching only the bare form missed every real case.
+  /:r[0-9a-z]+\\?:/,
+  // Angular view encapsulation: _ngcontent-abc-c12, _nghost-…
+  /_ng(?:content|host)-/,
+  // Emotion / styled-components hashed class: .css-1q2w3e4 (hash, not a word)
+  /\.css-(?=[a-z0-9]*\d)[a-z0-9]{5,}\b/i,
+  // Vue scoped styles: [data-v-7ba5bd90]
+  /\[data-v-[0-9a-f]{6,}\]/i,
+];
+
+/**
+ * Does this selector depend on an id the framework regenerates?
+ *
+ * Tracked separately from `kind` for the same reason positionality is: it says
+ * how long the selector will keep working, not how the element was found.
+ */
+export function isFrameworkGeneratedId(selector: string): boolean {
+  return FRAMEWORK_ID_PATTERNS.some(re => re.test(selector));
+}
+
+/**
  * Classify a single engine token.
  *
  * The generator emits its own prefixes (`internal:testid=`, `internal:role=`,
@@ -203,6 +240,7 @@ export function buildLocatorBundle(selectors: string[] | undefined, primary?: st
       .map((value, index) => ({
         candidate: { kind: classifySelector(value), value },
         positional: isPositionalSelector(value),
+        framework: isFrameworkGeneratedId(value),
         index,
       }))
       // Positionality outranks kind, because Playwright's own scoring says so:
@@ -213,9 +251,15 @@ export function buildLocatorBundle(selectors: string[] | undefined, primary?: st
       // asks us to preserve rather than override. Sorting positional last
       // additionally means the cap below can no longer evict the only
       // unambiguous way to find the element.
+      // Positionality first, then kind, then framework-generated ids last within
+      // a kind. The order of the last two matters: an unstable-but-unambiguous
+      // id still identified exactly one element when recorded, so it outranks a
+      // positional candidate that identified none — but among equally-ranked
+      // kinds it loses to anything an author actually wrote.
       .sort((a, b) =>
         Number(a.positional) - Number(b.positional) ||
         KIND_RANK[a.candidate.kind] - KIND_RANK[b.candidate.kind] ||
+        Number(a.framework) - Number(b.framework) ||
         a.index - b.index)
       .slice(0, MAX_LOCATOR_CANDIDATES)
       .map(c => c.candidate);

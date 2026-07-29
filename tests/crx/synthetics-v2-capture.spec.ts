@@ -15,6 +15,7 @@ import { expect, test } from '@playwright/test';
 import {
   buildLocatorBundle,
   classifySelector,
+  isFrameworkGeneratedId,
   isPositionalSelector,
   setLocatorTestIdAttribute,
   MAX_LOCATOR_CANDIDATES,
@@ -686,4 +687,55 @@ test('a blank configured attribute falls back rather than matching everything', 
   } finally {
     setLocatorTestIdAttribute('data-testid');
   }
+});
+
+
+// ── Phase 1 L3: framework-generated ids are not stable ids ──────────────────
+//
+// Upstream emits `#id` at kCSSIdScore (500), ahead of tag-name CSS, and filters
+// only GUID-like values via isGuidLike. A per-render id from a component library
+// is neither GUID-like nor stable — `#reka-popover-trigger-v-21` appeared in a
+// real recording and changes on the next mount.
+
+test('recognises per-render ids from the component libraries in use', () => {
+  expect(isFrameworkGeneratedId('#reka-popover-trigger-v-21')).toBe(true);
+  expect(isFrameworkGeneratedId('#reka-listbox-item-v-27')).toBe(true);
+  // React useId
+  expect(isFrameworkGeneratedId('#\\:r0\\:')).toBe(true);
+  expect(isFrameworkGeneratedId('[id=":r1a:"]')).toBe(true);
+  // Angular view encapsulation
+  expect(isFrameworkGeneratedId('div[_ngcontent-abc-c12]')).toBe(true);
+  // Emotion / styled-components hashed class
+  expect(isFrameworkGeneratedId('.css-1q2w3e4')).toBe(true);
+  // Vue scoped-style attribute
+  expect(isFrameworkGeneratedId('div[data-v-7ba5bd90]')).toBe(true);
+});
+
+test('leaves author-written ids and classes alone', () => {
+  expect(isFrameworkGeneratedId('#login-form')).toBe(false);
+  expect(isFrameworkGeneratedId('#main-content > .row')).toBe(false);
+  expect(isFrameworkGeneratedId('[data-test="login-sign-in"]')).toBe(false);
+  expect(isFrameworkGeneratedId('internal:role=button[name="Save"i]')).toBe(false);
+  // A word that merely contains "css-" is not a hashed class.
+  expect(isFrameworkGeneratedId('.css-grid-wrapper')).toBe(false);
+});
+
+test('a framework id ranks below a stable css selector', () => {
+  // Both are `css` kind and neither is positional, so only the framework-id
+  // demotion can separate them.
+  const bundle = buildLocatorBundle([
+    '#reka-popover-trigger-v-21',
+    '.org-switcher > button',
+  ]);
+  expect(bundle?.candidates[0].value).toBe('.org-switcher > button');
+});
+
+test('a framework id still ranks above a positional candidate', () => {
+  // Unstable but unambiguous beats ambiguous: positionality remains the primary
+  // key, and a per-render id at least identified ONE element when recorded.
+  const bundle = buildLocatorBundle([
+    '[data-test="row"] >> nth=1',
+    '#reka-listbox-item-v-27',
+  ]);
+  expect(bundle?.candidates[0].value).toBe('#reka-listbox-item-v-27');
 });
