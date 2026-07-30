@@ -14,31 +14,62 @@
  * limitations under the License.
  */
 /**
- * Turning the selector generator's ranked list into a stored locator bundle.
+ * Turning the selector generator's list into a stored locator bundle.
  *
  * The generator already produces several ways to find the same element; the
  * recorder used to keep only the first. Keeping the rest is what lets a monitor
  * survive a renamed class or a restructured DOM, because the runner can fall
  * back through them.
  *
- * Ordering is load-bearing and is not cosmetic. Candidates only agree while the
- * markup is unchanged; once it changes — the case fallback exists for — a
- * lower-ranked candidate may match a DIFFERENT element. So the list is ordered
- * by how much a kind survives change, and the runner breaks ties by rank rather
- * than by whichever answers first.
+ * **The order is Playwright's, verbatim. We do not decide it.**
+ *
+ * We used to. A KIND_RANK sort put `test_attribute` ahead of `role`, which
+ * promoted an INDEXED testid above a unique role — and Phase 2a then added a
+ * positional key to undo exactly that. Both were unnecessary: upstream's
+ * `chooseFirstSelector` returns a unique candidate the moment it finds one and
+ * only falls back to an indexed one when nothing matched uniquely, and
+ * `generateSelector` pins `selectors[0]` byte-identical to the single-selector
+ * answer. So `selectors[0]` is positional if and only if no unique locator
+ * exists. Playwright's first choice was already right; our sort displaced it.
+ *
+ * Storing the order verbatim is what P2.3.2 asked for — "the requirement is to
+ * classify and preserve it" — and it takes the mirrored KIND_RANK out of the
+ * cross-repo surface entirely. What comes after position 0 is Playwright's push
+ * order, which is quality-arbitrary; that no longer matters, because the author
+ * owns the order from here (Phase 2b).
  */
 
 export type LocatorKind = 'test_attribute' | 'role' | 'text' | 'css' | 'xpath';
 
+/** How one part of a combined locator attaches to the part before it. */
+export type CompositeRelation = 'and' | 'has' | 'has_not' | 'descendant';
+
+export type CompositePart = {
+  value: string;
+  /** Absent on the first (base) part. */
+  relation?: CompositeRelation;
+};
+
 export type LocatorCandidate = {
   kind: LocatorKind;
   value: string;
+  /**
+   * Where it came from. The recorder only ever writes `recorded`; the editor
+   * writes the other two. It is the heal-suppression signal — healing may
+   * replace a recorded value in place and must not touch anything else.
+   */
+  origin?: 'recorded' | 'authored' | 'composite';
+  /** What a combined locator was built from. Editor-written, never recorded. */
+  from?: CompositePart[];
 };
 
 export type StepLocator = {
   candidates: LocatorCandidate[];
-  /** Only an author sets this. The recorder never pins. */
-  user_override?: LocatorCandidate | null;
+  /**
+   * A human has reordered, added, deleted or combined. The recorder never sets
+   * it; a fresh recording is by definition not author-ordered.
+   */
+  author_ordered?: boolean;
 };
 
 /** ≤ 5 candidates per step — the same cap the schema enforces. */
@@ -51,6 +82,11 @@ export const MAX_LOCATOR_CANDIDATES = 5;
  * role plus accessible name follows the element's meaning rather than its
  * markup. Text survives restyling but not copy edits or translation. CSS and
  * XPath describe structure, which is exactly what a redesign rewrites.
+ *
+ * This no longer ORDERS anything. It survives for `weakestLink`, which asks
+ * which token in a chain is the least stable — a different question from which
+ * candidate to try first, and one whose answer is a property of the string
+ * rather than a preference.
  */
 const KIND_RANK: Record<LocatorKind, number> = {
   test_attribute: 0,
@@ -219,75 +255,47 @@ export function classifySelector(selector: string): LocatorKind {
 /**
  * Build the bundle stored on a step.
  *
- * Sorted by kind rank, stably — so the generator's own ordering still decides
- * between two candidates of the same kind, and the documented
- * `test_attribute → role → text → css/xpath` order holds across kinds.
+ * Deduplicated, classified, capped — and otherwise in Playwright's order,
+ * untouched. See the file header for why there is no sort here any more.
  *
- * Capped, because each extra candidate costs probe time on every run of every
+ * Capped because each extra candidate costs probe time on every run of every
  * step forever, and the fifth way to find an element adds almost nothing once
- * the first four have failed.
+ * the first four have failed. The cap is safe to apply to the generator's own
+ * order: `selectors[0]` is upstream's considered best answer, so the entries it
+ * removes are the ones upstream ranked last.
  */
 export function buildLocatorBundle(selectors: string[] | undefined, primary?: string): StepLocator | undefined {
   const all = selectors?.length ? selectors : primary ? [primary] : [];
   const seen = new Set<string>();
-  const candidates = all
+  const candidates: LocatorCandidate[] = all
       .filter(s => {
         if (!s || seen.has(s))
           return false;
         seen.add(s);
         return true;
       })
-      .map((value, index) => ({
-        candidate: { kind: classifySelector(value), value },
-        positional: isPositionalSelector(value),
-        framework: isFrameworkGeneratedId(value),
-        index,
-      }))
-      // Positionality outranks kind, because Playwright's own scoring says so:
-      // `kNthScore` is 10000 against kind scores of 500-530. A candidate without
-      // an index matched exactly one element when it was recorded; one with an
-      // index did not. Better evidence of a WORSE kind still beats worse
-      // evidence of a better one, and this restores the ordering spec P2.3.2
-      // asks us to preserve rather than override. Sorting positional last
-      // additionally means the cap below can no longer evict the only
-      // unambiguous way to find the element.
-      // Positionality first, then kind, then framework-generated ids last within
-      // a kind. The order of the last two matters: an unstable-but-unambiguous
-      // id still identified exactly one element when recorded, so it outranks a
-      // positional candidate that identified none — but among equally-ranked
-      // kinds it loses to anything an author actually wrote.
-      .sort((a, b) =>
-        Number(a.positional) - Number(b.positional) ||
-        KIND_RANK[a.candidate.kind] - KIND_RANK[b.candidate.kind] ||
-        Number(a.framework) - Number(b.framework) ||
-        a.index - b.index)
       .slice(0, MAX_LOCATOR_CANDIDATES)
-      .map(c => c.candidate);
+      .map(value => ({ kind: classifySelector(value), value, origin: 'recorded' as const }));
 
   if (!candidates.length)
     return undefined;
-  // `user_override` is absent, not null: the recorder has no opinion about which
-  // candidate an author will want, and inventing one would make every recorded
-  // step look deliberately pinned.
+  // `author_ordered` is absent, not false: a fresh recording has no author
+  // intent in it, and writing the field would claim someone had looked.
   return { candidates };
 }
 
 /**
  * The one selector a bundle resolves to for replay.
  *
- * A pin wins outright — an author who set `user_override` asked for that locator
- * and no other, so it is used exclusively and never falls back (spec P2.4.3).
- * Otherwise the primary candidate: the player resolves a single selector string
- * and does not implement the ordered fallback the probe does, so it replays
- * against `candidates[0]` and the step is reported `primary locator only`
- * (spec P2.S, X-8.2).
+ * The first candidate, and nothing else. The player resolves a single selector
+ * string and does not implement the ordered fallback the probe does, so it
+ * replays against `candidates[0]` and the step is reported `primary locator
+ * only` (spec P2.S, X-8.2).
  *
- * Returns undefined for a bundle-less v1 step, whose identity is its bare
- * `selector` instead.
+ * There used to be a pin branch in front of this. With the author owning the
+ * order, "use this one" IS position 0 — the same answer, without a second
+ * channel that had to be checked in three separate copies of this function.
  */
 export function effectiveSelector(locator: StepLocator | undefined): string | undefined {
-  const pinned = locator?.user_override?.value;
-  if (pinned)
-    return pinned;
   return locator?.candidates?.[0]?.value || undefined;
 }

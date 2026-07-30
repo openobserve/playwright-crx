@@ -54,22 +54,32 @@ test('classifies every selector shape the generator emits', () => {
   expect(classifySelector('.btn-primary > span')).toBe('css');
 });
 
-test('orders a bundle most-survivable-first, not generator-first', () => {
-  // The generator's own order puts a text-based selector first here. Rank has to
-  // win: once markup changes, a lower-ranked candidate may match a DIFFERENT
-  // element, so the runner needs the most stable one at the front.
+test('stores the generator order verbatim, kinds and all', () => {
+  // Inverted in Phase 2b. We used to sort by kind here, which promoted an
+  // INDEXED testid above a unique role — and Phase 2a then added a positional
+  // key to undo exactly that. Upstream had it right from the start:
+  // chooseFirstSelector returns a unique candidate the moment it finds one, so
+  // selectors[0] is positional only when no unique locator exists.
   const bundle = buildLocatorBundle([
     'internal:text="Sign In"i',
     '.btn.btn-primary',
     'internal:testid=[data-testid="login-sign-in"]s',
     'internal:role=button[name="Sign In"i]',
   ]);
-  expect(bundle?.candidates.map(c => c.kind)).toEqual(['test_attribute', 'role', 'text', 'css']);
+  expect(bundle?.candidates.map(c => c.kind)).toEqual(['text', 'css', 'test_attribute', 'role']);
 });
 
 test('keeps the generator order between candidates of the same kind', () => {
   const bundle = buildLocatorBundle(['.a', '.b', '.c']);
   expect(bundle?.candidates.map(c => c.value)).toEqual(['.a', '.b', '.c']);
+});
+
+test('stamps every candidate as recorded, and claims no author intent', () => {
+  const bundle = buildLocatorBundle(['.a', '.b']);
+  expect(bundle?.candidates.every(c => c.origin === 'recorded')).toBe(true);
+  // Absent, not false: a fresh recording has no author intent in it, and
+  // writing the field would claim someone had looked.
+  expect(bundle?.author_ordered).toBeUndefined();
 });
 
 test('caps the bundle — the fifth way to find an element buys almost nothing', () => {
@@ -79,12 +89,18 @@ test('caps the bundle — the fifth way to find an element buys almost nothing',
 
 test('drops duplicates and falls back to the primary when there is no list', () => {
   expect(buildLocatorBundle(['.a', '.a', '.b'])?.candidates).toHaveLength(2);
-  expect(buildLocatorBundle(undefined, '#only')?.candidates).toEqual([{ kind: 'css', value: '#only' }]);
+  expect(buildLocatorBundle(undefined, '#only')?.candidates).toEqual([
+    { kind: 'css', value: '#only', origin: 'recorded' },
+  ]);
   expect(buildLocatorBundle([], undefined)).toBeUndefined();
 });
 
-test('the recorder never pins — user_override is author intent only', () => {
-  expect(buildLocatorBundle(['.a'])?.user_override).toBeUndefined();
+test('the recorder writes no pin — there is no pin to write', () => {
+  // `user_override` was an exclusive pin: the only way to say "prefer this one"
+  // was to turn fallback off entirely. The ordered list says the same thing by
+  // deleting the other rows, and can also say "prefer mine, fall back to the
+  // recording" — which a pin could not.
+  expect(buildLocatorBundle(['.a'])).not.toHaveProperty('user_override');
 });
 
 // ── Phase 2a: positional locators ───────────────────────────────────────────
@@ -117,21 +133,23 @@ test('a chain is classified by its weakest link, not by its prefix', () => {
   expect(classifySelector('.btn-primary > span')).toBe('css');
 });
 
-test('a verified-unique candidate outranks a positional one of any kind', () => {
-  // The observed production shape: the recorder could not identify the
-  // org-switcher, so its test-attribute candidate carries an index. Ranking on
-  // kind alone put that ambiguous candidate first.
+test('a positional primary is upstream saying nothing matched uniquely', () => {
+  // The observed org-switcher shape. Phase 2a demoted the indexed candidate
+  // here; Phase 2b keeps upstream's order instead, because upstream only
+  // reaches for an index when NOTHING identified the element uniquely — so an
+  // indexed selectors[0] is a fact about the page, not a ranking mistake.
+  // The author fixes it by reordering, or by combining the two.
   const bundle = buildLocatorBundle([
     '[data-test="organization-menu-item-label-item-label"] >> nth=1',
     'internal:role=button[name="Save draft"i]',
   ]);
-  expect(bundle?.candidates[0].value).toBe('internal:role=button[name="Save draft"i]');
-  expect(bundle?.candidates[1].value).toContain('nth=1');
+  expect(bundle?.candidates[0].value).toContain('nth=1');
+  expect(isPositionalSelector(bundle!.candidates[0].value)).toBe(true);
 });
 
-test('the cap can no longer evict the only unambiguous candidate', () => {
-  // Five positional candidates plus one clean one. Under kind-only ordering the
-  // clean candidate could be sliced off entirely and never stored.
+test('the cap takes upstream\'s last entries, not ours', () => {
+  // selectors[0] is upstream's considered best answer and the cap counts from
+  // there, so what it drops is what upstream ranked last.
   const bundle = buildLocatorBundle([
     '[data-test="a"] >> nth=0',
     '[data-test="b"] >> nth=1',
@@ -141,21 +159,7 @@ test('the cap can no longer evict the only unambiguous candidate', () => {
     'internal:role=link[name="Only unique"i]',
   ]);
   expect(bundle?.candidates).toHaveLength(MAX_LOCATOR_CANDIDATES);
-  expect(bundle?.candidates[0].value).toBe('internal:role=link[name="Only unique"i]');
-});
-
-test('an all-positional bundle keeps its generator order — ranking alone cannot help', () => {
-  // Both candidates are positional, so re-sorting them changes nothing. This is
-  // why the editor notice is not an optional extra: the flag has to drive
-  // behaviour, not just order.
-  const bundle = buildLocatorBundle([
-    '[data-test="row"] >> nth=1',
-    'div >> internal:has-text=/^Acme$/ >> nth=0',
-  ]);
-  expect(bundle?.candidates.map(c => c.value)).toEqual([
-    '[data-test="row"] >> nth=1',
-    'div >> internal:has-text=/^Acme$/ >> nth=0',
-  ]);
+  expect(bundle?.candidates.map(c => c.value)).not.toContain('internal:role=link[name="Only unique"i]');
 });
 
 // ── T3-1: URL generalization ────────────────────────────────────────────────
@@ -376,17 +380,23 @@ test('a stored v2 step replays against its primary candidate, not an empty selec
   expect((action.action as any).selector).toBe('[data-test="login-as-internal-user"]');
 });
 
-test('a pinned locator is used exclusively, never the primary candidate', () => {
-  // P2.4.3 — an author who pinned asked for that locator and no other.
+test('the author\'s first choice is position 0, with no second channel', () => {
+  // This used to check a pin: `user_override` won outright over the whole list.
+  // With the author owning the order, "use this one" IS position 0 — the same
+  // answer without a second field that three separate copies of
+  // effectiveSelector each had to remember to check.
   const [action] = mapBrowserStepsToActions([
     storedV2Step({
       locator: {
-        candidates: [{ kind: 'test_attribute', value: '[data-test="a"]' }],
-        user_override: { kind: 'css', value: '#pinned' },
+        candidates: [
+          { kind: 'css', value: '#authored', origin: 'authored' },
+          { kind: 'test_attribute', value: '[data-test="a"]', origin: 'recorded' },
+        ],
+        author_ordered: true,
       },
     }),
   ]);
-  expect((action.action as any).selector).toBe('#pinned');
+  expect((action.action as any).selector).toBe('#authored');
 });
 
 test('a step with no bundle resolves to an empty selector, not to a stale one', () => {
@@ -716,22 +726,18 @@ test('leaves author-written ids and classes alone', () => {
   expect(isFrameworkGeneratedId('.css-grid-wrapper')).toBe(false);
 });
 
-test('a framework id ranks below a stable css selector', () => {
-  // Both are `css` kind and neither is positional, so only the framework-id
-  // demotion can separate them.
+test('a framework id is flagged, not demoted', () => {
+  // It used to sort last within its kind. Nothing sorts now — the predicate
+  // stays because the editor mirrors it to warn per row, which is a better
+  // outcome than an invisible reordering: `#reka-popover-trigger-v-21` changes
+  // on the next mount, and the author is the only one who can act on that.
+  expect(isFrameworkGeneratedId('#reka-popover-trigger-v-21')).toBe(true);
   const bundle = buildLocatorBundle([
     '#reka-popover-trigger-v-21',
     '.org-switcher > button',
   ]);
-  expect(bundle?.candidates[0].value).toBe('.org-switcher > button');
-});
-
-test('a framework id still ranks above a positional candidate', () => {
-  // Unstable but unambiguous beats ambiguous: positionality remains the primary
-  // key, and a per-render id at least identified ONE element when recorded.
-  const bundle = buildLocatorBundle([
-    '[data-test="row"] >> nth=1',
-    '#reka-listbox-item-v-27',
+  expect(bundle?.candidates.map(c => c.value)).toEqual([
+    '#reka-popover-trigger-v-21',
+    '.org-switcher > button',
   ]);
-  expect(bundle?.candidates[0].value).toBe('#reka-listbox-item-v-27');
 });

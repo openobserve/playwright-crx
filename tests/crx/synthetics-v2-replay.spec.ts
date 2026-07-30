@@ -152,17 +152,24 @@ test('a saved journey replays green from its locator bundles, and its fills real
   ).toBe(true);
 });
 
-test('a pinned locator is used exclusively and does not fall back', async ({ page, baseURL, extensionServiceWorker }) => {
+test('the player replays the author\'s first choice and does not fall back', async ({ page, baseURL, extensionServiceWorker }) => {
   await page.goto(`${baseURL}/v2-journey.html`);
 
   const target = `${baseURL}/v2-journey.html?delay=500`;
   const steps = storedJourney(target);
-  // P2.4.3 — pin a selector that matches nothing. A working candidate sits
-  // right beside it; falling back to that one would be the bug.
-  (steps[3] as any).locator.user_override = { kind: 'css', value: '#no-such-button' };
+  // This used to set `user_override`, an exclusive pin. The author now says the
+  // same thing by ordering: put a locator that matches nothing at position 0,
+  // with a working candidate right behind it. The player resolves a single
+  // selector and reports `primary locator only` (P2.S), so falling through to
+  // the working one would be the bug — and would also hide from the preview
+  // exactly what the probe is about to do differently.
+  (steps[3] as any).locator.candidates.unshift({
+    kind: 'css', value: '#no-such-button', origin: 'authored',
+  });
+  (steps[3] as any).locator.author_ordered = true;
 
   const res = await sendCommand<ReplayResponse>(page, { action: 'replay', steps, targetUrl: target });
 
   expect(res, 'no replay response').not.toBeNull();
-  expect(res!.passed, 'the pin was ignored and a candidate was used instead').toBe(false);
+  expect(res!.passed, 'position 0 was ignored and a later candidate was used instead').toBe(false);
 });
