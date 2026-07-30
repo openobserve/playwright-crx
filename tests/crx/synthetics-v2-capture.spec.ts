@@ -298,7 +298,7 @@ function actionInContext(action: any, startTime = 0, endTime?: number) {
   };
 }
 
-test('a click carries its whole bundle, and the primary stays where v1 consumers look', () => {
+test('a click carries its whole bundle, and no bare selector beside it', () => {
   const [step] = mapActionsToBrowserSteps([
     actionInContext({
       name: 'click',
@@ -311,7 +311,10 @@ test('a click carries its whole bundle, and the primary stays where v1 consumers
       button: 'left', modifiers: 0, clickCount: 1, signals: [],
     }),
   ]);
-  expect(step.selector).toBe('internal:testid=[data-testid="login-sign-in"]s');
+  // The version-1 pair. `selector_type` was also a second, older classifier
+  // that disagreed with classifySelector's weakest-link rule on chains.
+  expect(step).not.toHaveProperty('selector');
+  expect(step).not.toHaveProperty('selector_type');
   expect(step.locator?.candidates.map(c => c.kind)).toEqual(['test_attribute', 'role', 'css']);
 });
 
@@ -342,14 +345,14 @@ test('check and uncheck survive the round trip instead of degrading to a click',
   expect(actions.map(a => a.action.name)).toEqual(['check', 'uncheck']);
 });
 
-// ── P2.4.3 / P2.S: what a stored v2 step replays against ────────────────────
+// ── P2.4.3 / P2.S: what a stored step replays against ───────────────────────
 //
-// A stored v2 step carries NO bare `selector` — the saved schema has no such
-// field, its identity is the bundle. The mapper used to read `step.selector`
-// alone, so every element action was built with an empty selector and the
-// player failed parsing it before the step ran:
+// A stored step carries NO bare `selector` — the saved schema has no such field,
+// its identity is the bundle. The mapper used to read `step.selector` alone, so
+// every element action was built with an empty selector and the player failed
+// parsing it before the step ran:
 //   Unexpected token "" while parsing css selector "".
-// That made every saved v2 journey unreplayable from the editor.
+// That made every saved journey unreplayable from the editor.
 
 function storedV2Step(overrides: Partial<BrowserStep>): BrowserStep {
   return {
@@ -386,20 +389,13 @@ test('a pinned locator is used exclusively, never the primary candidate', () => 
   expect((action.action as any).selector).toBe('#pinned');
 });
 
-test('a version-1 step still replays against its bare selector', () => {
-  const [action] = mapBrowserStepsToActions([storedV2Step({ selector: '#legacy' })]);
-  expect((action.action as any).selector).toBe('#legacy');
-});
-
-test('the bundle wins over a stale bare selector on the same step', () => {
-  // A lifted v1 step carries both; the bundle is the v2 identity.
-  const [action] = mapBrowserStepsToActions([
-    storedV2Step({
-      selector: '#stale',
-      locator: { candidates: [{ kind: 'css', value: '#current' }] },
-    }),
-  ]);
-  expect((action.action as any).selector).toBe('#current');
+test('a step with no bundle resolves to an empty selector, not to a stale one', () => {
+  // There is no second channel left to fall back to. A bundle-less step cannot
+  // be saved (the server refuses it), so reaching here means something upstream
+  // is wrong — and an empty selector fails loudly at parse time rather than
+  // replaying against whatever a bare `selector` happened to hold.
+  const [action] = mapBrowserStepsToActions([storedV2Step({})]);
+  expect((action.action as any).selector).toBe('');
 });
 
 test('every element action shape resolves the bundle, not just click', () => {

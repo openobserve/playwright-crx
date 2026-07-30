@@ -23,8 +23,6 @@ import type { StepLocator } from './locatorBundle';
 import { generalizeUrlPattern } from './urlPattern';
 import type { SettleResponsePattern } from './networkCapture';
 
-export type SelectorType = 'css' | 'xpath' | 'text' | 'role' | 'data-test';
-
 export type BrowserStepAction =
   'navigate' | 'openPage' | 'click' | 'type' | 'press' | 'select' |
   'check' | 'uncheck' |
@@ -58,12 +56,12 @@ export interface StepSettle {
 export interface BrowserStep {
   id: string;
   action: BrowserStepAction;
-  selector?: string;
-  selector_type?: SelectorType;
   /**
-   * Every way the recorder could find this element, ordered most-stable-first.
-   * Present on every element step; `selector` remains as the primary so a v1
-   * consumer keeps working unchanged.
+   * Every way the recorder could find this element. This IS the step's identity:
+   * the bare `selector` and `selector_type` pair beside it was the version-1
+   * channel, and went with version 1 (Phase 2c). `selector_type` was also a
+   * second, older classifier — `data-test`/`xpath`/`text`/`role`/`css` — sitting
+   * beside classifySelector's weakest-link rule and disagreeing with it.
    */
   locator?: StepLocator;
   settle?: StepSettle;
@@ -103,18 +101,6 @@ export interface BrowserStep {
   pageAlias: string;
   framePath: string[];
   description?: string;
-}
-
-function getSelectorType(selector: string): SelectorType {
-  if (selector.startsWith('data-testid=') || selector.startsWith('[data-test'))
-    return 'data-test';
-  if (selector.startsWith('xpath='))
-    return 'xpath';
-  if (selector.startsWith('text='))
-    return 'text';
-  if (selector.startsWith('role='))
-    return 'role';
-  return 'css';
 }
 
 function buildStepName(action: Action, index: number): string {
@@ -257,8 +243,6 @@ export function mapActionToBrowserStep(
       return {
         ...base,
         action: 'click',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
         button: action.button,
         modifiers: action.modifiers,
         position: action.position,
@@ -267,16 +251,12 @@ export function mapActionToBrowserStep(
       return {
         ...base,
         action: 'type',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
         value: action.text,
       };
     case 'press':
       return {
         ...base,
         action: 'press',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
         key: action.key,
         modifiers: action.modifiers,
       };
@@ -284,8 +264,6 @@ export function mapActionToBrowserStep(
       return {
         ...base,
         action: 'select',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
         options: [...action.options],
       };
     // X-9.3 — no longer collapsed to `click`. A click toggles a checkbox, which
@@ -296,30 +274,22 @@ export function mapActionToBrowserStep(
       return {
         ...base,
         action: 'check',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
       };
     case 'uncheck':
       return {
         ...base,
         action: 'uncheck',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
       };
     case 'setInputFiles':
       return {
         ...base,
         action: 'setInputFiles',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
         files: [...action.files],
       };
     case 'assertText':
       return {
         ...base,
         action: 'assert',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
         assertion: buildAssertion(action),
         text: action.text,
       };
@@ -327,8 +297,6 @@ export function mapActionToBrowserStep(
       return {
         ...base,
         action: 'assert',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
         assertion: buildAssertion(action),
         value: action.value,
       };
@@ -336,8 +304,6 @@ export function mapActionToBrowserStep(
       return {
         ...base,
         action: 'assert',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
         assertion: buildAssertion(action),
         checked: action.checked,
       };
@@ -345,16 +311,12 @@ export function mapActionToBrowserStep(
       return {
         ...base,
         action: 'assert',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
         assertion: buildAssertion(action),
       };
     case 'assertSnapshot':
       return {
         ...base,
         action: 'assert',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
         assertion: buildAssertion(action),
         snapshot: action.snapshot,
       };
@@ -409,14 +371,14 @@ const V2_ACTION_ALIASES: Record<string, BrowserStepAction> = {
 };
 
 function buildActionFromStep(step: BrowserStep): Action {
-  // A version-2 step's identity is its locator bundle, and a stored v2 step
-  // carries NO bare `selector` — the field does not exist in the saved schema.
-  // Reading `step.selector` alone therefore built every element action with an
-  // empty selector, and Playwright failed parsing it before the step ran:
+  // A step's identity is its locator bundle, and nothing else. The mapper used
+  // to read a bare `step.selector` first, which built every element action with
+  // an empty selector on a stored step, and Playwright failed parsing it before
+  // the step ran:
   //   Unexpected token "" while parsing css selector "".
-  // The bundle resolves first (pin, else primary — see effectiveSelector);
-  // `selector` remains the fallback for v1 steps, which have no bundle.
-  const selector = effectiveSelector(step.locator) ?? step.selector ?? '';
+  // The `?? step.selector` fallback that replaced it outlived the field it read
+  // and went with version 1 (Phase 2c).
+  const selector = effectiveSelector(step.locator) ?? '';
   switch (V2_ACTION_ALIASES[step.action] ?? step.action) {
     case 'openPage':
       return { name: 'openPage', url: step.url ?? '', signals: [] };

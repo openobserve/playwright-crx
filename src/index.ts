@@ -65,7 +65,7 @@ wrapClientApis();
 export { Crx } from './server/crx';
 export type { RecorderAppFactoryOverride } from './server/crx';
 export { mapActionToBrowserStep, mapActionsToBrowserSteps, mapBrowserStepToAction, mapBrowserStepsToActions } from './server/recorder/actionMapper';
-export type { BrowserStep, BrowserStepAction, SelectorType, StepAssertion, StepSettle, AssertionKind } from './server/recorder/actionMapper';
+export type { BrowserStep, BrowserStepAction, StepAssertion, StepSettle, AssertionKind } from './server/recorder/actionMapper';
 export { classifySelector, buildLocatorBundle, isFrameworkGeneratedId, isPositionalSelector, setLocatorTestIdAttribute, MAX_LOCATOR_CANDIDATES } from './server/recorder/locatorBundle';
 export type { LocatorCandidate, LocatorKind, StepLocator } from './server/recorder/locatorBundle';
 export { generalizeUrlPattern, generalizeEndpointPattern, isDynamicSegment } from './server/recorder/urlPattern';

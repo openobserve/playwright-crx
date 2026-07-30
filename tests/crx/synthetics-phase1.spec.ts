@@ -103,14 +103,14 @@ test('a step whose element appears after 8s replays green (was impossible at the
     { id: 's1', action: 'navigate', name: 'Open fixture', url: target, pageAlias: 'page', framePath: [] },
     {
       id: 's2', action: 'click', name: 'Sign In',
-      selector: '[data-test="login-sign-in"]', selector_type: 'data-test',
+      locator: { candidates: [{ kind: 'test_attribute', value: '[data-test="login-sign-in"]' }] },
       pageAlias: 'page', framePath: [],
     },
     {
       // The element does not exist until ~8s after the click above. At the old
       // 5s cap this step could not pass, no matter how healthy the app was.
       id: 's3', action: 'click', name: 'Profile icon',
-      selector: '[data-test="header-my-account-profile-icon"]', selector_type: 'data-test',
+      locator: { candidates: [{ kind: 'test_attribute', value: '[data-test="header-my-account-profile-icon"]' }] },
       pageAlias: 'page', framePath: [],
     },
   ];
@@ -135,7 +135,7 @@ test('a legacy wait step no longer aborts the whole replay', async ({ page, base
     },
     {
       id: 's3', action: 'click', name: 'Sign In',
-      selector: '[data-test="login-sign-in"]', selector_type: 'data-test',
+      locator: { candidates: [{ kind: 'test_attribute', value: '[data-test="login-sign-in"]' }] },
       pageAlias: 'page', framePath: [],
     },
   ];
