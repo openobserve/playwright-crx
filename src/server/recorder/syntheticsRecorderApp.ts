@@ -35,15 +35,8 @@ import { serverSideCallMetadata } from 'playwright-core/lib/server';
 import { BrowserContext } from 'playwright-core/lib/server/browserContext';
 import type { Response } from 'playwright-core/lib/server/network';
 import { monotonicTime } from 'playwright-core/lib/utils';
-import { NetworkRecorder, buildSettlePatterns } from './networkCapture';
+import { NetworkRecorder, buildSettlePatterns, captureWindows } from './networkCapture';
 
-/**
- * How long after an action finishes a response may still be attributed to it.
- *
- * Shared by the action windows and the idle-window complement, so a response
- * cannot be counted as both caused and background.
- */
-const SETTLE_TAIL_MS = 1000;
 
 export type StructuredError = {
   message: string;
@@ -99,6 +92,8 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
   private _forwardCallback: SyntheticsForwardCallback;
   private _playInIncognito = false;
   private _network = new NetworkRecorder();
+  /** Whether the network buffer is live, so the final rebuild runs exactly once. */
+  private _collecting = false;
 
   constructor(
     crx: Crx,
@@ -185,13 +180,16 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
   async close() {
     if (!this._window || this._window.isClosed())
       return;
-    this._hide();
+    await this._hide();
     this._window = undefined;
   }
 
-  private _hide() {
+  // Awaited, because `setMode('none')` is what rebuilds the steps one last time
+  // against the full network buffer. Letting it float means the caller reads the
+  // step list before the rebuild lands, which is the same bug it is fixing.
+  private async _hide() {
     this._recorder.setMode('none');
-    this.setMode('none');
+    await this.setMode('none');
     this._window?.close();
     this.emit('hide');
   }
@@ -207,10 +205,27 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
     // incognito on the author's machine, so its timings and its traffic are
     // incomparable to a probe location; letting a replay update settle patterns
     // would quietly overwrite production evidence with laptop evidence.
-    if (this._recorder._isRecording())
+    if (this._recorder._isRecording()) {
       this._network.enable();
-    else
+      this._collecting = true;
+    } else {
+      // One last rebuild before the buffer is thrown away.
+      //
+      // `setActions` runs when the action collection CHANGES, which is the
+      // instant the action is recorded — before the calls it causes have
+      // answered. A step that navigates is rescued by the navigation's own
+      // `setActions` firing later; a step that only fires an XHR has nothing
+      // behind it, so its evidence was computed against a buffer that could not
+      // yet contain it and every response arriving afterwards was lost.
+      //
+      // Recording stops here, so this is the last moment the whole recording is
+      // visible. `disable()` clears the buffer, so the order matters.
+      if (this._collecting) {
+        this._collecting = false;
+        await this.setActions(this._recordedActions, this._sources ?? []);
+      }
       this._network.disable();
+    }
 
     if (!this._recorder._isRecording())
       this._crx.player.pause().catch(() => {});
@@ -291,18 +306,19 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
     const origin = this._journeyOrigin();
 
     // Everything observed OUTSIDE every action window is background by
-    // definition — nothing the author did was in flight. Computed once for the
-    // whole recording so each step is classified against the same evidence.
-    const actionWindows = actions
-        .filter(a => a.endTime !== undefined)
-        .map(a => ({ start: a.startTime, end: a.endTime as number + SETTLE_TAIL_MS }));
-    const idleResponses = this._network.outside(actionWindows);
+    // definition — nothing the author did was in flight, or the author had
+    // stopped waiting for it. Computed once for the whole recording so each
+    // step is classified against the same evidence.
+    const windows = captureWindows(actions);
+    const idleResponses = this._network.outside(windows);
+    const windowFor = new Map(actions.map((action, i) => [action, windows[i]]));
 
     // Map to BrowserStep[] format (no generated code snippets)
     const browserSteps = mapActionsToBrowserSteps(actions, action => {
-      if (!origin || action.endTime === undefined)
+      const window = windowFor.get(action);
+      if (!origin || !window)
         return undefined;
-      const responses = this._network.between(action.startTime, action.endTime, SETTLE_TAIL_MS);
+      const responses = this._network.between(window.start, window.end);
       const patterns = buildSettlePatterns(origin, responses, {
         actionStart: action.startTime,
         idleResponses,

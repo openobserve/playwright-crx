@@ -21,6 +21,7 @@ import { CRBrowser, CRBrowserContext } from 'playwright-core/lib/server/chromium
 import type { CRPage } from 'playwright-core/lib/server/chromium/crPage';
 import { helper } from 'playwright-core/lib/server/helper';
 import { SdkObject } from 'playwright-core/lib/server/instrumentation';
+import type { InstrumentationListener } from 'playwright-core/lib/server/instrumentation';
 import { Page } from 'playwright-core/lib/server/page';
 import type { Playwright } from 'playwright-core/lib/server/playwright';
 import { Recorder } from 'playwright-core/lib/server/recorder';
@@ -193,14 +194,27 @@ export class CrxApplication extends SdkObject {
   private _transport: CrxTransport;
   private _recorderApp?: ICrxRecorderApp;
   private _closed = false;
+  // Kept so close() can detach it again — `instrumentation` is the process-wide instance inherited
+  // from the root Playwright object, and this listener is registered with a null context, so it runs
+  // for every page close in the service worker until it is removed.
+  private readonly _instrumentationListener: InstrumentationListener = {
+    // Best-effort cleanup: the page is already gone, so nothing here is worth surfacing.
+    //
+    // CRPage.didClose() calls Page._didClose() unconditionally, including for a page still inside
+    // FrameSession._initialize() — a tab detached before its Page.getFrameTree resolved therefore
+    // reaches this listener with FrameManager._mainFrame still undefined, and Page.hideHighlight()
+    // -> frames() throws on it. (Page._markInitialized() would install a dummy main frame, but it
+    // has not run yet, and it skips that step entirely when the context is already closing.)
+    // Neither Page._didClose() nor this listener retains the promise, so without this catch the
+    // throw surfaces as an unhandled rejection in the service worker.
+    onPageClose: page => {
+      page.hideHighlight().catch(() => {});
+    },
+  };
 
   constructor(crx: Crx, context: CRBrowserContext, transport: CrxTransport) {
     super(context, 'crxApplication');
-    this.instrumentation.addListener({
-      onPageClose: page => {
-        page.hideHighlight();
-      },
-    }, null);
+    this.instrumentation.addListener(this._instrumentationListener, null);
     this._crx = crx;
     this._context = context;
     this._transport = transport;
@@ -329,6 +343,7 @@ export class CrxApplication extends SdkObject {
 
     this._closed = true;
 
+    this.instrumentation.removeListener(this._instrumentationListener);
     chrome.windows.onRemoved.removeListener(this.onWindowRemoved);
 
     if (options?.closeWindows) {

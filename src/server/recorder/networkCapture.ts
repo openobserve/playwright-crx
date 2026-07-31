@@ -41,6 +41,12 @@ import { generalizeEndpointPattern, patternWildcardCount } from './urlPattern';
 export type CapturedResponse = {
   url: string;
   method: string;
+  /**
+   * Observed, but never filtered on — see `isCandidateSignal`. Kept because it
+   * is what the recording saw, and because dropping it from the shape would
+   * make the capture evidence unreadable when one of these filters is next
+   * called into question.
+   */
   status: number;
   contentType: string;
   /** When the response arrived, so it can be attributed to an action window. */
@@ -70,6 +76,60 @@ export type CapturedResponse = {
  * many action windows it also appears in.
  */
 export type IdleWindow = { start: number; end: number };
+
+/**
+ * The longest stretch after an action that its responses may still arrive in.
+ *
+ * An action's window runs to the START OF THE NEXT ACTION, capped here. The
+ * next thing the author did is the honest boundary — everything between this
+ * click and the next interaction is plausibly caused by this click — and the
+ * cap keeps a long pause from swallowing the polling that happens during it.
+ *
+ * This replaced `endTime + 1s`, which could not work: on the `addRecordedAction`
+ * path nothing is awaited, so a browser-recorded action's `endTime` lands one
+ * microtask after its `startTime`. Every window was therefore ~1s wide
+ * regardless of how long the application actually took, and any API call slower
+ * than that was dropped as though it had never happened.
+ */
+export const MAX_CAPTURE_WINDOW_MS = 5000;
+
+/**
+ * How long before an action's recorded `startTime` its own responses may arrive.
+ *
+ * An action is stamped when the SERVICE WORKER hears about it, not when the page
+ * acted. The injected recorder deliberately holds a single click for ~200ms in
+ * case a double-click follows, and the binding call back to the worker costs
+ * more on top — so against a fast backend the response to a click routinely
+ * lands BEFORE the click's own `startTime`. Measured at 59ms early on a local
+ * server; the lead is set well above that because the gap grows with load.
+ *
+ * Without this, `between` and `isCausedBy` both reject the one response the step
+ * most obviously caused, and the faster the application, the more reliably it is
+ * lost.
+ */
+export const ACTION_REPORTING_LEAD_MS = 500;
+
+/**
+ * The stretch of the recording each action may claim responses from.
+ *
+ * Every action gets one, `openPage` included. It has no `endTime` at all
+ * (`recorderCollection` pushes it and returns), so under the old
+ * `endTime`-derived scheme it had no window — which put the entire first page
+ * load into the idle set and made every endpoint the application calls both on
+ * load and on click look like background traffic.
+ *
+ * The windows and their complement come from the same list, so a response can
+ * never be counted as both caused and background.
+ */
+export function captureWindows(actions: { startTime: number }[]): IdleWindow[] {
+  return actions.map((action, i) => {
+    const start = action.startTime - ACTION_REPORTING_LEAD_MS;
+    const next = actions[i + 1];
+    const cap = action.startTime + MAX_CAPTURE_WINDOW_MS;
+    const end = next ? Math.min(next.startTime, cap) : cap;
+    return { start, end: Math.max(start, end) };
+  });
+}
 
 export type SettleResponsePattern = {
   url_pattern: string;
@@ -108,6 +168,17 @@ const ACCEPTED_CONTENT_TYPES = [
   'application/x-www-form-urlencoded',
   'multipart/form-data',
   'application/graphql',
+  // Streamed responses. A search that streams its results is still the call the
+  // step is waiting on — OpenObserve's logs search (`_search_stream`,
+  // `_search_histogram_stream`, `_values_stream`) answers with SSE, so a
+  // JSON-only allow-list could never capture the one call that matters on a
+  // "Run Query" step.
+  //
+  // Note the arrival semantics this inherits: the `response` event fires when
+  // the HEADERS arrive, so a streamed signal means "the server started
+  // replying", not "the response is complete".
+  'text/event-stream',
+  'application/x-ndjson',
 ];
 
 /** ≤ 5 patterns per step (P4.1.6) — the same cap the schema enforces. */
@@ -154,7 +225,22 @@ export function hasAcceptedContentType(contentType: string): boolean {
   return ACCEPTED_CONTENT_TYPES.some(accepted => lower.includes(accepted));
 }
 
-/** Whether a response is worth remembering as evidence the step completed. */
+/**
+ * Whether a response is worth remembering as evidence the step completed.
+ *
+ * Deliberately does NOT filter on status. What is being recorded is *which call
+ * this step causes*, and an API call that answered 500 during the recording
+ * session is still that call — the endpoint is a property of the application,
+ * the status is a property of one afternoon. Filtering it out means a step
+ * recorded against a briefly-unhealthy backend silently stores no signal at all
+ * and falls back to the X-6 backstop forever after.
+ *
+ * The asymmetry this creates is intentional but worth knowing: the probe's
+ * `armResponse` counts a signal as fired only on 2xx/3xx, so a pattern recorded
+ * from a failing call fires only once the application is healthy again. That is
+ * the right direction to be wrong in — the signal annotates until then, and
+ * advisory signals never fail a run.
+ */
 export function isCandidateSignal(pageUrl: string, response: CapturedResponse): boolean {
   if (!isSameSite(pageUrl, response.url))
     return false;
@@ -162,9 +248,7 @@ export function isCandidateSignal(pageUrl: string, response: CapturedResponse): 
     return false;
   if (isStaticAsset(response.url))
     return false;
-  if (!hasAcceptedContentType(response.contentType))
-    return false;
-  return response.status >= 200 && response.status < 400;
+  return hasAcceptedContentType(response.contentType);
 }
 
 /**
@@ -176,9 +260,14 @@ export function isCandidateSignal(pageUrl: string, response: CapturedResponse): 
  *
  * A response with no `initiatedAt` is accepted, so a caller that does not yet
  * supply the field keeps today's behaviour instead of silently recording nothing.
+ *
+ * The comparison is against `actionStart - ACTION_REPORTING_LEAD_MS` for the
+ * same reason the window is: `actionStart` is when the worker heard about the
+ * action, and the page acted before that.
  */
 export function isCausedBy(response: CapturedResponse, actionStart: number): boolean {
-  return response.initiatedAt === undefined || response.initiatedAt >= actionStart;
+  return response.initiatedAt === undefined
+    || response.initiatedAt >= actionStart - ACTION_REPORTING_LEAD_MS;
 }
 
 /**
@@ -265,15 +354,21 @@ export function buildSettlePatterns(
  *
  * Time-windowed rather than causally traced: the browser does not tell us which
  * click caused which request, and a heuristic that pretended otherwise would be
- * wrong in exactly the interesting cases. The window is the action's own
- * start/end plus a short tail, and everything it produces is advisory — a
- * mis-attributed pattern annotates a step, it does not fail one.
+ * wrong in exactly the interesting cases. Everything it produces is advisory —
+ * a mis-attributed pattern annotates a step, it does not fail one.
+ *
+ * The buffer is shared by the WHOLE recording session, not per step; a step is
+ * only ever a filtered view of it (`between`). That is why the two context-free
+ * filters run on the way in rather than at build time: a single application
+ * page load is a hundred-plus requests, almost all of them scripts, fonts and
+ * images, and letting those consume the retention budget silently evicted the
+ * evidence of the earliest steps.
  */
 export class NetworkRecorder {
   private _responses: CapturedResponse[] = [];
   private _enabled = false;
   /** Bounded so a long recording session cannot grow without limit. */
-  private static readonly MAX_RETAINED = 500;
+  private static readonly MAX_RETAINED = 2000;
 
   enable() {
     this._enabled = true;
@@ -287,14 +382,26 @@ export class NetworkRecorder {
   record(response: CapturedResponse) {
     if (!this._enabled)
       return;
+    // The two filters that need no per-action context. Status is deliberately
+    // not among them — see `isCandidateSignal`.
+    if (isStaticAsset(response.url) || isDenied(response.url))
+      return;
     this._responses.push(response);
     if (this._responses.length > NetworkRecorder.MAX_RETAINED)
       this._responses.shift();
   }
 
-  /** Responses that landed within `[startTime, endTime + tail]`. */
-  between(startTime: number, endTime: number, tailMs = 1000): CapturedResponse[] {
-    return this._responses.filter(r => r.timestamp >= startTime && r.timestamp <= endTime + tailMs);
+  /**
+   * Responses that landed within `[startTime, endTime]`.
+   *
+   * The window is supplied whole rather than being derived from an action's own
+   * `endTime` plus a tail: a browser-recorded action's `endTime` lands one
+   * microtask after its `startTime` (nothing is awaited on that path), so it
+   * describes when the recorder heard about the click, not how long the
+   * application took to answer it. See `captureWindows` in the recorder app.
+   */
+  between(startTime: number, endTime: number): CapturedResponse[] {
+    return this._responses.filter(r => r.timestamp >= startTime && r.timestamp <= endTime);
   }
 
   /**

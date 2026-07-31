@@ -175,6 +175,49 @@ test('a recorded click carries a locator bundle, a settle block, and its duratio
   expect(responses.every(r => !r.url_pattern.includes('?'))).toBe(true);
 });
 
+test('a streamed, slow, also-fired-on-load search still becomes a settle signal', async ({
+  page, context, baseURL, extensionServiceWorker,
+}) => {
+  await page.goto(`${baseURL}/index.html`);
+  await collectSteps(page);
+
+  const target = `${baseURL}/v2-search.html`;
+  await startRecording(page, target);
+
+  const recordingPage = await context.waitForEvent('page', {
+    predicate: p => p.url().includes('v2-search.html'),
+    timeout: 30_000,
+  }).catch(() => context.pages().find(p => p.url().includes('v2-search.html')));
+  expect(recordingPage, 'the recording tab never opened').toBeTruthy();
+
+  await recordingPage!.waitForLoadState('domcontentloaded');
+  // Let the mount-time search finish first, so the click's own search is the
+  // SECOND time each endpoint is seen — the shape that used to be filtered as
+  // background traffic.
+  await recordingPage!.waitForTimeout(3_000);
+
+  await recordingPage!.locator('[data-test="logs-search-bar-refresh-btn"]').click();
+  // Long enough for /api/slow.json (2.5s), which the retired one-second window
+  // could never have reached.
+  await recordingPage!.waitForTimeout(4_000);
+
+  await sendCommand(page, { action: 'stopRecording' });
+  await page.waitForTimeout(1_000);
+
+  const steps = await recordedSteps(page);
+  const runQuery = steps.find(s => s.selector?.includes('logs-search-bar-refresh-btn'));
+  expect(runQuery, `no Run Query step in ${JSON.stringify(steps.map(s => s.selector))}`).toBeTruthy();
+
+  const patterns = (runQuery!.settle?.responses ?? []).map(r => r.url_pattern);
+
+  // The SSE search — dropped outright while the allow-list was JSON-only.
+  expect(patterns, 'the streamed search was not captured').toContain('**/api/search_stream');
+  // The slow JSON call — dropped by the one-second window.
+  expect(patterns, 'the slow response was not captured').toContain('**/api/slow.json');
+  // Still advisory: escalating a signal is an author act, never a recording.
+  expect(runQuery!.settle!.responses!.every(r => r.required === false)).toBe(true);
+});
+
 test('a recorded journey contains no hard sleep and no stamped timeout', async ({
   page, context, baseURL, extensionServiceWorker,
 }) => {

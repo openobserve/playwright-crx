@@ -26,11 +26,14 @@ import {
   isDynamicSegment,
 } from '../../src/server/recorder/urlPattern';
 import {
+  ACTION_REPORTING_LEAD_MS,
   buildSettlePatterns,
+  captureWindows,
   isBackground,
   isCandidateSignal,
   isCausedBy,
   isSameSite,
+  MAX_CAPTURE_WINDOW_MS,
   MAX_SETTLE_PATTERNS,
   NetworkRecorder,
 } from '../../src/server/recorder/networkCapture';
@@ -232,9 +235,37 @@ test('keeps same-site JSON and drops assets, beacons and third parties', () => {
   expect(isCandidateSignal(page, {
     ...base, url: 'https://app.example.com/page', contentType: 'text/html',
   })).toBe(false);
+});
+
+test('keeps a streamed response — the search that streams is still the search', () => {
+  const page = 'https://app.example.com/web/logs';
+  const base = { method: 'POST', status: 200, timestamp: 0 };
+
+  // O2's logs search answers with SSE. A JSON-only allow-list could never
+  // capture the one call a "Run Query" step is actually waiting on.
   expect(isCandidateSignal(page, {
-    ...base, url: 'https://app.example.com/auth/login', contentType: 'application/json', status: 500,
-  })).toBe(false);
+    ...base, url: 'https://app.example.com/api/default/_search_stream?type=logs',
+    contentType: 'text/event-stream',
+  })).toBe(true);
+  expect(isCandidateSignal(page, {
+    ...base, url: 'https://app.example.com/api/default/_values_stream',
+    contentType: 'application/x-ndjson',
+  })).toBe(true);
+});
+
+test('an endpoint that answered 500 is still the endpoint the step calls', () => {
+  const page = 'https://app.example.com/login';
+  const base = { method: 'POST', contentType: 'application/json', timestamp: 0 };
+
+  // The endpoint is a property of the application; the status is a property of
+  // one afternoon. Dropping the signal would leave the step with no evidence
+  // at all, falling back to the X-6 backstop on every future run.
+  expect(isCandidateSignal(page, {
+    ...base, url: 'https://app.example.com/auth/login', status: 500,
+  })).toBe(true);
+  expect(isCandidateSignal(page, {
+    ...base, url: 'https://app.example.com/auth/login', status: 401,
+  })).toBe(true);
 });
 
 test('ranks patterns by stability, caps them, and never marks one required', () => {
@@ -284,11 +315,93 @@ test('the recorder only collects while enabled, and windows responses per action
   recorder.record(res(10));
   recorder.record(res(50));
   recorder.record(res(5000));
+  // The window is supplied whole — no tail is added on this side, because the
+  // caller derives the end from the NEXT action's start.
   expect(recorder.between(0, 100)).toHaveLength(2);
-  expect(recorder.between(4000, 4500)).toHaveLength(1);
+  expect(recorder.between(4000, 4500)).toHaveLength(0);
+  expect(recorder.between(4000, 5500)).toHaveLength(1);
 
   recorder.disable();
   expect(recorder.between(0, 10000)).toHaveLength(0);
+});
+
+test('an action window ends where the author moved on, not one second in', () => {
+  // A browser-recorded action's endTime is a microtask after its startTime, so
+  // the window can only come from the NEXT action's start.
+  const lead = ACTION_REPORTING_LEAD_MS;
+  expect(captureWindows([{ startTime: 0 }, { startTime: 3000 }, { startTime: 3200 }])).toEqual([
+    { start: -lead, end: 3000 },        // ran until the author did the next thing
+    { start: 3000 - lead, end: 3200 },  // two clicks in quick succession
+    { start: 3200 - lead, end: 3200 + MAX_CAPTURE_WINDOW_MS },  // last action: capped
+  ]);
+
+  // A long pause is capped, so the polling that happens during it stays idle
+  // and remains available to the background filter.
+  expect(captureWindows([{ startTime: 0 }, { startTime: 60_000 }])).toEqual([
+    { start: -lead, end: MAX_CAPTURE_WINDOW_MS },
+    { start: 60_000 - lead, end: 60_000 + MAX_CAPTURE_WINDOW_MS },
+  ]);
+
+  // openPage has no endTime at all, so it used to get no window — putting the
+  // whole first page load into the idle set.
+  expect(captureWindows([{ startTime: 100 }])).toEqual([
+    { start: 100 - lead, end: 100 + MAX_CAPTURE_WINDOW_MS },
+  ]);
+  expect(captureWindows([])).toEqual([]);
+});
+
+test('a call fired on load and again on click is not mistaken for background', () => {
+  // The regression that made OpenObserve's "Run Query" uncapturable: the logs
+  // page runs a search on mount AND on click. With page-load traffic sitting
+  // outside every window it counted as idle, so the click's own search was
+  // filtered as background.
+  const page = 'https://app.example.com/web/logs';
+  const search = (timestamp: number) => ({
+    url: 'https://app.example.com/api/default/_search_stream', method: 'POST',
+    status: 200, contentType: 'text/event-stream', timestamp, initiatedAt: timestamp - 50,
+  });
+
+  const recorder = new NetworkRecorder();
+  recorder.enable();
+  recorder.record(search(200));    // on page load
+  recorder.record(search(10_300)); // on click
+
+  const actions = [{ startTime: 0 }, { startTime: 10_000 }];
+  const windows = captureWindows(actions);
+  const idleResponses = recorder.outside(windows);
+  expect(idleResponses, 'page-load traffic must belong to the openPage window').toHaveLength(0);
+
+  const patterns = buildSettlePatterns(page, recorder.between(windows[1].start, windows[1].end), {
+    actionStart: actions[1].startTime,
+    idleResponses,
+  });
+  expect(patterns.map(p => p.url_pattern)).toEqual(['**/api/default/_search_stream']);
+});
+
+test('the buffer spends its retention on calls that could become signals', () => {
+  const recorder = new NetworkRecorder();
+  recorder.enable();
+
+  // Context-free filters run on the way IN. One application page load is a
+  // hundred-plus requests, nearly all of them assets; letting those consume the
+  // retention budget silently evicted the earliest steps' evidence.
+  recorder.record({
+    url: 'https://app.example.com/assets/main.js', method: 'GET', status: 200,
+    contentType: 'application/javascript', timestamp: 1,
+  });
+  recorder.record({
+    url: 'https://www.google-analytics.com/collect', method: 'POST', status: 200,
+    contentType: 'application/json', timestamp: 2,
+  });
+  expect(recorder.between(0, 100)).toHaveLength(0);
+
+  // Status is NOT one of them — a failing call is still evidence of which
+  // endpoint the step causes.
+  recorder.record({
+    url: 'https://app.example.com/api/search', method: 'POST', status: 503,
+    contentType: 'application/json', timestamp: 3,
+  });
+  expect(recorder.between(0, 100)).toHaveLength(1);
 });
 
 // ── T2-4 / T3-2 / X-9.3: the mapper ─────────────────────────────────────────
@@ -618,10 +731,32 @@ test('a request that began before the action was not caused by it', () => {
   // step, delayed into this one's window. On replay the probe arms its watcher
   // at the start of this step, the call has already fired, and the signal is
   // stale forever.
-  expect(isCausedBy(R('https://x.test/a', { initiatedAt: 900 }), 1000)).toBe(false);
+  expect(isCausedBy(R('https://x.test/a', { initiatedAt: 100 }), 1000)).toBe(false);
   expect(isCausedBy(R('https://x.test/a', { initiatedAt: 1100 }), 1000)).toBe(true);
   // No timing available — keep today's behaviour rather than drop everything.
   expect(isCausedBy(R('https://x.test/a'), 1000)).toBe(true);
+});
+
+test('a response that beat its own action is still caused by it', () => {
+  // Measured, not theorised: against a local server the response to a click
+  // arrived 59ms BEFORE the click's own startTime, because an action is stamped
+  // when the service worker hears about it and the injected recorder holds a
+  // single click ~200ms first. Judging causality on the raw stamp discards the
+  // one response the step most obviously caused — and the faster the backend,
+  // the more reliably it is lost.
+  const actionStart = 1000;
+  expect(isCausedBy(R('https://x.test/a', { initiatedAt: actionStart - 59 }), actionStart)).toBe(true);
+  expect(isCausedBy(
+      R('https://x.test/a', { initiatedAt: actionStart - ACTION_REPORTING_LEAD_MS + 1 }), actionStart),
+  ).toBe(true);
+  expect(isCausedBy(
+      R('https://x.test/a', { initiatedAt: actionStart - ACTION_REPORTING_LEAD_MS - 1 }), actionStart),
+  ).toBe(false);
+
+  // The window has to agree, or the response is dropped before causality is
+  // ever consulted.
+  expect(captureWindows([{ startTime: actionStart }])[0].start)
+      .toBe(actionStart - ACTION_REPORTING_LEAD_MS);
 });
 
 test('a pattern seen while nothing was happening is background', () => {
@@ -650,8 +785,8 @@ test('buildSettlePatterns drops background and uncaused responses', () => {
       R('https://x.test/api/default/_search', { method: 'POST', initiatedAt: 1100 }),
       // polls during idle — dropped however often it appears here
       R('https://x.test/api/v1/config', { initiatedAt: 1100 }),
-      // began before the action — dropped
-      R('https://x.test/api/default/streams', { initiatedAt: 900 }),
+      // began well before the action, outside the reporting lead — dropped
+      R('https://x.test/api/default/streams', { initiatedAt: 300 }),
     ],
     { actionStart: 1000, idleResponses: idle },
   );
