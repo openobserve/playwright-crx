@@ -85,7 +85,10 @@ export type OverlayCommand =
   | { method: 'showOverlay' }
   | { method: 'hideOverlay' }
   | { method: 'setMode'; mode: Mode }
-  | { method: 'updateSteps'; steps: BrowserStep[] }
+  // The overlay renders a name per step and nothing else, and both senders already
+  // map down to that. Typing it as BrowserStep[] overstated what crosses this
+  // boundary and forced a cast at one of the two call sites.
+  | { method: 'updateSteps'; steps: Array<{ id: string; name: string }> }
   | { method: 'recordingState'; isRecording: boolean; mode: Mode; stepCount: number }
   | { method: 'stepResult'; stepId: string; passed: boolean; error?: string };
 
@@ -106,6 +109,36 @@ export type OverlayToBackgroundMessage = {
 // ---- Bridge message envelope (postMessage between OO web app ↔ content script) ----
 
 export const BRIDGE_CHANNEL = 'oo-bridge';
+
+// Handshake channels between the OO web app and the content script.
+//
+// The app posts PROBE_CHANNEL to ask "are you there?"; the content script answers
+// with READY_CHANNEL once it has confirmed the service worker is actually awake.
+// The answer is what makes detection deterministic — a page cannot control when
+// the content script loads relative to its own listener, so an unsolicited
+// announcement is not something it can rely on catching.
+export const PROBE_CHANNEL = 'oo-bridge-probe';
+export const READY_CHANNEL = 'oo-bridge-ready';
+
+// ---- Liveness pings ----
+
+// Content script (or popup) → service worker. The worker bundles the Playwright
+// engine and starts on demand, so this doubles as the wake-up call: sendMessage
+// queues until the worker has finished evaluating, where connect() would be
+// dropped.
+export const SW_PING = { type: 'oo-bridge-ping' } as const;
+
+export type SwPong = {
+  ok: true;
+  isRecording: boolean;
+  isReplaying: boolean;
+  stepCount: number;
+};
+
+// Popup → content script, to test whether a given tab is already bridged.
+export const CONTENT_PING = { type: 'oo-content-ping' } as const;
+
+export type ContentPong = { ok: true };
 
 export type BridgeDirection = 'to-ext' | 'to-page';
 
