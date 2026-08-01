@@ -241,7 +241,24 @@ function showOverlay() {
 
   document.getElementById(OVERLAY_ID)?.remove();
 
-  overlayEl = document.createElement('div');
+  // Created as <x-pw-glass>, not <div>, so the recorder does not capture our own
+  // UI as journey steps.
+  //
+  // The overlay lives in the recorded page's DOM, so a click on Stop is a click in
+  // the page like any other and Playwright's recorder recorded it — the journey
+  // ended with a spurious step targeting the recorder's own button. Playwright has
+  // exactly one exclusion for this (Recorder._ignoreOverlayEvent in
+  // playwright/packages/injected/src/recorder/recorder.ts): it walks
+  // event.composedPath() and ignores the event if any node is named `x-pw-glass`.
+  // That check guards all fifteen of its event handlers, so adopting the tag covers
+  // clicks, pointer, mouse, dblclick, contextmenu and dragstart in one move —
+  // whereas swallowing events ourselves would mean intercepting each type.
+  //
+  // This does couple us to an internal tag name. If Playwright renames it the
+  // exclusion silently stops working and spurious steps come back, so
+  // tests/crx/synthetics-overlay.spec.ts asserts the predicate directly
+  // and will fail loudly if that happens.
+  overlayEl = document.createElement('x-pw-glass') as unknown as HTMLDivElement;
   overlayEl.id = OVERLAY_ID;
   overlayEl.innerHTML = getOverlayHTML();
   document.body.appendChild(overlayEl);
@@ -347,6 +364,7 @@ function getOverlayHTML(): string {
   return `
     <style>
       #${OVERLAY_ID} {
+        display: block;
         position: fixed;
         bottom: 20px;
         right: 20px;
