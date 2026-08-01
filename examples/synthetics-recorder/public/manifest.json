@@ -1,6 +1,6 @@
 {
   "name": "OpenObserve Synthetics Recorder",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Record and replay browser interactions for OpenObserve synthetics monitoring",
   "manifest_version": 3,
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApSRT7BUzLe40JW3tue84ND2M8AZeUf5dlO11dkjnqTLP229yHRgh3D7huVUHs1mpH4uBq7DTlxoU1pRqEnVjb9VEdfluzAz8ZSMgXLYNu7ztxsSRqwR2W2ckZhtBBlL8OFFovtH/A3ajfyBBnoNI7eJRqaSvMxhFBAUiseGRdCQ0rvip7OVkPWKhJZVj721pbxWntxnj6ZqbKolFpbr4GIjOQWRZ9LH8J9tBt5oc7U78oPPSrOinQLbd2AazZx0UX90g6KSqE9TfJxuMMVZqzYbdyMheOLxZSZkRJNtKmFhMLv2tMr9f6dQixGZVUVsBp+pIfZE0wmA9siYA4YgBcQIDAQAB",
@@ -14,9 +14,10 @@
     "type": "module"
   },
   "action": {
-    "default_title": "Synthetics Recorder"
+    "default_title": "Synthetics Recorder",
+    "default_popup": "popup.html"
   },
-  "permissions": ["activeTab", "debugger", "scripting", "tabs", "storage"],
+  "permissions": ["debugger", "scripting", "tabs", "storage"],
   "host_permissions": ["<all_urls>"],
   "content_scripts": [
     {

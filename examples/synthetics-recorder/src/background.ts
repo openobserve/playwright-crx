@@ -9,11 +9,13 @@
  * 4. Auto-stops on tab close
  */
 
-import playwright, { crx, Crx, SyntheticsRecorderApp, mapBrowserStepsToActions } from 'playwright-crx';
+import playwright, { crx, Crx, SyntheticsRecorderApp, mapBrowserStepsToActions, describeReplayFidelity, setLocatorTestIdAttribute } from 'playwright-crx';
+import type { StepFidelity } from 'playwright-crx';
 import type { Mode } from '@recorder/recorderTypes';
 import type { CrxApplication } from 'playwright-crx';
 import type { BrowserStep, SyntheticsForwardMessage, StepResultData, StepStartedData, StructuredError } from 'playwright-crx';
-import type { O2Command, O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage, ReplayResponse, ReplayAuth, ReplayHeader, ReplayCookie, BridgePortMessage } from './messaging';
+import type { O2Command, O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage, ReplayResponse, ReplayAuth, ReplayHeader, ReplayCookie, BridgePortMessage, SwPong } from './messaging';
+import { SW_PING } from './messaging';
 
 // ---- State ----
 
@@ -34,6 +36,10 @@ let replaySteps: BrowserStep[] = [];
  *  converts it to 'openPage', which CrxPlayer.run() skips entirely (no events).
  *  This shifts all subsequent actionIndex values by +1 relative to replaySteps. */
 let replayActionOffset = 0;
+/** Per-step record of what the preview could NOT simulate (spec P2.S/P3.S/P4.S/P5.S).
+ *  Computed once per replay so every step result can carry its own caveats and no
+ *  skipped step is ever reported as a plain pass. */
+let replayFidelity: StepFidelity[] = [];
 
 // Long-lived connection back to the O2 web app running in a browser tab.
 // The O2 app opens this via chrome.runtime.connect(extensionId, { name: 'synthetics-recorder' }).
@@ -64,7 +70,8 @@ function resolveTestIdAttr(testIdAttr?: string): string {
 function init() {
   // Set the factory override BEFORE any CRX operations
   Crx.recorderAppFactoryOverride = async (crxInstance, recorder, _context) => {
-    const app = new SyntheticsRecorderApp(crxInstance, recorder, handleRecorderMessage);
+    // The context is what the app listens on for response evidence (Phase 4).
+    const app = new SyntheticsRecorderApp(crxInstance, recorder, handleRecorderMessage, _context);
     app.on('show', () => { /* headless — no UI */ });
     app.on('hide', () => { /* headless — no UI */ });
     app.on('modeChanged', ({ mode }) => {
@@ -76,6 +83,7 @@ function init() {
   // Leave Playwright's native default test-id attribute ('data-testid'). Recording/replay use whatever
   // O2 sends per request; we don't impose 'class' or 'data-test'.
   playwright.selectors.setTestIdAttribute(DEFAULT_TEST_ID_ATTR);
+  setLocatorTestIdAttribute(DEFAULT_TEST_ID_ATTR);
 
   // Long-lived connection from the O2 web app (bridge content script).
   // Internal connect replaces external — the content script owns the Port.
@@ -87,23 +95,23 @@ function init() {
   // Auto-stop when recording tab is closed
   chrome.tabs.onRemoved.addListener(handleTabRemoved);
 
-  // Toolbar icon click: inject content script into the active tab for users
-  // who installed the extension while the OO page was already open (Chrome
-  // doesn't retroactively inject content scripts).
-  chrome.action.onClicked.addListener(async (tab) => {
-    if (tab?.id) {
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ['content.js'],
-      }).catch(() => {});
-    }
-  });
+  // Re-project the overlay after the recorded page navigates. A journey is mostly
+  // navigation, and every navigation destroys the content script along with the
+  // overlay — but showOverlay was only ever sent once, from startRecording. An SPA
+  // that bounces / -> /login dropped the recording indicator and the Stop button
+  // before the user ever saw them, leaving recording with no visible state at all.
+  chrome.tabs.onUpdated.addListener(handleTabUpdated);
+
+  // NOTE: no chrome.action.onClicked listener. The action declares a default_popup,
+  // and Chrome does not fire onClicked for an action that has one. On-demand
+  // content-script injection — for users who installed the extension while the OO
+  // page was already open, since Chrome does not retroactively inject content
+  // scripts — now happens in popup.ts, where its success or failure is visible.
 }
 
 // ---- O2 web app connection (bridge content-script Port) ----
 
 function handleO2Connect(port: chrome.runtime.Port) {
-  console.log('[sw] onConnect: port.name=' + port.name + ' sender.url=' + (port.sender?.url || 'none'));
   if (port.name !== O2_PORT_NAME) return;
 
   // Only one O2 app drives the recorder at a time; the latest connection wins.
@@ -148,7 +156,6 @@ function handleBridgePortMessage(message: any): void {
         _bridgeNonce: bridgeMsg._bridgeNonce,
       };
       if (o2Port) {
-        console.log('[sw] respond() via o2Port: ' + JSON.stringify(response).slice(0,80));
         o2Port.postMessage(msg);
       } else {
         pendingBridgeResponses.push(msg);
@@ -165,8 +172,8 @@ function runO2Command(command: O2Command, respond: (response?: any) => void): bo
   switch (command.action) {
     case 'replay':
       handleReplay(command.steps, command.targetUrl, command.testIdAttr, command.auth, command.headers, command.cookies)
-        .then(result => { console.log('[sw] replay finished:', result); respond(result); })
-        .catch(err => { console.log('[sw] replay error:', err.message); respond({ success: false, passed: false, error: err.message }); });
+        .then(result => respond(result))
+        .catch(err => respond({ success: false, passed: false, error: err.message }));
       return true;
     case 'startRecording':
       startRecording(command.mode ?? 'recording', command.testIdAttr, command.targetUrl)
@@ -192,10 +199,6 @@ function runO2Command(command: O2Command, respond: (response?: any) => void): bo
       respond({ isRecording, mode: currentMode, tabId: recordingTabId, stepCount: browserSteps.length });
       return false;
 
-    case 'ejectCode':
-      respond({ code: '' }); // TBD
-      return false;
-
     case 'stopReplay':
       handleStopReplay()
         .then(() => respond({ success: true }))
@@ -209,23 +212,26 @@ function runO2Command(command: O2Command, respond: (response?: any) => void): bo
 
 function handleInternalMessage(
   message: any,
-  sender: chrome.runtime.MessageSender,
-  _sendResponse: (response?: any) => void
+  _sender: chrome.runtime.MessageSender,
+  sendResponse: (response?: any) => void
 ): boolean {
-  if (message.type === 'synthetics-overlay-action') {
-    const tabId = sender.tab?.id ?? message.tabId;
+  // Liveness probe from the content script or popup. Answering it is what lets a
+  // caller distinguish "worker still starting" from "extension not installed" —
+  // sendMessage is queued until this listener is registered, so a reply proves the
+  // worker has finished evaluating and the bridge port will be accepted.
+  if (message?.type === SW_PING.type) {
+    const pong: SwPong = { ok: true, isRecording, isReplaying, stepCount: browserSteps.length };
+    sendResponse(pong);
+    return false;
+  }
+
+  if (message?.type === 'synthetics-overlay-action') {
     switch (message.action) {
       case 'stop':
         if (isReplaying)
           handleStopReplay().catch(console.error);
         else
           stopRecording().catch(console.error);
-        break;
-      case 'play':
-        replayAll().catch(console.error);
-        break;
-      case 'playStep':
-        if (message.stepId) replayStep(message.stepId, tabId).catch(console.error);
         break;
     }
     return false;
@@ -333,6 +339,11 @@ function handleRecorderMessage(msg: SyntheticsForwardMessage) {
           duration_ms: result.duration_ms,
           error: result.error,
           structuredError: result.structuredError,
+          // What the preview did not actually evaluate for this step. A green
+          // result with notes is not the same claim as a green result without.
+          fidelity: replayFidelity[stepIndex]?.notes?.length
+            ? { level: replayFidelity[stepIndex].level, notes: replayFidelity[stepIndex].notes }
+            : undefined,
         },
       });
       if (recordingTabId) {
@@ -374,6 +385,16 @@ async function setOwnedWindowIds(ids: number[]): Promise<void> {
 // a live incognito window, that window is reused (its tab navigated to targetUrl) and any other
 // recorder-owned windows are closed; otherwise a fresh incognito window is created.
 async function prepareRecordingWindow(targetUrl: string): Promise<number> {
+  // Chrome grants incognito access to an extension only after the user turns it on by hand, and a
+  // freshly installed extension therefore cannot record at all: chrome.windows.create({incognito:true})
+  // fails and the session dies with "Failed to create incognito recording window", which says nothing
+  // about what to do. Check first so the message names the fix.
+  if (!(await chrome.extension.isAllowedIncognitoAccess())) {
+    throw new Error(
+      'Recording needs incognito access. Open chrome://extensions, find "OpenObserve Synthetics Recorder", ' +
+      'and turn on "Allow in incognito" — recordings always run in a separate incognito window.');
+  }
+
   // Tear down any in-memory session WITHOUT closing the window (so it can be reused). Awaiting
   // crxApp.close() lets the context Close event clear the incognito lock in crx.ts, otherwise the
   // next crx.start({ incognito: true }) throws 'incognito crxApplication is already started'.
@@ -433,7 +454,6 @@ async function prepareRecordingWindow(targetUrl: string): Promise<number> {
     top: winTop,
   };
 
-  console.debug('[synthetics-recorder:sw] creating incognito window, url=' + (targetUrl || 'about:blank'));
   win = await chrome.windows.create({ ...windowOpts, incognito: true }).catch(() => undefined);
 
   // If incognito creation failed, throw — a non-incognito window would cause
@@ -472,6 +492,7 @@ async function prepareRecordingWindow(targetUrl: string): Promise<number> {
 
 async function startRecording(mode: Mode = 'recording', testIdAttr?: string, targetUrl: string = '') {
   const attr = resolveTestIdAttr(testIdAttr);
+  setLocatorTestIdAttribute(attr);
   playwright.selectors.setTestIdAttribute(attr);
 
   // Reuse an existing recorder window if present (resetting everything), else open a new one.
@@ -567,6 +588,35 @@ async function setMode(mode: Mode) {
 
 // ---- Tab lifecycle ----
 
+// Restores the overlay onto the recording tab once a navigation has settled. Only ever touches the
+// tab the recorder owns, and only while recording, so ordinary browsing is untouched.
+//
+// Currently a no-op in effect: the content script has the overlay switched off (see OVERLAY_ENABLED
+// in content.ts, which explains why and what still needs deciding). Kept wired up deliberately — it
+// is what makes the overlay survive navigation, and it has to be here whichever way that decision
+// goes. The messages are harmless while the overlay is off; the content script ignores them.
+async function handleTabUpdated(tabId: number, changeInfo: chrome.tabs.TabChangeInfo) {
+  if (!isRecording || tabId !== recordingTabId || changeInfo.status !== 'complete') return;
+
+  // 'complete' can beat the content script's document_idle registration, and a
+  // send with no receiver is simply dropped — so retry briefly rather than lose
+  // the overlay to a race that only shows up on slower pages.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (await sendToOverlay(tabId, { method: 'showOverlay' })) break;
+    await new Promise(r => setTimeout(r, 200));
+  }
+  await sendToOverlay(tabId, {
+    method: 'updateSteps',
+    steps: browserSteps.map(s => ({ id: s.id, name: s.name })),
+  });
+  await sendToOverlay(tabId, {
+    method: 'recordingState',
+    isRecording: true,
+    mode: currentMode,
+    stepCount: browserSteps.length,
+  });
+}
+
 async function handleTabRemoved(tabId: number) {
   if (tabId === recordingTabId && isRecording) {
     stopRecording().catch(console.error);
@@ -599,9 +649,11 @@ async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr
   // Match the test-id attribute the recording used (sent by O2), otherwise internal:testid= selectors
   // resolve against the wrong attribute and time out.
   playwright.selectors.setTestIdAttribute(resolveTestIdAttr(testIdAttr));
+  setLocatorTestIdAttribute(resolveTestIdAttr(testIdAttr));
 
   replayStopped = false;
   replaySteps = steps;
+  replayFidelity = describeReplayFidelity(steps);
   // When the first step is a navigate with URL, mapBrowserStepsToActions converts
   // it to openPage, which the player skips — offset action indices by +1.
   replayActionOffset = (steps.length > 0 && steps[0].action === 'navigate' && !!steps[0].url) ? 1 : 0;
@@ -689,53 +741,20 @@ async function handleStopReplay(): Promise<void> {
   await crxApp.recorder.stop().catch(() => {});
 }
 
-// ---- Playback ----
-
-async function replayAll() {
-  // Triggered from overlay "Play" button
-  // SyntheticsRecorderApp._run() handles the actual playback
-  // This requires wiring the event through the message system
-  if (crxApp) {
-    await crxApp.recorder.setMode('none');
-    await crxApp.recorder.setMode('recording');
-    // Replay is triggered by the recorder's resume event
-  }
-}
-
-async function replayStep(stepId: string, tabId: number) {
-  // Single-step replay: find the action by step index
-  const stepIndex = parseInt(stepId.replace('s', ''), 10) - 1;
-  if (isNaN(stepIndex) || stepIndex < 0 || stepIndex >= browserSteps.length) return;
-
-  // For now, replay all steps up to and including the target
-  // The SyntheticsRecorderApp handles this
-  try {
-    sendToO2({
-      type: 'synthetics-recorder',
-      recordingId: recordingId ?? '',
-      payload: {
-        method: 'stepReplayResult',
-        stepId,
-        passed: true, // Placeholder — actual result from CrxPlayer
-        duration_ms: 0,
-      },
-    });
-  } catch (err) {
-    console.error('[SyntheticsRecorder] Step replay failed:', err);
-  }
-}
-
 // ---- Communication helpers ----
 
-async function sendToOverlay(tabId: number, payload: OverlayMessage['payload']) {
+// Returns false when nothing received the message — the content script is not (yet) in that tab,
+// e.g. a chrome:// page, or a document that has not reached document_idle.
+async function sendToOverlay(tabId: number, payload: OverlayMessage['payload']): Promise<boolean> {
   try {
     await chrome.tabs.sendMessage(tabId, {
       type: 'synthetics-overlay',
       tabId,
       payload,
     });
+    return true;
   } catch {
-    // Content script may not be loaded yet (e.g., chrome:// pages)
+    return false;
   }
 }
 

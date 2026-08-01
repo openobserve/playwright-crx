@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Slow login fixture</title>
+</head>
+<body>
+  <!--
+    Reproduces the shape of the production failure this phase fixes.
+
+    The five o2.introspect "Cloud Login Check" monitors fail 3-8% of runs with
+    `locator.waitFor: Timeout 10000ms exceeded` waiting for
+    [data-test="header-my-account-profile-icon"] — the post-sign-in assertion,
+    timing out during single-page-application boot after the auth redirect.
+
+    Here the profile icon appears after a delay that is deliberately longer than
+    the extension player's OLD 5s cap (crxPlayer kActionTimeout) and shorter than
+    the new 60s one. A journey that clicks it must therefore fail before this
+    phase and pass after it — with no change to the journey itself.
+
+    Selectors mirror tests/ui-testing/pages/generalPages/loginPage.js so the
+    fixture exercises the same locator shapes as the real monitored journey.
+  -->
+  <h1>Slow login fixture</h1>
+
+  <input data-test="login-user-id-field" placeholder="email" />
+  <input data-test="login-password-field" type="password" placeholder="password" />
+  <button data-test="login-sign-in">Sign In</button>
+
+  <div id="app"></div>
+
+  <script>
+    // ?delay=8000 by default — over the old 5s cap, under the new 60s one.
+    const params = new URLSearchParams(location.search);
+    const delayMs = Number(params.get('delay') ?? 8000);
+
+    document.querySelector('[data-test="login-sign-in"]').addEventListener('click', () => {
+      // Simulate the SPA boot that runs after the auth redirect: nothing useful
+      // is on the page until it finishes.
+      setTimeout(() => {
+        const icon = document.createElement('button');
+        icon.setAttribute('data-test', 'header-my-account-profile-icon');
+        icon.textContent = 'Profile';
+        document.getElementById('app').appendChild(icon);
+      }, delayMs);
+    });
+  </script>
+</body>
+</html>

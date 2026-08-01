@@ -233,6 +233,7 @@ class RecordActionTool implements RecorderTool {
       this._performAction({
         name: checkbox.checked ? 'check' : 'uncheck',
         selector: this._hoveredModel!.selector,
+        selectors: this._hoveredModel!.selectors,
         signals: [],
       });
       return;
@@ -246,6 +247,7 @@ class RecordActionTool implements RecorderTool {
         action: {
           name: 'click',
           selector: this._hoveredModel!.selector,
+          selectors: this._hoveredModel!.selectors,
           position: positionForEvent(event),
           signals: [],
           button: buttonForEvent(event),
@@ -273,6 +275,7 @@ class RecordActionTool implements RecorderTool {
     this._performAction({
       name: 'click',
       selector: this._hoveredModel!.selector,
+      selectors: this._hoveredModel!.selectors,
       position: positionForEvent(event),
       signals: [],
       button: buttonForEvent(event),
@@ -307,6 +310,7 @@ class RecordActionTool implements RecorderTool {
     this._performAction({
       name: 'click',
       selector: this._hoveredModel!.selector,
+      selectors: this._hoveredModel!.selectors,
       position: positionForEvent(event),
       signals: [],
       button: 'right',
@@ -372,6 +376,7 @@ class RecordActionTool implements RecorderTool {
       this._recorder.recordAction({
         name: 'setInputFiles',
         selector: this._activeModel!.selector,
+        selectors: this._activeModel!.selectors,
         signals: [],
         files: [...((target as HTMLInputElement).files || [])].map(file => file.name),
       });
@@ -383,6 +388,7 @@ class RecordActionTool implements RecorderTool {
         name: 'fill',
         // must use hoveredModel instead of activeModel for it to work in webkit
         selector: this._hoveredModel!.selector,
+        selectors: this._hoveredModel!.selectors,
         signals: [],
         text: target.value,
       });
@@ -401,6 +407,7 @@ class RecordActionTool implements RecorderTool {
       this._recorder.recordAction({
         name: 'fill',
         selector: this._activeModel!.selector,
+        selectors: this._activeModel!.selectors,
         signals: [],
         text: target.isContentEditable ? target.innerText : (target as HTMLInputElement).value,
       });
@@ -413,6 +420,7 @@ class RecordActionTool implements RecorderTool {
       this._performAction({
         name: 'select',
         selector: this._activeModel!.selector,
+        selectors: this._activeModel!.selectors,
         options: [...selectElement.selectedOptions].map(option => option.value),
         signals: []
       });
@@ -435,6 +443,7 @@ class RecordActionTool implements RecorderTool {
         this._performAction({
           name: checkbox.checked ? 'uncheck' : 'check',
           selector: this._activeModel!.selector,
+          selectors: this._activeModel!.selectors,
           signals: [],
         });
         return;
@@ -444,6 +453,7 @@ class RecordActionTool implements RecorderTool {
     this._performAction({
       name: 'press',
       selector: this._activeModel!.selector,
+      selectors: this._activeModel!.selectors,
       signals: [],
       key: event.key,
       modifiers: modifiersForEvent(event),
@@ -586,10 +596,10 @@ class RecordActionTool implements RecorderTool {
       this._recorder.updateHighlight(null, true);
       return;
     }
-    const { selector, elements } = this._recorder.injectedScript.generateSelector(this._hoveredElement, { testIdAttributeName: this._recorder.state.testIdAttributeName });
+    const { selector, selectors, elements } = this._recorder.injectedScript.generateSelector(this._hoveredElement, { testIdAttributeName: this._recorder.state.testIdAttributeName, multiple: true });
     if (this._hoveredModel && this._hoveredModel.selector === selector)
       return;
-    this._hoveredModel = selector ? { selector, elements, color: HighlightColors.action } : null;
+    this._hoveredModel = selector ? { selector, selectors, elements, color: HighlightColors.action } : null;
     this._recorder.updateHighlight(this._hoveredModel, true);
   }
 }
@@ -652,8 +662,8 @@ class TextAssertionTool implements RecorderTool {
     if (this._kind === 'text' || this._kind === 'snapshot') {
       this._hoverHighlight = this._recorder.injectedScript.utils.elementText(this._textCache, target).full ? { elements: [target], selector: '', color: HighlightColors.assert } : null;
     } else if (this._elementHasValue(target)) {
-      const generated = this._recorder.injectedScript.generateSelector(target, { testIdAttributeName: this._recorder.state.testIdAttributeName });
-      this._hoverHighlight = { selector: generated.selector, elements: generated.elements, color: HighlightColors.assert };
+      const generated = this._recorder.injectedScript.generateSelector(target, { testIdAttributeName: this._recorder.state.testIdAttributeName, multiple: true });
+      this._hoverHighlight = { selector: generated.selector, selectors: generated.selectors, elements: generated.elements, color: HighlightColors.assert };
     } else {
       this._hoverHighlight = null;
     }
@@ -682,11 +692,12 @@ class TextAssertionTool implements RecorderTool {
     if (this._kind === 'value') {
       if (!this._elementHasValue(target))
         return null;
-      const { selector } = this._recorder.injectedScript.generateSelector(target, { testIdAttributeName: this._recorder.state.testIdAttributeName });
+      const { selector, selectors } = this._recorder.injectedScript.generateSelector(target, { testIdAttributeName: this._recorder.state.testIdAttributeName, multiple: true });
       if (target.nodeName === 'INPUT' && ['checkbox', 'radio'].includes((target as HTMLInputElement).type.toLowerCase())) {
         return {
           name: 'assertChecked',
           selector,
+          selectors,
           signals: [],
           // Interestingly, inputElement.checked is reversed inside this event handler.
           checked: !(target as HTMLInputElement).checked,
@@ -695,6 +706,7 @@ class TextAssertionTool implements RecorderTool {
         return {
           name: 'assertValue',
           selector,
+          selectors,
           signals: [],
           value: (target as (HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement)).value,
         };
@@ -1477,6 +1489,10 @@ function consumeEvent(e: Event) {
 
 type HighlightModel = {
   selector?: string;
+  // Every selector the generator produced for this element, ordered
+  // most-stable-first. The generator has always returned this list; only
+  // `selectors[0]` was ever read.
+  selectors?: string[];
   elements: Element[];
   color: string;
   tooltipText?: string;

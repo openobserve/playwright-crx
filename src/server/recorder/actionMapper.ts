@@ -18,20 +18,71 @@
  */
 
 import type { ActionInContext, Action } from '@recorder/actions';
-
-export type SelectorType = 'css' | 'xpath' | 'text' | 'role' | 'data-test';
+import { buildLocatorBundle, effectiveSelector } from './locatorBundle';
+import type { StepLocator } from './locatorBundle';
+import { generalizeUrlPattern } from './urlPattern';
+import type { SettleResponsePattern } from './networkCapture';
 
 export type BrowserStepAction =
   'navigate' | 'openPage' | 'click' | 'type' | 'press' | 'select' |
+  'check' | 'uncheck' |
   'setInputFiles' | 'waitFor' | 'assert' | 'screenshot';
+
+/** The v2 assertion vocabulary, mirrored from the server-side closed set. */
+export type AssertionKind =
+  'element_visible' | 'element_not_visible' | 'element_text' |
+  'url_matches' | 'page_title' | 'element_attribute';
+
+export interface StepAssertion {
+  kind: AssertionKind;
+  expected?: string;
+  attribute?: string;
+}
+
+/**
+ * What the page demonstrably did after this step's action.
+ *
+ * Recorded as evidence, not as a contract: a signal that stops arriving
+ * annotates the step rather than failing the run, which is what lets a recorded
+ * journey outlive the endpoint names it was recorded against.
+ */
+export interface StepSettle {
+  navigation?: { url_pattern: string };
+  responses?: SettleResponsePattern[];
+  /** How long settling took while recording. Reporting only — never a timeout. */
+  observed_duration_ms?: number;
+}
 
 export interface BrowserStep {
   id: string;
   action: BrowserStepAction;
-  selector?: string;
-  selector_type?: SelectorType;
+  /**
+   * Every way the recorder could find this element. This IS the step's identity:
+   * the bare `selector` and `selector_type` pair beside it was the version-1
+   * channel, and went with version 1 (Phase 2c). `selector_type` was also a
+   * second, older classifier — `data-test`/`xpath`/`text`/`role`/`css` — sitting
+   * beside classifySelector's weakest-link rule and disagreeing with it.
+   */
+  locator?: StepLocator;
+  settle?: StepSettle;
+  assertion?: StepAssertion;
+  /**
+   * Author-set flow control. Never emitted by the recorder — they come back from
+   * the step editor on replay, and the player reports that it cannot honour
+   * them rather than diverging silently (P5.S.3).
+   */
+  optional?: boolean;
+  always_run?: boolean;
   name: string;
-  timeout_ms: number;
+  /**
+   * Absent by design. The recorder must never stamp a timeout — a recorded value
+   * encodes the recording session's timing, not the application's contract, and
+   * the previous hardcoded 10000 was the direct cause of the observed production
+   * failures (`locator.waitFor: Timeout 10000ms exceeded`). The runner owns
+   * defaults per action category; an author may still set one in the step editor.
+   * See docs/synthetics/synthetics-recorded-test-reliability-spec.md P1.1.
+   */
+  timeout_ms?: number;
   // Action-specific fields
   url?: string;
   value?: string;
@@ -50,18 +101,6 @@ export interface BrowserStep {
   pageAlias: string;
   framePath: string[];
   description?: string;
-}
-
-function getSelectorType(selector: string): SelectorType {
-  if (selector.startsWith('data-testid=') || selector.startsWith('[data-test'))
-    return 'data-test';
-  if (selector.startsWith('xpath='))
-    return 'xpath';
-  if (selector.startsWith('text='))
-    return 'text';
-  if (selector.startsWith('role='))
-    return 'role';
-  return 'css';
 }
 
 function buildStepName(action: Action, index: number): string {
@@ -101,23 +140,99 @@ function buildStepName(action: Action, index: number): string {
   }
 }
 
+/**
+ * The settle block for one action, built from evidence Playwright already
+ * collects and the recorder used to discard.
+ *
+ * `action.signals` carries the navigation the action caused — attached by
+ * `recorderCollection` and, until now, never read. That single field is the
+ * difference between a journey that sleeps for a fixed 30s and one that
+ * continues the moment the page is ready.
+ */
+function buildSettle(
+  actionInContext: ActionInContext,
+  responses?: SettleResponsePattern[],
+): StepSettle | undefined {
+  const { action, startTime, endTime } = actionInContext;
+  const settle: StepSettle = {};
+
+  const navigation = action.signals?.find(s => s.name === 'navigation');
+  if (navigation) {
+    const url_pattern = generalizeUrlPattern(navigation.url);
+    if (url_pattern)
+      settle.navigation = { url_pattern };
+  }
+
+  if (responses?.length)
+    settle.responses = responses;
+
+  // Reporting only (P5.4 item 5): "this step normally settles in about 2s;
+  // today it took 40s". Never read as a timeout by any component — a recording
+  // session's timings are not the application's contract.
+  if (endTime !== undefined && endTime > startTime)
+    settle.observed_duration_ms = Math.round(endTime - startTime);
+
+  return Object.keys(settle).length ? settle : undefined;
+}
+
+/**
+ * The typed assertion for a recorded assert action.
+ *
+ * `assertValue` and `assertChecked` have no dedicated kind in the v2 set, so
+ * they map onto `element_attribute`. That is exact rather than approximate: the
+ * probe reads a form control's CURRENT value and checked state for those two
+ * attribute names, which is what an author means by "assert this field's value"
+ * and what the recorder observed when it captured them.
+ */
+function buildAssertion(action: Action): StepAssertion | undefined {
+  switch (action.name) {
+    case 'assertVisible':
+      return { kind: 'element_visible' };
+    case 'assertText':
+      return { kind: 'element_text', expected: action.text };
+    case 'assertValue':
+      return { kind: 'element_attribute', attribute: 'value', expected: action.value };
+    case 'assertChecked':
+      return { kind: 'element_attribute', attribute: 'checked', expected: String(action.checked) };
+    case 'assertSnapshot':
+      // An aria snapshot is a whole subtree, not a value — there is no v2 kind
+      // that means it, and inventing one that compared a snapshot loosely would
+      // be a monitor that passes when the page has changed. Falls back to the
+      // honest weaker claim: the element is on screen.
+      return { kind: 'element_visible' };
+    default:
+      return undefined;
+  }
+}
+
 export function mapActionToBrowserStep(
   actionInContext: ActionInContext,
   actionIndex: number,
+  responses?: SettleResponsePattern[],
 ): BrowserStep {
   const { action, frame, startTime, endTime, description } = actionInContext;
+  const selectors = (action as { selectors?: string[] }).selectors;
+  const selector = (action as { selector?: string }).selector;
 
   const base: BrowserStep = {
     id: `s${actionIndex + 1}`,
     action: 'click', // placeholder, overridden below
     name: description ?? buildStepName(action, actionIndex),
-    timeout_ms: 10000,
+    // No timeout_ms — see the field's doc comment. The runner decides.
     startTime,
     endTime,
     pageAlias: frame.pageAlias,
     framePath: frame.framePath,
     description,
   };
+
+  const settle = buildSettle(actionInContext, responses);
+  if (settle)
+    base.settle = settle;
+
+  const locator = buildLocatorBundle(selectors, selector);
+  if (locator)
+    base.locator = locator;
 
   switch (action.name) {
     case 'navigate':
@@ -128,8 +243,6 @@ export function mapActionToBrowserStep(
       return {
         ...base,
         action: 'click',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
         button: action.button,
         modifiers: action.modifiers,
         position: action.position,
@@ -138,16 +251,12 @@ export function mapActionToBrowserStep(
       return {
         ...base,
         action: 'type',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
         value: action.text,
       };
     case 'press':
       return {
         ...base,
         action: 'press',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
         key: action.key,
         modifiers: action.modifiers,
       };
@@ -155,69 +264,60 @@ export function mapActionToBrowserStep(
       return {
         ...base,
         action: 'select',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
         options: [...action.options],
       };
+    // X-9.3 — no longer collapsed to `click`. A click toggles a checkbox, which
+    // makes the replayed journey depend on the box's starting state; `check`
+    // and `uncheck` assert the state they want, so a page that starts a box
+    // pre-ticked no longer silently inverts the journey.
     case 'check':
       return {
         ...base,
-        action: 'click',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
+        action: 'check',
       };
     case 'uncheck':
       return {
         ...base,
-        action: 'click',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
+        action: 'uncheck',
       };
     case 'setInputFiles':
       return {
         ...base,
         action: 'setInputFiles',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
         files: [...action.files],
       };
     case 'assertText':
       return {
         ...base,
         action: 'assert',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
+        assertion: buildAssertion(action),
         text: action.text,
       };
     case 'assertValue':
       return {
         ...base,
         action: 'assert',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
+        assertion: buildAssertion(action),
         value: action.value,
       };
     case 'assertChecked':
       return {
         ...base,
         action: 'assert',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
+        assertion: buildAssertion(action),
         checked: action.checked,
       };
     case 'assertVisible':
       return {
         ...base,
         action: 'assert',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
+        assertion: buildAssertion(action),
       };
     case 'assertSnapshot':
       return {
         ...base,
         action: 'assert',
-        selector: action.selector,
-        selector_type: getSelectorType(action.selector),
+        assertion: buildAssertion(action),
         snapshot: action.snapshot,
       };
     case 'closePage':
@@ -228,21 +328,58 @@ export function mapActionToBrowserStep(
   }
 }
 
+/**
+ * Map a whole recording.
+ *
+ * `responsesFor` is how network evidence reaches a step: the recorder observes
+ * responses on the browser context, and only this mapper knows which action's
+ * window each one fell into. Absent, steps simply carry no response signals —
+ * which is the correct behaviour when network capture is off, since every
+ * settle signal is advisory anyway.
+ */
 export function mapActionsToBrowserSteps(
   actions: ActionInContext[],
+  responsesFor?: (action: ActionInContext) => SettleResponsePattern[] | undefined,
 ): BrowserStep[] {
   return actions
       .filter(a => a.action.name !== 'closePage')
-      .map((a, i) => mapActionToBrowserStep(a, i));
+      .map((a, i) => mapActionToBrowserStep(a, i, responsesFor?.(a)));
 }
 
-// Reconstructs the Playwright Action for a BrowserStep. The forward mapper collapses several action
-// names into a coarser BrowserStepAction, so we reconstruct the exact action.name from the step's
-// action + which fields are present. Assert subtypes are fully recoverable; check/uncheck were recorded
-// as 'click' and replay as a click (which still toggles a checkbox).
+// Reconstructs the Playwright Action for a BrowserStep. The forward mapper
+// collapses several action names into a coarser BrowserStepAction, so we
+// reconstruct the exact action.name from the step's action + which fields are
+// present. Assert subtypes are fully recoverable, and check/uncheck now survive
+// the round trip intact (X-9.3) rather than degrading to a click.
+/**
+ * The stored version-2 vocabulary (X-9.1), mapped onto the recorder's internal
+ * action names.
+ *
+ * A journey that has been saved and reloaded arrives with the v2 names, because
+ * that is what the schema stores: `fill` replaces the `type` alias and `upload`
+ * is the v2 name for `setInputFiles` (P2.2.5 rejects `type` outright). The
+ * recorder's own in-memory steps still use the internal names, so both spellings
+ * must reach the same action.
+ *
+ * Without this a reloaded `fill` fell through to the `noop` default and was
+ * skipped silently — reported as a pass for a step that never typed anything,
+ * which is precisely the false green X-8.2 exists to prevent.
+ */
+const V2_ACTION_ALIASES: Record<string, BrowserStepAction> = {
+  fill: 'type',
+  upload: 'setInputFiles',
+};
+
 function buildActionFromStep(step: BrowserStep): Action {
-  const selector = step.selector ?? '';
-  switch (step.action) {
+  // A step's identity is its locator bundle, and nothing else. The mapper used
+  // to read a bare `step.selector` first, which built every element action with
+  // an empty selector on a stored step, and Playwright failed parsing it before
+  // the step ran:
+  //   Unexpected token "" while parsing css selector "".
+  // The `?? step.selector` fallback that replaced it outlived the field it read
+  // and went with version 1 (Phase 2c).
+  const selector = effectiveSelector(step.locator) ?? '';
+  switch (V2_ACTION_ALIASES[step.action] ?? step.action) {
     case 'openPage':
       return { name: 'openPage', url: step.url ?? '', signals: [] };
     case 'navigate':
@@ -263,9 +400,34 @@ function buildActionFromStep(step: BrowserStep): Action {
       return { name: 'press', selector, key: step.key ?? '', modifiers: step.modifiers ?? 0, signals: [] };
     case 'select':
       return { name: 'select', selector, options: step.options ?? [], signals: [] };
+    case 'check':
+      return { name: 'check', selector, signals: [] };
+    case 'uncheck':
+      return { name: 'uncheck', selector, signals: [] };
     case 'setInputFiles':
       return { name: 'setInputFiles', selector, files: step.files ?? [], signals: [] };
-    case 'assert':
+    case 'assert': {
+      // A stored v2 assert is typed (`assertion.kind`, P5.1) and carries none of
+      // the legacy fields below. Reading only those made every reloaded
+      // assertion degrade to assertVisible — including `element_text`, which
+      // replayFidelity then labelled "evaluated approximately". A visibility
+      // check reported as a text check is the false claim X-8.2 exists to stop.
+      const kind = step.assertion?.kind;
+      if (kind === 'element_text')
+        return { name: 'assertText', selector, text: step.assertion?.expected ?? '', substring: true, signals: [] };
+      if (kind === 'element_visible')
+        return { name: 'assertVisible', selector, signals: [] };
+      if (kind) {
+        // P5.S.2 — the other four kinds have no player equivalent. A noop keeps
+        // the action list index-aligned and lets replayFidelity report
+        // "assertion not simulated", instead of the player quietly running a
+        // different, weaker check. The page-level kinds (url_matches,
+        // page_title) legitimately carry no locator at all, so executing
+        // anything here would fail on an empty selector.
+        return { name: 'noop', signals: [] } as unknown as Action;
+      }
+      // v1 / recorder-internal asserts: the subtype is recovered from whichever
+      // field is set.
       if (step.snapshot !== undefined)
         return { name: 'assertSnapshot', selector, snapshot: step.snapshot, signals: [] };
       if (step.text !== undefined)
@@ -275,10 +437,47 @@ function buildActionFromStep(step: BrowserStep): Action {
       if (step.checked !== undefined)
         return { name: 'assertChecked', selector, checked: step.checked, signals: [] };
       return { name: 'assertVisible', selector, signals: [] };
+    }
     default:
-      // 'waitFor' / 'screenshot' are not produced by recording and not supported by the player.
-      throw new Error(`Cannot replay step with action '${step.action}'`);
+      // Unreplayable step (see UNSUPPORTED_REPLAY_ACTIONS). Substitute a no-op
+      // rather than throwing: the throw aborted the ENTIRE replay before step 1,
+      // which is why none of the production monitors — every one of which carries
+      // a legacy `wait` step — could be test-replayed at all.
+      //
+      // 'noop' is an internal marker the player returns from immediately
+      // (see CrxPlayer._performAction). It keeps the action list index-aligned
+      // with the step list, which background.ts relies on to map results back to
+      // step ids.
+      //
+      // Deliberately NOT 'pause': that action carries apiName 'page.pause' into
+      // the recorder instrumentation, which puts the session into a paused state
+      // and hangs the replay instead of skipping the step.
+      //
+      // The consumer is responsible for reporting these as "not simulated"
+      // rather than as a pass — a silent green here would reproduce the
+      // false-green the probe already gives `scroll`.
+      return { name: 'noop', signals: [] } as unknown as Action;
   }
+}
+
+/**
+ * Step actions the player cannot execute. Upstream Playwright's recorder action
+ * model (ActionName in @recorder/actions) has no hover/scroll/wait/screenshot, so
+ * these have never been replayable — they enter journeys only from O2's manual
+ * step editor or from legacy monitors. They are retired from the v2 vocabulary;
+ * this list exists so existing journeys still replay, with the step reported
+ * honestly. See spec X-9 and P1.R.2a.
+ */
+export const UNSUPPORTED_REPLAY_ACTIONS: readonly string[] = [
+  'hover',
+  'scroll',
+  'wait',
+  'waitFor',
+  'screenshot',
+];
+
+export function isUnsupportedReplayAction(action: string): boolean {
+  return UNSUPPORTED_REPLAY_ACTIONS.includes(action);
 }
 
 export function mapBrowserStepToAction(step: BrowserStep): ActionInContext {

@@ -100,12 +100,22 @@ export const test = base.extend<CrxFixtureOptions & {
           await rimraf(dirs).catch(() => {});
         },
 
-        context: async ({ extensionPath, createUserDataDir }, use) => {
+        // `channel` is Playwright's built-in worker option (`use: { channel }`),
+        // consumed here so a project can run the extension in the installed
+        // Google Chrome instead of the bundled Chromium. Undefined keeps the
+        // previous behaviour.
+        context: async ({ extensionPath, createUserDataDir, channel }, use) => {
           const context = await chromium.launchPersistentContext(createUserDataDir(), {
+            ...(channel ? { channel } : {}),
             headless: false,
             args: [
               `--disable-extensions-except=${extensionPath}`,
               `--load-extension=${extensionPath}`,
+              // Chrome 137+ disabled --load-extension behind a feature flag; the
+              // browser starts but silently loads no extension, so the service
+              // worker never appears and every fixture times out. Harmless on
+              // Chromium builds that never had the switch.
+              '--disable-features=DisableLoadExtensionCommandLineSwitch',
             ],
           });
           // prevents playwright from handling alerts, prompts, etc., and leave it to playwright-crx

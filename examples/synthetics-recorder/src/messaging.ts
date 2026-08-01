@@ -17,14 +17,13 @@ export type ReplayHeader = { key: string; value: string };
 
 export type ReplayCookie = { name: string; value: string; domain: string };
 
-// ---- O2 → Extension commands (via externally_connectable) ----
+// ---- O2 → Extension commands ----
 
 export type O2Command =
   | { action: 'startRecording'; mode?: Mode; testIdAttr?: string; targetUrl?: string }
   | { action: 'stopRecording' }
   | { action: 'setMode'; mode: Mode }
   | { action: 'getStatus' }
-  | { action: 'ejectCode'; language?: string }
   | { action: 'replay'; steps: BrowserStep[]; targetUrl?: string; testIdAttr?: string; auth?: ReplayAuth; headers?: ReplayHeader[]; cookies?: ReplayCookie[] }
   | { action: 'stopReplay' };
 
@@ -54,7 +53,25 @@ export type ExtensionToO2Payload =
   | { method: 'recordingStarted'; tabId: number; url: string }
   | { method: 'recordingStopped'; totalSteps: number }
   | { method: 'stepReplayStarted'; stepId: string; stepName?: string }
-  | { method: 'stepReplayResult'; stepId: string; stepName?: string; passed: boolean; duration_ms: number; error?: string; structuredError?: StructuredError };
+  | {
+    method: 'stepReplayResult';
+    stepId: string;
+    stepName?: string;
+    passed: boolean;
+    duration_ms: number;
+    error?: string;
+    structuredError?: StructuredError;
+    /**
+     * What the preview could not evaluate for this step (spec P2.S/P3.S/P4.S/P5.S).
+     *
+     * Present only when there is something to say. A green result WITH notes is a
+     * weaker claim than a green result without, and the difference has to reach
+     * the author — a sleep-free journey can replay faster than the application
+     * responds and fail here on a step the probe would pass, and an author who
+     * reads that as a step problem will re-add a sleep.
+     */
+    fidelity?: { level: 'exact' | 'approximate' | 'not_simulated'; notes: string[] };
+  };
 
 export type ExtensionToO2Message = {
   type: 'synthetics-recorder';
@@ -68,7 +85,10 @@ export type OverlayCommand =
   | { method: 'showOverlay' }
   | { method: 'hideOverlay' }
   | { method: 'setMode'; mode: Mode }
-  | { method: 'updateSteps'; steps: BrowserStep[] }
+  // The overlay renders a name per step and nothing else, and both senders already
+  // map down to that. Typing it as BrowserStep[] overstated what crosses this
+  // boundary and forced a cast at one of the two call sites.
+  | { method: 'updateSteps'; steps: Array<{ id: string; name: string }> }
   | { method: 'recordingState'; isRecording: boolean; mode: Mode; stepCount: number }
   | { method: 'stepResult'; stepId: string; passed: boolean; error?: string };
 
@@ -83,13 +103,42 @@ export type OverlayMessage = {
 export type OverlayToBackgroundMessage = {
   type: 'synthetics-overlay-action';
   tabId: number;
-  action: 'stop' | 'play' | 'playStep';
-  stepId?: string;
+  action: 'stop';
 };
 
 // ---- Bridge message envelope (postMessage between OO web app ↔ content script) ----
 
 export const BRIDGE_CHANNEL = 'oo-bridge';
+
+// Handshake channels between the OO web app and the content script.
+//
+// The app posts PROBE_CHANNEL to ask "are you there?"; the content script answers
+// with READY_CHANNEL once it has confirmed the service worker is actually awake.
+// The answer is what makes detection deterministic — a page cannot control when
+// the content script loads relative to its own listener, so an unsolicited
+// announcement is not something it can rely on catching.
+export const PROBE_CHANNEL = 'oo-bridge-probe';
+export const READY_CHANNEL = 'oo-bridge-ready';
+
+// ---- Liveness pings ----
+
+// Content script (or popup) → service worker. The worker bundles the Playwright
+// engine and starts on demand, so this doubles as the wake-up call: sendMessage
+// queues until the worker has finished evaluating, where connect() would be
+// dropped.
+export const SW_PING = { type: 'oo-bridge-ping' } as const;
+
+export type SwPong = {
+  ok: true;
+  isRecording: boolean;
+  isReplaying: boolean;
+  stepCount: number;
+};
+
+// Popup → content script, to test whether a given tab is already bridged.
+export const CONTENT_PING = { type: 'oo-content-ping' } as const;
+
+export type ContentPong = { ok: true };
 
 export type BridgeDirection = 'to-ext' | 'to-page';
 

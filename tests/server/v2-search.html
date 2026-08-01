@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Version-2 capture fixture — streamed search</title>
+</head>
+<body>
+  <!--
+    A miniature of the journey the capture filters actually have to survive:
+    OpenObserve's logs page.
+
+    Three properties of that page defeated the recorder, and every one of them
+    is reproduced here rather than described:
+
+      1. The search answers with `text/event-stream`, not JSON. A JSON-only
+         content-type allow-list discarded it before anything else ran.
+      2. The page runs a search ON MOUNT as well as on click. With page-load
+         traffic falling outside every action window it counted as idle, so the
+         click's own search was then filtered as background.
+      3. Not every call answers immediately. `/api/slow.json` holds its headers
+         back past the old one-second window, which is where a real search
+         lives — the entire point of settling instead of sleeping.
+
+    The static-file fixtures next to this one answer in under a millisecond
+    with application/json and fire exactly once, so they pass every filter
+    comfortably and proved nothing about any of the above.
+  -->
+  <h1>Version-2 capture fixture — streamed search</h1>
+
+  <button data-test="logs-search-bar-refresh-btn" class="btn btn-primary">Run Query</button>
+  <pre data-test="logs-search-result"></pre>
+
+  <script>
+    const out = document.querySelector('[data-test="logs-search-result"]');
+
+    function runSearch() {
+      // Streamed, exactly as `_search_stream` answers. Headers arrive at once;
+      // the body keeps arriving for a while afterwards.
+      const stream = fetch('/api/search_stream', { method: 'POST' })
+          .then(r => r.text());
+      // Slower than the old capture window, which is the ordinary case for a
+      // real query rather than an edge case.
+      const slow = fetch('/api/slow.json');
+      return Promise.all([stream, slow]).then(() => { out.textContent = 'done'; });
+    }
+
+    // (2) The mount-time search. This is what made the click's search look
+    //     like background traffic.
+    runSearch();
+
+    document.querySelector('[data-test="logs-search-bar-refresh-btn"]')
+        .addEventListener('click', () => {
+          // Same generous pause as v2-login.html: the injected recorder holds a
+          // single click for 200ms in case a double-click follows, so anything
+          // that tears the page down faster loses the step entirely.
+          runSearch();
+        });
+  </script>
+</body>
+</html>

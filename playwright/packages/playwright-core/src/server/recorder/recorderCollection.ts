@@ -110,7 +110,17 @@ export class RecorderCollection extends EventEmitter {
           startTime: timestamp,
           endTime: timestamp,
         });
+        return;
       }
+
+      // The navigation was CAUSED by the last action, and upstream drops the
+      // signal here — reasonably, because code generation has no use for it:
+      // generated Playwright code does not emit a wait, it relies on
+      // auto-waiting. A monitor is different. This signal is exactly the
+      // evidence that turns a recorded hard sleep into a wait condition, so it
+      // is attached to the action that caused it rather than discarded.
+      lastAction.action.signals.push(signal);
+      this._fireChange();
       return;
     }
 
