@@ -186,3 +186,49 @@ test('should start with device name and custom viewport', async ({ runCrxTest })
     await incognitoApp.close();
   });
 });
+
+test('should attach only the given tabId, ignoring a pre-existing incognito tab', async ({ runCrxTest }) => {
+  await runCrxTest(async ({ crx, server, expect }) => {
+    // The shape that used to be hijacked: a window the user already had open on a
+    // real site. It must be created FIRST, because Chrome lists windows in
+    // creation order and the old code took the first incognito hit.
+    const decoyWindow = await chrome.windows.create({
+      incognito: true, url: `${server.PREFIX}/index.html` });
+    const decoyTabId = decoyWindow.tabs![0].id!;
+    await new Promise<void>(resolve => {
+      const listener = (id: number, info: chrome.tabs.TabChangeInfo) => {
+        if (id !== decoyTabId || info.status !== 'complete') return;
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      };
+      chrome.tabs.onUpdated.addListener(listener);
+    });
+
+    // The window the recorder opens for itself, created AFTER the decoy.
+    const ownWindow = await chrome.windows.create({
+      incognito: true, url: `${server.PREFIX}/v2-login.html` });
+    const ownTabId = ownWindow.tabs![0].id!;
+
+    const incognitoApp = await crx.start({ incognito: true, tabId: ownTabId });
+    const urls = incognitoApp.pages().map(p => p.url());
+
+    expect(urls.some(u => u.includes('v2-login.html'))).toBe(true);
+    expect(urls.some(u => u.includes('index.html'))).toBe(false);
+
+    await incognitoApp.close();
+    await chrome.windows.remove(decoyWindow.id!).catch(() => {});
+  });
+});
+
+test('should reject a tabId that is not incognito', async ({ runCrxTest }) => {
+  await runCrxTest(async ({ crx, server, expect }) => {
+    const normalWindow = await chrome.windows.create({
+      incognito: false, url: `${server.PREFIX}/index.html` });
+    const normalTabId = normalWindow.tabs![0].id!;
+
+    await expect(crx.start({ incognito: true, tabId: normalTabId }))
+        .rejects.toThrow(/is not an incognito tab/);
+
+    await chrome.windows.remove(normalWindow.id!).catch(() => {});
+  });
+});

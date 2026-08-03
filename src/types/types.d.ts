@@ -58,6 +58,14 @@ export interface Crx {
      */
     incognito?: boolean;
 
+    /**
+     * Attach to exactly this tab instead of searching for an active incognito tab.
+     * Callers that already opened their own window should always pass this — the
+     * search picks whichever incognito window Chrome lists first, which is the
+     * user's own window when they already had one open.
+     */
+    tabId?: number;
+
     deviceName?: string;
 
     contextOptions?: CrxBrowserContextOptions;

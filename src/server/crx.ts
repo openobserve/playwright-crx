@@ -74,7 +74,7 @@ export class Crx extends SdkObject {
   }
 
   async start(options?: crxchannels.CrxStartParams): Promise<CrxApplication> {
-    const { incognito, contextOptions } = options ?? {};
+    const { incognito, contextOptions, tabId } = options ?? {};
     const device = deviceDescriptors[options?.deviceName as keyof DeviceDescriptor] ?? {};
     const viewport = contextOptions?.viewport ?? device.viewport;
     const newContextOptions: channels.BrowserNewContextOptions = {
@@ -116,7 +116,7 @@ export class Crx extends SdkObject {
     if (incognito) {
       if (this._incognitoCrxApplicationPromise)
         throw new Error(`incognito crxApplication is already started`);
-      this._incognitoCrxApplicationPromise = this._startIncognitoCrxApplication(browser, transport, newContextOptions);
+      this._incognitoCrxApplicationPromise = this._startIncognitoCrxApplication(browser, transport, newContextOptions, tabId);
       return await this._incognitoCrxApplicationPromise;
     } else {
       if (this._crxApplicationPromise)
@@ -149,11 +149,22 @@ export class Crx extends SdkObject {
     return crxApp;
   }
 
-  private async _startIncognitoCrxApplication(browser: CRBrowser, transport: CrxTransport, options?: channels.BrowserNewContextParams) {
-    const windows = await chrome.windows.getAll().catch(() => {}) ?? [];
-    const activeTabs = await chrome.tabs.query({ active: true });
-    const incognitoTab = activeTabs.find(t => t.incognito && !t.url?.startsWith('chrome://')) ??
-      await createTab({ incognito: true, windowId: windows.find(w => w.incognito)?.id, url: 'about:blank' });
+  private async _startIncognitoCrxApplication(browser: CRBrowser, transport: CrxTransport, options?: channels.BrowserNewContextParams, tabId?: number) {
+    // When the caller names a tab, use exactly that tab. The search below picks
+    // whichever incognito window Chrome lists first — and Chrome lists them in
+    // creation order, so a user who already had an incognito window open on a
+    // site gets THEIR tab attached, recorded and replayed into.
+    let incognitoTab: chrome.tabs.Tab;
+    if (tabId !== undefined) {
+      incognitoTab = await chrome.tabs.get(tabId);
+      if (!incognitoTab.incognito)
+        throw new Error(`Tab ${tabId} is not an incognito tab`);
+    } else {
+      const windows = await chrome.windows.getAll().catch(() => {}) ?? [];
+      const activeTabs = await chrome.tabs.query({ active: true });
+      incognitoTab = activeTabs.find(t => t.incognito && !t.url?.startsWith('chrome://')) ??
+        await createTab({ incognito: true, windowId: windows.find(w => w.incognito)?.id, url: 'about:blank' });
+    }
 
     const incognitoTabId = incognitoTab.id!;
 

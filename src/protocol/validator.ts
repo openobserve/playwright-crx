@@ -57,6 +57,7 @@ scheme.CrxStartParams = tObject({
   downloadsPath: tOptional(tString),
   tracesDir: tOptional(tString),
   incognito: tOptional(tBoolean),
+  tabId: tOptional(tNumber),
   deviceName: tOptional(tString),
   contextOptions: tOptional(tBrowserContextOptions()),
 });
