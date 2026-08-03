@@ -503,7 +503,7 @@ async function startRecording(mode: Mode = 'recording', testIdAttr?: string, tar
 
   // Start CRX in incognito — finds & reuses the incognito tab prepared above.
   try {
-    crxApp = await crx.start({ incognito: true });
+    crxApp = await crx.start({ incognito: true, tabId: recordingTabId });
   } catch (e) {
     console.warn('[synthetics-recorder:sw] crx.start({incognito:true}) failed — falling back to non-incognito:', e);
     crxApp = await crx.start({ incognito: false });
@@ -694,7 +694,7 @@ async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr
 
   try {
     try {
-      crxApp = await crx.start({ incognito: true, contextOptions });
+      crxApp = await crx.start({ incognito: true, tabId, contextOptions });
     } catch (e) {
       console.warn('[synthetics-recorder:sw] handleReplay crx.start({incognito:true}) failed — falling back to non-incognito:', e);
       crxApp = await crx.start({ incognito: false, contextOptions });
