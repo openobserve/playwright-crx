@@ -103,7 +103,9 @@ export default class CrxPlayer extends EventEmitter {
 
     if (pageOrContext instanceof Page) {
       page = pageOrContext;
-      context = page.context();
+      // Server-side Page exposes `browserContext`; `context()` is the client-side
+      // API. Nothing ever passed a Page here before, so the mistake stayed hidden.
+      context = page.browserContext;
     } else {
       context = pageOrContext;
       page = context.pages()[0] ?? await context.newPage(serverSideCallMetadata());

@@ -180,7 +180,7 @@ export class Crx extends SdkObject {
       this._incognitoCrxApplicationPromise = undefined;
     });
     const crxApp = new CrxApplication(this, context, transport);
-    await crxApp.attach(incognitoTabId);
+    crxApp._mainPage = await crxApp.attach(incognitoTabId);
     return crxApp;
   }
 
@@ -205,6 +205,12 @@ export class CrxApplication extends SdkObject {
   private _transport: CrxTransport;
   private _recorderApp?: ICrxRecorderApp;
   private _closed = false;
+  // The page this application was started on. Replay targets it explicitly:
+  // CrxPlayer otherwise falls back to context.pages()[0], which is "whatever
+  // attached first" and is not necessarily the tab we were created for.
+  // Not `private`: `Crx._startIncognitoCrxApplication` assigns it, and TypeScript's
+  // `private` is per-class, not per-file. The leading underscore marks it internal.
+  _mainPage?: Page;
   // Kept so close() can detach it again — `instrumentation` is the process-wide instance inherited
   // from the root Playwright object, and this listener is registered with a null context, so it runs
   // for every page close in the service worker until it is removed.
@@ -385,9 +391,7 @@ export class CrxApplication extends SdkObject {
   // ActionInContext[] — kept as a string so the channel validator stays a simple tString.
   async runActions(actionsJson: string, page?: Page) {
     const actions = JSON.parse(actionsJson);
-    // eslint-disable-next-line no-console
-    console.log(actions);
-    await this._crx.player.run(page ?? this._context, actions);
+    await this._crx.player.run(page ?? this._mainPage ?? this._context, actions);
   }
 
   async stop() {

@@ -15,6 +15,10 @@
  */
 
 import { dumpLogHeaders, expect, test } from './crxRecorderTest';
+// The test below drives the crx API directly through runCrxTest, which needs the
+// harness extension's `_runTest` global. recorder-crx (what `test` above loads)
+// does not have it, so that test uses the base fixtures instead.
+import { test as crxTest } from './crxTest';
 import { editCode } from './utils';
 
 test('should play in incognito', async ({ configureRecorder, attachRecorder, page, baseURL, extensionServiceWorker }) => {
@@ -73,4 +77,34 @@ test('test', async ({ page }) => {
   const newTabIds = await getIncognitoTabIds();
   expect(newTabIds).toHaveLength(1);
   expect(newTabIds[0]).not.toEqual(tabIds[0]);
+});
+
+crxTest('should replay against the started tab, not whatever attached first', async ({ runCrxTest }) => {
+  await runCrxTest(async ({ crx, server, expect }) => {
+    const ownWindow = await chrome.windows.create({
+      incognito: true, url: `${server.PREFIX}/v2-login.html` });
+    const ownTabId = ownWindow.tabs![0].id!;
+    const incognitoApp = await crx.start({ incognito: true, tabId: ownTabId });
+
+    // A second incognito tab attached AFTER start. It must not become the
+    // replay target just because it is in the same context.
+    const otherWindow = await chrome.windows.create({
+      incognito: true, url: `${server.PREFIX}/index.html` });
+    await incognitoApp.attach(otherWindow.tabs![0].id!);
+
+    await incognitoApp.recorder.runActions([
+      {
+        frame: { pageAlias: 'page', framePath: [] },
+        action: { name: 'click', selector: 'internal:testid=[data-test="login-user-id-field"s]', signals: [] },
+      },
+    ]);
+
+    // The click can only have succeeded against the started tab, because the
+    // other tab has no such element.
+    const startedTab = await chrome.tabs.get(ownTabId);
+    expect(startedTab.url).toContain('v2-login.html');
+
+    await incognitoApp.close();
+    await chrome.windows.remove(otherWindow.id!).catch(() => {});
+  });
 });
