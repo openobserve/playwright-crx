@@ -70,6 +70,9 @@ export default class CrxPlayer extends EventEmitter {
   private _stopping?: ManualPromise;
   private _pageAliases = new Map<Page, string>();
   private _pause?: Promise<void>;
+  // Context the current run() is executing against. stop() needs it to abort the
+  // in-flight call; _checkStopped() alone only lands at the next step boundary.
+  private _runningContext?: BrowserContext;
 
   constructor(crx: Crx) {
     super();
@@ -124,6 +127,7 @@ export default class CrxPlayer extends EventEmitter {
 
     this._pageAliases.clear();
     this._pageAliases.set(page, 'page');
+    this._runningContext = context;
     this.emit('start');
 
     try {
@@ -131,6 +135,11 @@ export default class CrxPlayer extends EventEmitter {
       for (const action of actions) {
         if (action.action.name === 'openPage' && action.frame.pageAlias === 'page')
           continue;
+        // A stop that landed between two actions has no pending call to abort, so check
+        // before announcing the step. Announcing it and only then throwing Stopped is what
+        // left consumers holding a stepStarted that no stepResult ever answered.
+        if (this._consumeStopRequest())
+          return;
         this._currAction = action;
         this.emit('stepStarted', { actionIndex });
         const startTime = monotonicTime();
@@ -143,6 +152,13 @@ export default class CrxPlayer extends EventEmitter {
             error: undefined,
           });
         } catch (e) {
+          // Cancelled by stop(): stopPendingOperations aborts the pending call, and it
+          // rejects with a serialized error object rather than our Stopped marker — so
+          // instanceof cannot see it and we key off _stopping instead. Returning here is
+          // the point: a step the user cancelled must not be reported as a failure, and
+          // the loop must not advance to emit a stepStarted that never gets a result.
+          if (this._consumeStopRequest())
+            return;
           if (e instanceof Stopped)
             return;
           const serialized = serializeError(e);
@@ -163,6 +179,7 @@ export default class CrxPlayer extends EventEmitter {
       throw e;
     } finally {
       this._currAction = undefined;
+      this._runningContext = undefined;
       this.pause().catch(() => {});
       if (instrumentationListener)
         context.instrumentation.removeListener(instrumentationListener);
@@ -177,6 +194,10 @@ export default class CrxPlayer extends EventEmitter {
     if (this._currAction || this._pause) {
       this._currAction = undefined;
       this._stopping = new ManualPromise();
+      // Abort whatever call is pending right now. _checkStopped() only runs at the START
+      // of an action, so without this the stop waits out the in-flight click/fill/expect
+      // — up to kActionTimeout, 60s — and only lands one step later.
+      await this._runningContext?.stopPendingOperations('Stopped').catch(() => {});
       await Promise.all([
         this._stopping,
         this._pause,
@@ -366,9 +387,18 @@ export default class CrxPlayer extends EventEmitter {
   }
 
   private _checkStopped() {
-    if (this._stopping) {
-      this._stopping.resolve();
+    if (this._consumeStopRequest())
       throw new Stopped();
-    }
+  }
+
+  // Acknowledges a stop request, releasing the promise stop() is waiting on. Returns true
+  // when a stop was in flight, so callers can unwind. Kept as a method rather than an
+  // inline `if (this._stopping)` because stop() mutates the field concurrently — narrowing
+  // it in one branch of run() would wrongly narrow it in every later branch.
+  private _consumeStopRequest(): boolean {
+    if (!this._stopping)
+      return false;
+    this._stopping.resolve();
+    return true;
   }
 }
