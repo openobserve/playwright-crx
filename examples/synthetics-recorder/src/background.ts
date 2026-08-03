@@ -501,13 +501,11 @@ async function startRecording(mode: Mode = 'recording', testIdAttr?: string, tar
   browserSteps = [];
   currentMode = mode;
 
-  // Start CRX in incognito — finds & reuses the incognito tab prepared above.
-  try {
-    crxApp = await crx.start({ incognito: true, tabId: recordingTabId });
-  } catch (e) {
-    console.warn('[synthetics-recorder:sw] crx.start({incognito:true}) failed — falling back to non-incognito:', e);
-    crxApp = await crx.start({ incognito: false });
-  }
+  // Start CRX on the exact tab prepared above. There is deliberately no
+  // non-incognito fallback: that application would have isIncognito() === false,
+  // and the attach below would always fail with 'Tab is not in the expected
+  // browser context', hiding whatever actually went wrong here.
+  crxApp = await crx.start({ incognito: true, tabId: recordingTabId });
 
   // Show recorder (creates SyntheticsRecorderApp via factory override)
   await crxApp.recorder.show({
@@ -693,12 +691,7 @@ async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr
   }
 
   try {
-    try {
-      crxApp = await crx.start({ incognito: true, tabId, contextOptions });
-    } catch (e) {
-      console.warn('[synthetics-recorder:sw] handleReplay crx.start({incognito:true}) failed — falling back to non-incognito:', e);
-      crxApp = await crx.start({ incognito: false, contextOptions });
-    }
+    crxApp = await crx.start({ incognito: true, tabId, contextOptions });
     await crxApp.attach(tabId);
     isReplaying = true;
 

@@ -157,3 +157,38 @@ test('replay passes with a pre-existing incognito window open', async ({ page, b
       async (id: number) => (await chrome.tabs.get(id)).url, userTabId);
   expect(userTabUrl).toContain('/index.html');
 });
+
+test('surfaces the real error when incognito start fails', async ({ page, baseURL, extensionServiceWorker }) => {
+  await page.goto(`${baseURL}/index.html`);
+
+  // Force crx.start to fail the way a stale session does. Only the FIRST call is
+  // failed: the removed fallback called crx.start({incognito:false}) and then
+  // attach(), and attach calls chrome.tabs.get too. Failing every call would make
+  // the fallback report 'SIMULATED start failure' as well, and the test would pass
+  // whether or not the fallback is still there.
+  await extensionServiceWorker.evaluate(() => {
+    const orig = chrome.tabs.get;
+    (globalThis as any).__origTabsGet = orig;
+    let failed = false;
+    chrome.tabs.get = ((...args: any[]) => {
+      if (failed)
+        return (orig as any).apply(chrome.tabs, args);
+      failed = true;
+      return Promise.reject(new Error('SIMULATED start failure'));
+    }) as any;
+  });
+
+  const res = await sendCommand<{ success: boolean; error?: string }>(page, {
+    action: 'startRecording', mode: 'recording', testIdAttr: 'data-test',
+    targetUrl: `${baseURL}/v2-login.html`,
+  });
+
+  await extensionServiceWorker.evaluate(() => {
+    chrome.tabs.get = (globalThis as any).__origTabsGet;
+  });
+
+  expect(res?.success).toBe(false);
+  // The real cause, not 'Tab is not in the expected browser context' from a
+  // fallback that could never have worked.
+  expect(res?.error).toContain('SIMULATED start failure');
+});
