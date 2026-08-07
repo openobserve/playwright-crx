@@ -278,11 +278,16 @@ export class CrxApplication extends SdkObject {
 
   async showRecorder(options?: crxchannels.CrxApplicationShowRecorderParams) {
     if (!this._recorderApp) {
-      const { mode, ...otherOptions } = options ?? {};
       const recorderParams = {
+        ...options,
         language: options?.language ?? 'playwright-test',
-        mode: mode === 'none' ? undefined : mode,
-        ...otherOptions
+        // Deliberately left undefined. In 1.54 the Recorder takes its initial mode
+        // straight from these params, but the `_enabled` flag that gates
+        // RecorderEvent.ActionAdded is only ever set inside setMode() — which
+        // early-returns when the mode already matches. Seeding 'recording' here
+        // produced a recorder that believed it was recording while emitting nothing.
+        // Starting at 'none' makes the recorder app's own setMode() a real transition.
+        mode: undefined,
       };
       // 1.54: `Recorder.show(context, factory, params)` became `Recorder.forContext(context, params)`,
       // and the app is attached by the caller instead of being built by a factory the recorder invokes.

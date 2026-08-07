@@ -70,7 +70,9 @@ const expectFnActions: Record<AssertFnAction, (...args: Expression[]) => [action
   'toBeVisible': () => ['assertVisible'],
   'toHaveValue': value => ['assertValue', { value }],
   'toBeEmpty': () => ['assertValue'],
-  'toMatchAriaSnapshot': snapshot => ['assertSnapshot', { snapshot }],
+  // 1.54 renamed AssertSnapshotAction.snapshot -> ariaSnapshot; the code generators
+  // read the new name, so emitting the old one made codegen crash on undefined.
+  'toMatchAriaSnapshot': ariaSnapshot => ['assertSnapshot', { ariaSnapshot }],
 };
 
 const fnActions: Record<Exclude<ActionFnName, AssertFnAction>, (...args: any[]) => [action: Exclude<Action, AssertAction>['name'] | 'routeFromHAR', ...any]> = {

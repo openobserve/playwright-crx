@@ -191,7 +191,14 @@ export class CrxRecorderApp extends EventEmitter {
     }
 
     this._recorderSources = recorderSources;
-    this.setActions(this._recordedActions, recorderSources).catch(() => {});
+    this._sources = recorderSources;
+    // Newly recorded actions supersede hand-edited code (this is what setActions did
+    // when the recorder still pushed actions at us).
+    if (this._recorder._isRecording())
+      this._updateCode(null);
+    // Must be setSources, not setActions: the recorder UI only listens for 'setSources'
+    // (crxRecorder.tsx), so pushing actions alone left the editor empty.
+    this.setSources(recorderSources).catch(() => {});
   }
 
   async open(options?: channels.CrxApplicationShowRecorderParams) {
@@ -223,6 +230,14 @@ export class CrxRecorderApp extends EventEmitter {
     }
 
     this.setMode(mode);
+
+    // Publish the initial sources — AFTER the window is open, because postMessage is a
+    // no-op until the port exists (popupRecorderWindow), so anything sent earlier is
+    // silently dropped. Until 1.54 the recorder pushed recorder-generated sources while
+    // installing the app; now that the app owns code generation, nothing would reach the
+    // UI until the first action was recorded, leaving the editor and the language
+    // chooser empty.
+    this._generateSources();
   }
 
   load(code: string) {
