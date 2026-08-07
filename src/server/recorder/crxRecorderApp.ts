@@ -201,10 +201,10 @@ export class CrxRecorderApp extends EventEmitter {
 
     this._recorderSources = recorderSources;
     this._sources = recorderSources;
-    // Newly recorded actions supersede hand-edited code (this is what setActions did
-    // when the recorder still pushed actions at us).
-    if (this._recorder._isRecording())
-      this._updateCode(null);
+    // NB: no _updateCode(null) here. Discarding hand-edited code when a *new action* is
+    // recorded is handled in the ActionAdded handler; doing it here as well wiped the
+    // edited code during the regeneration that an edit itself triggers, so the editor
+    // reverted to generated code while the user was typing.
     // Must be setSources, not setActions: the recorder UI only listens for 'setSources'
     // (crxRecorder.tsx), so pushing actions alone left the editor empty.
     this.setSources(recorderSources).catch(() => {});
@@ -339,7 +339,24 @@ export class CrxRecorderApp extends EventEmitter {
     if (!code)
       return;
 
-    this._editedCode = new EditedCode(this._recorder, code, () => this._updateLocator(this._currentCursorPosition));
+    this._editedCode = new EditedCode(this._recorder, code, () => {
+      this._updateLocator(this._currentCursorPosition);
+      // Until 1.54 the recorder owned this: loadScript() handed it the parsed actions
+      // and the edited text, and it re-published the sources. It no longer has either,
+      // so regenerating the *other* languages from the edited code — and re-publishing
+      // so error highlights reach the editor — is the app's job now.
+      const edited = this._editedCode;
+      if (edited && !edited.hasErrors()) {
+        // Generate from the edited actions, but keep _recordedActions: the recorder's
+        // own actions carry page guids and signals the parser cannot reconstruct.
+        const recorded = this._recordedActions;
+        this._recordedActions = edited.actions();
+        this._generateSources();
+        this._recordedActions = recorded;
+      } else {
+        this._generateSources();
+      }
+    });
   }
 
   private async _updateLocator(position?: { line: number}) {
