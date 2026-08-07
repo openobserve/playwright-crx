@@ -167,6 +167,22 @@ export class CrxRecorderApp extends EventEmitter {
     return metadataToCallLog(metadata, status);
   }
 
+  // Publishes sources from whichever action list is authoritative right now: the
+  // hand-edited code when it has parsed cleanly, otherwise what the recorder captured.
+  // _recordedActions is kept intact either way — the recorder's actions carry page guids
+  // and signals the parser cannot reconstruct.
+  private _publishSources() {
+    const edited = this._editedCode;
+    if (edited && edited.hasLoaded() && !edited.hasErrors()) {
+      const recorded = this._recordedActions;
+      this._recordedActions = edited.actions();
+      this._generateSources();
+      this._recordedActions = recorded;
+    } else {
+      this._generateSources();
+    }
+  }
+
   // Code generation moved app-side in 1.54. Mirrors what RecorderCollection +
   // ContextRecorder did together: collapse the action list, then render it through
   // every registered language generator so the UI's language chooser keeps working.
@@ -348,17 +364,7 @@ export class CrxRecorderApp extends EventEmitter {
       // and the edited text, and it re-published the sources. It no longer has either,
       // so regenerating the *other* languages from the edited code — and re-publishing
       // so error highlights reach the editor — is the app's job now.
-      const edited = this._editedCode;
-      if (edited && !edited.hasErrors()) {
-        // Generate from the edited actions, but keep _recordedActions: the recorder's
-        // own actions carry page guids and signals the parser cannot reconstruct.
-        const recorded = this._recordedActions;
-        this._recordedActions = edited.actions();
-        this._generateSources();
-        this._recordedActions = recorded;
-      } else {
-        this._generateSources();
-      }
+      this._publishSources();
     });
   }
 
@@ -383,7 +389,7 @@ export class CrxRecorderApp extends EventEmitter {
           this._recorder.setLanguage(toLanguage(params.fileId));
           // isPrimary follows the chosen language, so the sources have to be rebuilt —
           // the recorder used to do this when it owned them.
-          this._generateSources();
+          this._publishSources();
           if (this._editedCode?.hasErrors()) {
             this._updateCode(null);
             // force editor sources to refresh
