@@ -440,6 +440,11 @@ export class SyntheticsRecorderApp extends EventEmitter {
           break;
         case 'setMode':
           const { mode } = params;
+          // Drive the recorder: until 1.54 the Recorder subscribed to this app's
+          // 'event' emission and called setMode on itself (recorder.ts:104). That
+          // listener was deleted with the IRecorderApp interface, so a mode change
+          // requested from the UI side would otherwise never reach the recorder.
+          this._recorder.setMode(mode);
           if (this._mode !== mode) {
             this._mode = mode;
             this.emit('modeChanged', { mode });

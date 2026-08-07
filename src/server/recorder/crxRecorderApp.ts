@@ -348,8 +348,26 @@ export class CrxRecorderApp extends EventEmitter {
         case 'step':
           this._run().catch(() => {});
           break;
+        case 'highlightRequested':
+          // Until 1.54 the Recorder subscribed to this app's 'event' emission and did
+          // this itself (recorder.ts `_install`). The dependency was reversed, so the
+          // app has to drive the recorder now — see the setMode case below.
+          if (params.selector)
+            this._recorder.setHighlightedSelector(params.selector);
+          if (params.ariaTemplate)
+            this._recorder.setHighlightedAriaTemplate(params.ariaTemplate);
+          break;
         case 'setMode':
           const { mode } = params;
+          // Drive the recorder. Without this the recorder UI's Record/Inspect/Assert
+          // buttons change nothing: in 1.53 the Recorder listened to this event
+          // (recorder.ts:104) and called setMode on itself; 1.54 deleted that listener
+          // along with the IRecorderApp interface.
+          //
+          // The recorder emits ModeChanged back, which lands in our own subscription
+          // and calls this.setMode() — so the local state update below is kept only
+          // for the case where the recorder is already in that mode and stays silent.
+          this._recorder.setMode(mode);
           if (this._mode !== mode) {
             this._mode = mode;
             this.emit('modeChanged', { mode });
