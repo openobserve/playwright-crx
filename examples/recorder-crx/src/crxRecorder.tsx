@@ -93,6 +93,16 @@ export const CrxRecorder: React.FC = ({
           }
           return newLog;
         }); break;
+        // Replaces the whole log atomically. Replay rebuilds its entries on every step,
+        // so merging (as updateCallLogs does) would accumulate stale ones.
+        case 'setCallLogs': setLog(() => {
+          const newLog = new Map<string, CallLog>();
+          for (const callLog of msg.callLogs) {
+            callLog.reveal = true;
+            newLog.set(callLog.id, callLog);
+          }
+          return newLog;
+        }); break;
         case 'elementPicked': setElementPicked(msg.elementInfo, msg.userGesture); break;
       }
     };

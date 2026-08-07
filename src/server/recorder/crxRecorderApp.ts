@@ -26,7 +26,9 @@ import type * as actions from '@recorder/actions';
 import { parse } from './parser';
 import { generateCode } from 'playwright-core/lib/server/codegen/language';
 import { languageSet } from 'playwright-core/lib/server/codegen/languages';
-import { collapseActions } from 'playwright-core/lib/server/recorder/recorderUtils';
+import { collapseActions, metadataToCallLog } from 'playwright-core/lib/server/recorder/recorderUtils';
+import { monotonicTime } from 'playwright-core/lib/utils';
+import type { CallMetadata } from '@protocol/callMetadata';
 import type { Crx } from '../crx';
 import type { LanguageGeneratorOptions } from 'playwright-core/lib/server/codegen/types';
 import { toLanguage, traceParamsForAction } from './recorderUtils';
@@ -34,6 +36,7 @@ import { toLanguage, traceParamsForAction } from './recorderUtils';
 export type RecorderMessage = { type: 'recorder' } & (
   | { method: 'resetCallLogs' }
   | { method: 'updateCallLogs', callLogs: CallLog[] }
+  | { method: 'setCallLogs', callLogs: CallLog[] }
   | { method: 'setPaused', paused: boolean }
   | { method: 'setMode', mode: Mode }
   | { method: 'setSources', sources: Source[] }
@@ -75,31 +78,19 @@ export class CrxRecorderApp extends EventEmitter {
     this._crx = crx;
     this._recorder = recorder;
     this._crx.player.on('start', () => {
+      this.setPaused(false).catch(() => {});
       this._recorder.clearErrors();
-      this._replayCallLogs = [];
-      this._replayedActions = [];
+
+      // NB: do NOT clear _replayedActions here. _run() assigns it immediately before
+      // calling player.run(), which is what emits 'start' — clearing it made every
+      // stepStarted/stepResult lookup miss, so the call log stayed empty.
       this.resetCallLogs().catch(() => {});
     });
 
-    // Replay call logs are rebuilt here because in 1.54 only the *dispatcher* layer
-    // drives instrumentation.onBeforeCall/onAfterCall, and the player calls frame
-    // methods directly — so replay no longer produces call logs on its own. Without
-    // this, the recorder's call-log panel stays empty for the whole replay.
-    this._crx.player.on('stepStarted', ({ actionIndex }: { actionIndex: number }) => {
-      const action = this._replayedActions[actionIndex];
-      if (!action)
-        return;
-      this._replayCallLogs[actionIndex] = this._buildCallLog(action, 'in-progress');
-      this.updateCallLogs(this._replayCallLogs.filter(Boolean)).catch(() => {});
-    });
-    this._crx.player.on('stepResult', ({ actionIndex, passed, error }: { actionIndex: number, passed: boolean, error?: string }) => {
-      const action = this._replayedActions[actionIndex];
-      if (!action)
-        return;
-      this._replayCallLogs[actionIndex] = this._buildCallLog(action, passed ? 'done' : 'error', error);
-      this.updateCallLogs(this._replayCallLogs.filter(Boolean)).catch(() => {});
-    });
-
+    // Replay call logs are built in _run() rather than from the player's step events:
+    // stepping executes one action per player.run() call, so the player's per-run
+    // actionIndex cannot address the journey as a whole. (SyntheticsRecorderApp still
+    // consumes those events directly — it replays whole journeys.)
     // 1.54 reversed the Recorder <-> RecorderApp dependency (microsoft/playwright#36544):
     // the recorder streams events instead of calling into an IRecorderApp, and the app
     // is now responsible for turning actions into code. Everything below replaces what
@@ -132,30 +123,48 @@ export class CrxRecorderApp extends EventEmitter {
     recorder.on(RecorderEvent.ElementPicked, (elementInfo: ElementInfo, userGesture?: boolean) => {
       this.elementPicked(elementInfo, userGesture).catch(() => {});
     });
-    recorder.on(RecorderEvent.PausedStateChanged, (paused: boolean) => {
-      this.setPaused(paused).catch(() => {});
-    });
+    // Deliberately NOT forwarding RecorderEvent.PausedStateChanged: it reflects the
+    // *debugger's* pause state, which crx never uses for replay (the player drives frame
+    // calls directly). Forwarding it pinned `paused` to false and left the Resume/Step
+    // buttons permanently disabled. crx owns this state — see _setReplayPaused below.
   }
 
   // The actions handed to the player for the current replay, indexed the same way the
   // player's stepStarted/stepResult actionIndex is, plus the call log built from them.
   private _replayedActions: ActionInContextWithLocation[] = [];
-  private _replayCallLogs: CallLog[] = [];
+  private _actionIndex = 0;
+  private _completedLogs: CallLog[] = [];
 
-  private _buildCallLog(action: ActionInContextWithLocation, status: CallLog['status'], error?: string): CallLog {
-    const { apiName } = traceParamsForAction(action as ActionInContext);
-    return {
-      id: `crx-replay@${action.location?.line ?? 0}`,
-      title: apiName,
-      messages: error ? [error] : [],
-      status,
-      error,
-      reveal: true,
-      params: {
-        selector: (action.action as ActionWithSelector).selector,
-        url: action.action.name === 'navigate' ? action.action.url : undefined,
-      },
+  private _highlightSourceLine(line: number | undefined, type: 'error' | 'paused' | 'running' = 'error', message?: string) {
+    const decorated = this._recorderSources.map(s => ({
+      ...s,
+      highlight: line && s.id === (this._filename ?? 'playwright-test') ? [{ line, type, message }] : [],
+      revealLine: s.id === (this._filename ?? 'playwright-test') ? line : undefined,
+    }));
+    this.setSources(decorated).catch(() => {});
+  }
+
+  // Built through upstream's own metadataToCallLog so the entries render exactly as the
+  // instrumented ones did — same human title ("Set input files"), same params rendering,
+  // same duration — rather than a crx-specific approximation.
+  private _buildCallLog(action: ActionInContextWithLocation, status: CallLog['status'], startTime: number, error?: string): CallLog {
+    const traceParams = traceParamsForAction(action as ActionInContext);
+    const metadata: CallMetadata = {
+      id: `call@crx-replay-${action.location?.line ?? 0}`,
+      internal: false,
+      objectId: '',
+      pageId: '',
+      frameId: '',
+      startTime,
+      endTime: (status === 'done' || status === 'error') ? monotonicTime() : 0,
+      type: 'Frame',
+      log: error ? [error] : [],
+      location: action.location,
+      ...traceParams,
     };
+    if (error)
+      metadata.error = { error: { name: 'Error', message: error, stack: '' } };
+    return metadataToCallLog(metadata, status);
   }
 
   // Code generation moved app-side in 1.54. Mirrors what RecorderCollection +
@@ -264,10 +273,17 @@ export class CrxRecorderApp extends EventEmitter {
   }
 
   async setMode(mode: Mode) {
-    if (!this._recorder._isRecording())
+    if (!this._recorder._isRecording()) {
       this._crx.player.pause().catch(() => {});
-    else
+      // Leaving a recording mode means the journey is ready to replay, so the UI must
+      // offer Resume/Step. Until 1.54 this fell out of the player's 'pause' action being
+      // routed through instrumentation into the debugger's paused state; the player now
+      // drives frame calls directly, so nothing would ever enable those buttons.
+      this.setPaused(true).catch(() => {});
+    } else {
       this._crx.player.stop().catch(() => {});
+      this.setPaused(false).catch(() => {});
+    }
 
     if (this._mode !== mode) {
       this._mode = mode;
@@ -360,8 +376,10 @@ export class CrxRecorderApp extends EventEmitter {
           this._updateLocator(this._currentCursorPosition);
           break;
         case 'resume':
+          this._run(false).catch(() => {});
+          break;
         case 'step':
-          this._run().catch(() => {});
+          this._run(true).catch(() => {});
           break;
         case 'highlightRequested':
           // Until 1.54 the Recorder subscribed to this app's 'event' emission and did
@@ -394,7 +412,7 @@ export class CrxRecorderApp extends EventEmitter {
     }
   }
 
-  async _run() {
+  async _run(step: boolean) {
     if (this._crx.player.isPlaying())
       return;
     const incognito = this._playInIncognito;
@@ -403,10 +421,82 @@ export class CrxRecorderApp extends EventEmitter {
       await incognitoCrxApp?.close({ closeWindows: true });
     }
     const crxApp = await this._crx.get({ incognito }) ?? await this._crx.start({ incognito });
+
     // The player skips a leading openPage for the 'page' alias, so index the same list
-    // it iterates or stepStarted/stepResult would point at the wrong action.
-    this._replayedActions = this._getActions().filter(a => !(a.action.name === 'openPage' && a.frame.pageAlias === 'page'));
-    await this._crx.player.run(crxApp._context, this._replayedActions);
+    // it iterates or the call-log entries would point at the wrong action.
+    const all = this._getActions().filter(a => !(a.action.name === 'openPage' && a.frame.pageAlias === 'page'));
+    this._replayedActions = all;
+
+    // Until 1.54 stepping was the debugger's job: recorder.step() resumed it for a single
+    // statement and the player's calls paused on the next one. The player now drives frame
+    // calls directly and the debugger never sees them, so the step cursor lives here.
+    // Start a fresh replay unless we are mid-step: a Resume pressed while stepping must
+    // continue from the paused action, not re-run the journey from the top (re-running
+    // the navigation would undo whatever the user changed on the page before resuming).
+    const hasError = this._completedLogs.some(l => l.status === 'error');
+    const allDone = this._completedLogs.length >= all.length;
+    const midStep = this._actionIndex > 0 && !allDone && !hasError;
+    if (!midStep) {
+      this._actionIndex = 0;
+      this._completedLogs = [];
+      this._crx.player.resetPageAliases();
+      this.resetCallLogs().catch(() => {});
+      this._highlightSourceLine(undefined);
+    }
+
+    const runOne = async (action: ActionInContextWithLocation) => {
+      const startTime = monotonicTime();
+      try {
+        await this._crx.player.run(crxApp._context, [action]);
+        this._completedLogs.push(this._buildCallLog(action, 'done', startTime));
+        return true;
+      } catch (e) {
+        const message = (e as Error).message;
+        this._completedLogs.push(this._buildCallLog(action, 'error', startTime, message));
+        if (action.location?.line)
+          this._highlightSourceLine(action.location.line, 'error', message);
+        return false;
+      }
+    };
+
+    if (step) {
+      // First press pauses on the first action; each later press executes the action it
+      // was paused on and pauses on the next.
+      let ok = true;
+      if (this._actionIndex > 0)
+        ok = await runOne(all[this._actionIndex - 1]);
+      const paused = ok ? all[this._actionIndex] : undefined;
+      if (paused) {
+        this._actionIndex++;
+        if (paused.location?.line)
+          this._highlightSourceLine(paused.location.line, 'paused');
+        this._pushCallLogs(paused);
+      } else {
+        this._pushCallLogs();
+        this._highlightSourceLine(undefined);
+      }
+      this.setPaused(!!paused).catch(() => {});
+    } else {
+      // Resume: finish whatever the step cursor is paused on, then run to the end.
+      const from = this._actionIndex > 0 ? this._actionIndex - 1 : 0;
+      for (let i = from; i < all.length; i++) {
+        this._pushCallLogs(all[i], 'in-progress');
+        if (!await runOne(all[i]))
+          break;
+        this._pushCallLogs();
+      }
+      this._actionIndex = all.length;
+      this._pushCallLogs();
+      this.setPaused(!this._recorder._isRecording()).catch(() => {});
+    }
+  }
+
+  // Sends the completed entries, optionally followed by the action the cursor sits on.
+  private _pushCallLogs(pending?: ActionInContextWithLocation, status: CallLog['status'] = 'paused') {
+    const logs = [...this._completedLogs];
+    if (pending)
+      logs.push(this._buildCallLog(pending, status, monotonicTime()));
+    this._sendMessage({ type: 'recorder', method: 'setCallLogs', callLogs: logs });
   }
 
   _sendMessage(msg: RecorderMessage) {

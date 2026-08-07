@@ -132,8 +132,12 @@ export default class CrxPlayer extends EventEmitter {
         context.instrumentation.addListener(instrumentationListener, context);
     }
 
-    this._pageAliases.clear();
-    this._pageAliases.set(page, 'page');
+    // Preserve aliases across calls: stepping runs one action per run(), and clearing
+    // here would drop the aliases that earlier openPage steps created.
+    if (!this._pageAliases.has(page)) {
+      this._pageAliases.clear();
+      this._pageAliases.set(page, 'page');
+    }
     this.emit('start');
 
     try {
@@ -193,6 +197,11 @@ export default class CrxPlayer extends EventEmitter {
 
   isPlaying() {
     return !!this._currAction;
+  }
+
+  /** Drops page aliases so the next run() starts a fresh replay. */
+  resetPageAliases() {
+    this._pageAliases.clear();
   }
 
   async stop() {
