@@ -174,7 +174,10 @@ export class CrxRecorderApp extends EventEmitter {
     const collapsed = collapseActions(this._recordedActions);
     const languageGeneratorOptions: LanguageGeneratorOptions = {
       browserName: 'chromium',
-      launchOptions: {},
+      // headless:false matches what upstream's RecorderApp passes; without it the
+      // standalone (non-test-runner) generators emit `launch()` instead of
+      // `launch({ headless: false })`, changing the code shown and saved.
+      launchOptions: { headless: false },
       contextOptions: {},
     };
 
@@ -378,6 +381,9 @@ export class CrxRecorderApp extends EventEmitter {
         case 'fileChanged':
           this._filename = params.fileId;
           this._recorder.setLanguage(toLanguage(params.fileId));
+          // isPrimary follows the chosen language, so the sources have to be rebuilt —
+          // the recorder used to do this when it owned them.
+          this._generateSources();
           if (this._editedCode?.hasErrors()) {
             this._updateCode(null);
             // force editor sources to refresh
