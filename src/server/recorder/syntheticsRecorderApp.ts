@@ -22,9 +22,13 @@
 import { EventEmitter } from 'events';
 import type { CallLog, ElementInfo, Mode, Source } from '@recorder/recorderTypes';
 import type { Page } from 'playwright-core/lib/server/page';
-import type { Recorder } from 'playwright-core/lib/server/recorder';
-import type { IRecorderApp } from 'playwright-core/lib/server/recorder/recorderFrontend';
+import { Recorder, RecorderEvent } from 'playwright-core/lib/server/recorder';
 import type { ActionInContext } from '@recorder/actions';
+import type * as actions from '@recorder/actions';
+import { generateCode } from 'playwright-core/lib/server/codegen/language';
+import { languageSet } from 'playwright-core/lib/server/codegen/languages';
+import { collapseActions } from 'playwright-core/lib/server/recorder/recorderUtils';
+import type { LanguageGeneratorOptions } from 'playwright-core/lib/server/codegen/types';
 import type * as channels from '../../protocol/channels';
 import type { Crx } from '../crx';
 import { HeadlessRecorderWindow } from './headlessRecorderWindow';
@@ -81,7 +85,7 @@ export type SyntheticsForwardMessage =
 
 export type SyntheticsForwardCallback = (msg: SyntheticsForwardMessage) => void;
 
-export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp {
+export class SyntheticsRecorderApp extends EventEmitter {
   readonly wsEndpointForTest: string | undefined;
   readonly _recorder: Recorder;
   private _crx: Crx;
@@ -151,6 +155,64 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
         stepResult: result,
       });
     });
+
+    // 1.54 reversed the Recorder <-> RecorderApp dependency (microsoft/playwright#36544).
+    // The recorder now streams actions and signals instead of calling setActions() on us,
+    // so the accumulation the deleted RecorderCollection did happens here. The BrowserStep
+    // mapping and the network-evidence rebuild below are unchanged — they just run off
+    // this list instead of a pushed one.
+    recorder.on(RecorderEvent.ActionAdded, (action: actions.ActionInContext) => {
+      this._recordedActions.push(action);
+      this._regenerate();
+    });
+    // The navigation-signal patch in recorderSignalProcessor.ts is what makes this fire
+    // for navigations caused by a click/press/fill. It is the evidence that turns a
+    // recorded hard sleep into a wait condition, so it must land on the causing action.
+    recorder.on(RecorderEvent.SignalAdded, (signal: actions.SignalInContext) => {
+      const lastAction = this._recordedActions.findLast(a => a.frame.pageGuid === signal.frame.pageGuid);
+      if (lastAction)
+        lastAction.action.signals.push(signal.signal);
+      this._regenerate();
+    });
+    recorder.on(RecorderEvent.ModeChanged, (mode: Mode) => {
+      this.setMode(mode).catch(() => {});
+    });
+    recorder.on(RecorderEvent.ElementPicked, (elementInfo: ElementInfo, userGesture?: boolean) => {
+      this.elementPicked(elementInfo, userGesture).catch(() => {});
+    });
+    recorder.on(RecorderEvent.CallLogsUpdated, (callLogs: CallLog[]) => {
+      this.updateCallLogs(callLogs).catch(() => {});
+    });
+  }
+
+  // Renders the recorded actions through the playwright-test generator so the
+  // "eject to code" path keeps working, then runs the BrowserStep mapping.
+  private _regenerate() {
+    const collapsed = collapseActions(this._recordedActions);
+    const options: LanguageGeneratorOptions = {
+      browserName: 'chromium',
+      launchOptions: {},
+      contextOptions: {},
+    };
+    const sources: Source[] = [];
+    for (const languageGenerator of languageSet()) {
+      const { header, footer, actionTexts, text } = generateCode(collapsed, languageGenerator, options);
+      sources.push({
+        isPrimary: languageGenerator.id === 'playwright-test',
+        timestamp: 0,
+        isRecorded: true,
+        label: languageGenerator.name,
+        group: languageGenerator.groupName,
+        id: languageGenerator.id,
+        text,
+        header,
+        footer,
+        actions: actionTexts,
+        language: languageGenerator.highlighter,
+        highlight: [],
+      });
+    }
+    this.setActions(this._recordedActions, sources).catch(() => {});
   }
 
   async open(options?: channels.CrxApplicationShowRecorderParams) {

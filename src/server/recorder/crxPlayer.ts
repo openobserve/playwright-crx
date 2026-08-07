@@ -17,21 +17,20 @@
 import EventEmitter from 'events';
 import type { BrowserContext } from 'playwright-core/lib/server/browserContext';
 import { Page } from 'playwright-core/lib/server/page';
-import { createGuid, isUnderTest, ManualPromise, monotonicTime, serializeExpectedTextValues } from 'playwright-core/lib/utils';
-import type { Frame } from 'playwright-core/lib/server/frames';
-import type { CallMetadata } from '@protocol/callMetadata';
+import { isUnderTest, ManualPromise, monotonicTime, serializeExpectedTextValues } from 'playwright-core/lib/utils';
 import { serializeError } from 'playwright-core/lib/server/errors';
 import { buildFullSelector } from 'playwright-core/lib/server/recorder/recorderUtils';
 import { toKeyboardModifiers } from 'playwright-core/lib/server/codegen/language';
 import type { ActionInContextWithLocation, Location } from './parser';
-import type { ActionInContext, FrameDescription } from '@recorder/actions';
+import type { FrameDescription } from '@recorder/actions';
 import type { StructuredError } from './syntheticsRecorderApp';
 import { toClickOptions } from 'playwright-core/lib/server/recorder/recorderRunner';
 import { parseAriaSnapshotUnsafe } from 'playwright-core/lib/utils/isomorphic/ariaSnapshot';
 import { serverSideCallMetadata } from 'playwright-core/lib/server';
+import { ProgressController } from 'playwright-core/lib/server/progress';
+import type { Progress } from 'playwright-core/lib/server/progress';
 import type { Crx } from '../crx';
-import type { InstrumentationListener } from 'playwright-core/lib/server/instrumentation';
-import { traceParamsForAction } from './recorderUtils';
+import type { InstrumentationListener, SdkObject } from 'playwright-core/lib/server/instrumentation';
 import { yaml } from 'playwright-core/lib/utilsBundle';
 
 class Stopped extends Error {}
@@ -70,9 +69,14 @@ export default class CrxPlayer extends EventEmitter {
   private _stopping?: ManualPromise;
   private _pageAliases = new Map<Page, string>();
   private _pause?: Promise<void>;
-  // Context the current run() is executing against. stop() needs it to abort the
-  // in-flight call; _checkStopped() alone only lands at the next step boundary.
-  private _runningContext?: BrowserContext;
+  // The controller driving the call that is in flight right now. stop() aborts it;
+  // _checkStopped() alone only lands at the next step boundary.
+  //
+  // 1.54 removed `BrowserContext.stopPendingOperations()`, which is what this used to
+  // call. ProgressController.abort() is the replacement and is strictly better here:
+  // it cancels exactly this player's call instead of every pending operation on the
+  // context, so a stop can no longer disturb unrelated work (e.g. the recorder's own).
+  private _currentController?: ProgressController;
 
   constructor(crx: Crx) {
     super();
@@ -84,7 +88,7 @@ export default class CrxPlayer extends EventEmitter {
       const context = (await this._crx.get({ incognito: false }))!._context;
       const pauseAction = {
         action: { name: 'pause' },
-        frame: { pageAlias: 'page', framePath: [] },
+        frame: { pageGuid: '', pageAlias: 'page', framePath: [] },
       } satisfies PerformAction;
       this._pause = this
           ._performAction(context, pauseAction)
@@ -108,7 +112,8 @@ export default class CrxPlayer extends EventEmitter {
       context = page.browserContext;
     } else {
       context = pageOrContext;
-      page = context.pages()[0] ?? await context.newPage(serverSideCallMetadata());
+      page = context.pages()[0] ?? await new ProgressController(serverSideCallMetadata(), context)
+          .run(progress => context.newPage(progress, false));
     }
 
     const crxApp = await this._crx.get({ incognito: false });
@@ -129,7 +134,6 @@ export default class CrxPlayer extends EventEmitter {
 
     this._pageAliases.clear();
     this._pageAliases.set(page, 'page');
-    this._runningContext = context;
     this.emit('start');
 
     try {
@@ -181,7 +185,6 @@ export default class CrxPlayer extends EventEmitter {
       throw e;
     } finally {
       this._currAction = undefined;
-      this._runningContext = undefined;
       this.pause().catch(() => {});
       if (instrumentationListener)
         context.instrumentation.removeListener(instrumentationListener);
@@ -199,7 +202,7 @@ export default class CrxPlayer extends EventEmitter {
       // Abort whatever call is pending right now. _checkStopped() only runs at the START
       // of an action, so without this the stop waits out the in-flight click/fill/expect
       // — up to kActionTimeout, 60s — and only lands one step later.
-      await this._runningContext?.stopPendingOperations('Stopped').catch(() => {});
+      await this._currentController?.abort(new Stopped()).catch(() => {});
       await Promise.all([
         this._stopping,
         this._pause,
@@ -210,47 +213,24 @@ export default class CrxPlayer extends EventEmitter {
     }
   }
 
-  // "borrowed" from ContextRecorder
+  // Mirrors playwright/packages/playwright-core/src/server/recorder/recorderRunner.ts,
+  // which since 1.54 drives frame methods with a Progress from a ProgressController
+  // instead of hand-built CallMetadata (microsoft/playwright#36429 and follow-ups).
+  //
+  // The controller is stored on the instance so stop() can abort the call in flight.
+  private async _runWithProgress<T>(sdkObject: SdkObject, task: (progress: Progress) => Promise<T>, timeout: number): Promise<T> {
+    const controller = new ProgressController(serverSideCallMetadata(), sdkObject);
+    this._currentController = controller;
+    try {
+      return await controller.run(task, timeout);
+    } finally {
+      if (this._currentController === controller)
+        this._currentController = undefined;
+    }
+  }
+
   private async _performAction(browserContext: BrowserContext, actionInContext: PerformAction) {
     this._checkStopped();
-
-    const innerPerformAction = async (mainFrame: Frame | null, actionInContext: PerformAction, cb: (callMetadata: CallMetadata) => Promise<any>): Promise<void> => {
-      // we must use the default browser context here!
-      const context = mainFrame ?? browserContext;
-
-      const traceParams = actionInContext.action.name === 'pause' ?
-        { method: 'pause', params: {}, apiName: 'page.pause' } :
-        traceParamsForAction(actionInContext as ActionInContext);
-
-      const callMetadata: CallMetadata = {
-        id: `call@${createGuid()}`,
-        internal: actionInContext.action.name === 'pause',
-        objectId: context.guid,
-        pageId: mainFrame?._page.guid,
-        frameId: mainFrame?.guid,
-        startTime: monotonicTime(),
-        endTime: 0,
-        type: 'Frame',
-        log: [],
-        location: actionInContext.location,
-        playing: true,
-        ...traceParams,
-      };
-
-      try {
-        this._checkStopped();
-        await context.instrumentation.onBeforeCall(context, callMetadata);
-        this._checkStopped();
-        await cb(callMetadata);
-      } catch (e) {
-        callMetadata.error = serializeError(e);
-      } finally {
-        callMetadata.endTime = monotonicTime();
-        await context.instrumentation.onAfterCall(context, callMetadata);
-        if (callMetadata.error)
-          throw callMetadata.error.error;
-      }
-    };
 
     // similar to playwright/packages/playwright-core/src/server/recorder/recorderRunner.ts
     //
@@ -283,23 +263,19 @@ export default class CrxPlayer extends EventEmitter {
       return;
 
     if (action.name === 'pause')
-      return await innerPerformAction(null, actionInContext, () => Promise.resolve());
+      return;
 
     if (action.name === 'openPage') {
-      return await innerPerformAction(null, actionInContext, async callMetadata => {
-        const pageAlias = actionInContext.frame.pageAlias;
-        if ([...pageAliases.values()].includes(pageAlias))
-          throw new Error(`Page with alias ${pageAlias} already exists`);
-        const newPage = await context.newPage(callMetadata);
-        if (action.url && action.url !== 'about:blank' && action.url !== 'chrome://newtab/') {
-          const navigateCallMetadata = {
-            ...callMetadata,
-            ...traceParamsForAction({ ...actionInContext, action: { name: 'navigate', url: action.url } } as ActionInContext),
-          };
-          await newPage.mainFrame().goto(navigateCallMetadata, action.url, { timeout: kActionTimeout });
-        }
-        pageAliases.set(newPage, pageAlias);
-      });
+      const pageAlias = actionInContext.frame.pageAlias;
+      if ([...pageAliases.values()].includes(pageAlias))
+        throw new Error(`Page with alias ${pageAlias} already exists`);
+      const newPage = await this._runWithProgress(context, progress => context.newPage(progress, false), kActionTimeout);
+      if (action.url && action.url !== 'about:blank' && action.url !== 'chrome://newtab/') {
+        await this._runWithProgress(newPage.mainFrame(),
+            progress => newPage.mainFrame().goto(progress, action.url), kActionTimeout);
+      }
+      pageAliases.set(newPage, pageAlias);
+      return;
     }
 
     const pageAlias = actionInContext.frame.pageAlias;
@@ -308,84 +284,90 @@ export default class CrxPlayer extends EventEmitter {
       throw new Error('Internal error: page not found');
     const mainFrame = page.mainFrame();
 
-    if (action.name === 'navigate')
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.goto(callMetadata, action.url, { timeout: kActionTimeout }));
-
     if (action.name === 'closePage') {
-      return await innerPerformAction(mainFrame, actionInContext, async callMetadata => {
-        pageAliases.delete(page);
-        await page.close(callMetadata, { runBeforeUnload: true });
-      });
+      pageAliases.delete(page);
+      await page.close({ runBeforeUnload: true });
+      return;
     }
 
-    const selector = buildFullSelector(actionInContext.frame.framePath, action.selector);
+    await this._runWithProgress(mainFrame, async progress => {
+      this._checkStopped();
 
-    if (action.name === 'click') {
-      const options = toClickOptions(action);
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.click(callMetadata, selector, { ...options, timeout: kActionTimeout, strict: true }));
-    }
-    if (action.name === 'press') {
-      const modifiers = toKeyboardModifiers(action.modifiers);
-      const shortcut = [...modifiers, action.key].join('+');
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.press(callMetadata, selector, shortcut, { timeout: kActionTimeout, strict: true }));
-    }
-    if (action.name === 'fill')
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.fill(callMetadata, selector, action.text, { timeout: kActionTimeout, strict: true }));
-    if (action.name === 'setInputFiles')
-      return await innerPerformAction(mainFrame, actionInContext, () => Promise.reject(new Error(`player does not support setInputFiles yet`)));
-    if (action.name === 'check')
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.check(callMetadata, selector, { timeout: kActionTimeout, strict: true }));
-    if (action.name === 'uncheck')
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.uncheck(callMetadata, selector, { timeout: kActionTimeout, strict: true }));
-    if (action.name === 'select') {
-      const values = action.options.map((value: any) => ({ value }));
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.selectOption(callMetadata, selector, [], values, { timeout: kActionTimeout, strict: true }));
-    }
-    if (action.name === 'assertChecked') {
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.expect(callMetadata, selector, {
-        selector,
-        expression: 'to.be.checked',
-        expectedValue: { checked: true },
-        isNot: !action.checked,
-        timeout: kActionTimeout,
-      }));
-    }
-    if (action.name === 'assertText') {
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.expect(callMetadata, selector, {
-        selector,
-        expression: 'to.have.text',
-        expectedText: serializeExpectedTextValues([action.text], { matchSubstring: true, normalizeWhiteSpace: true }),
-        isNot: false,
-        timeout: kActionTimeout,
-      }));
-    }
-    if (action.name === 'assertValue') {
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.expect(callMetadata, selector, {
-        selector,
-        expression: 'to.have.value',
-        expectedText: serializeExpectedTextValues([action.value], { matchSubstring: false, normalizeWhiteSpace: true }),
-        isNot: false,
-        timeout: kActionTimeout,
-      }));
-    }
-    if (action.name === 'assertVisible') {
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.expect(callMetadata, selector, {
-        selector,
-        expression: 'to.be.visible',
-        isNot: false,
-        timeout: kActionTimeout,
-      }));
-    }
-    if (action.name === 'assertSnapshot') {
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.expect(callMetadata, selector, {
-        selector,
-        expression: 'to.match.aria',
-        expectedValue: parseAriaSnapshotUnsafe(yaml, action.snapshot),
-        isNot: false,
-        timeout: kActionTimeout,
-      }));
-    }
-    throw new Error('Internal error: unexpected action ' + (action as any).name);
+      if (action.name === 'navigate')
+        return await mainFrame.goto(progress, action.url);
+
+      const selector = buildFullSelector(actionInContext.frame.framePath, action.selector);
+
+      if (action.name === 'click')
+        return await mainFrame.click(progress, selector, { ...toClickOptions(action), strict: true });
+      if (action.name === 'press') {
+        const shortcut = [...toKeyboardModifiers(action.modifiers), action.key].join('+');
+        return await mainFrame.press(progress, selector, shortcut, { strict: true });
+      }
+      if (action.name === 'fill')
+        return await mainFrame.fill(progress, selector, action.text, { strict: true });
+      if (action.name === 'setInputFiles')
+        throw new Error(`player does not support setInputFiles yet`);
+      if (action.name === 'check')
+        return await mainFrame.check(progress, selector, { strict: true });
+      if (action.name === 'uncheck')
+        return await mainFrame.uncheck(progress, selector, { strict: true });
+      if (action.name === 'select')
+        return await mainFrame.selectOption(progress, selector, [], action.options.map((value: any) => ({ value })), { strict: true });
+
+      // 1.54: Frame.expect() RESOLVES with { matches } instead of throwing when the
+      // assertion does not hold. Left as-is, every failing assertion would replay as a
+      // pass — so the result is checked and turned back into a throw, which is what the
+      // step-result reporting (and the fidelity report) depends on.
+      const expectAndThrow = async (options: Parameters<typeof mainFrame.expect>[2]) => {
+        const result = await mainFrame.expect(progress, selector, options);
+        if (!result.matches)
+          throw new Error(result.log?.join('\n') || `Assertion failed: ${action.name}`);
+        return result;
+      };
+
+      if (action.name === 'assertChecked') {
+        return await expectAndThrow({
+          selector,
+          expression: 'to.be.checked',
+          expectedValue: { checked: action.checked },
+          isNot: false,
+        });
+      }
+      if (action.name === 'assertText') {
+        return await expectAndThrow({
+          selector,
+          expression: 'to.have.text',
+          expectedText: serializeExpectedTextValues([action.text], { matchSubstring: true, normalizeWhiteSpace: true }),
+          isNot: false,
+        });
+      }
+      if (action.name === 'assertValue') {
+        return await expectAndThrow({
+          selector,
+          expression: 'to.have.value',
+          expectedText: serializeExpectedTextValues([action.value], { matchSubstring: false, normalizeWhiteSpace: true }),
+          isNot: false,
+        });
+      }
+      if (action.name === 'assertVisible') {
+        return await expectAndThrow({
+          selector,
+          expression: 'to.be.visible',
+          isNot: false,
+        });
+      }
+      if (action.name === 'assertSnapshot') {
+        return await expectAndThrow({
+          selector,
+          expression: 'to.match.aria',
+          // 1.54 renamed the action field `snapshot` -> `ariaSnapshot`.
+          expectedValue: parseAriaSnapshotUnsafe(yaml, action.ariaSnapshot),
+          isNot: false,
+        });
+      }
+      throw new Error('Internal error: unexpected action ' + (action as any).name);
+    }, kActionTimeout);
   }
 
   private _checkStopped() {

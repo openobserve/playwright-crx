@@ -39,8 +39,8 @@ scheme.PlaywrightInitializer = tObject({
   chromium: tChannel(['BrowserType']),
   firefox: tChannel(['BrowserType']),
   webkit: tChannel(['BrowserType']),
-  bidiChromium: tChannel(['BrowserType']),
-  bidiFirefox: tChannel(['BrowserType']),
+  _bidiChromium: tChannel(['BrowserType']),
+  _bidiFirefox: tChannel(['BrowserType']),
   android: tChannel(['Android']),
   electron: tChannel(['Electron']),
   utils: tOptional(tChannel(['LocalUtils'])),
@@ -77,7 +77,7 @@ scheme.CrxApplicationDetachedEvent = tObject({
   tabId: tNumber,
 });
 scheme.CrxApplicationModeChangedEvent = tObject({
-  mode: tEnum(['none', 'recording', 'inspecting', 'assertingText', 'recording-inspecting', 'standby', 'assertingVisibility', 'assertingValue']),
+  mode: tEnum(['none', 'recording', 'inspecting', 'assertingText', 'recording-inspecting', 'standby', 'assertingVisibility', 'assertingValue', 'assertingSnapshot']),
 });
 scheme.CrxApplicationAttachParams = tObject({
   tabId: tNumber,
@@ -126,7 +126,7 @@ scheme.CrxApplicationNewPageResult = tObject({
   page: tChannel(['Page']),
 });
 scheme.CrxApplicationShowRecorderParams = tObject({
-  mode: tOptional(tEnum(['none', 'recording', 'inspecting', 'assertingText', 'recording-inspecting', 'standby', 'assertingVisibility', 'assertingValue'])),
+  mode: tOptional(tEnum(['none', 'recording', 'inspecting', 'assertingText', 'recording-inspecting', 'standby', 'assertingVisibility', 'assertingValue', 'assertingSnapshot'])),
   language: tOptional(tString),
   testIdAttributeName: tOptional(tString),
   playInIncognito: tOptional(tBoolean),
@@ -139,7 +139,7 @@ scheme.CrxApplicationShowRecorderResult = tOptional(tObject({}));
 scheme.CrxApplicationHideRecorderParams = tOptional(tObject({}));
 scheme.CrxApplicationHideRecorderResult = tOptional(tObject({}));
 scheme.CrxApplicationSetModeParams = tObject({
-  mode: tEnum(['none', 'recording', 'inspecting', 'assertingText', 'recording-inspecting', 'standby', 'assertingVisibility', 'assertingValue']),
+  mode: tEnum(['none', 'recording', 'inspecting', 'assertingText', 'recording-inspecting', 'standby', 'assertingVisibility', 'assertingValue', 'assertingSnapshot']),
 });
 scheme.CrxApplicationSetModeResult = tOptional(tObject({}));
 scheme.CrxApplicationCloseParams = tOptional(tObject({}));

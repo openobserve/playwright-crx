@@ -18,8 +18,31 @@ import type * as recorderActions from '@recorder/actions';
 import type * as channels from '@protocol/channels';
 import { toKeyboardModifiers } from 'playwright-core/lib/server/codegen/language';
 import { buildFullSelector } from 'playwright-core/lib/server/recorder/recorderUtils';
+import type { Language } from 'playwright-core/lib/server/codegen/types';
 
 const kDefaultTimeout = 5_000;
+
+// Playwright 1.54 replaced `Recorder.setOutput(codegenId, file)` with
+// `Recorder.setLanguage(language)`, which takes the *highlighter* language rather
+// than a codegen id. The recorder uses it to render locators (`asLocator`), so a
+// wrong value silently produces locators in the wrong dialect.
+const kLanguageByCodegenId: Record<string, Language> = {
+  'playwright-test': 'javascript',
+  'javascript': 'javascript',
+  'python': 'python',
+  'python-async': 'python',
+  'python-pytest': 'python',
+  'java': 'java',
+  'java-junit': 'java',
+  'csharp': 'csharp',
+  'csharp-mstest': 'csharp',
+  'csharp-nunit': 'csharp',
+  'jsonl': 'jsonl',
+};
+
+export function toLanguage(codegenId: string | undefined): Language {
+  return (codegenId && kLanguageByCodegenId[codegenId]) || 'javascript';
+}
 
 export function traceParamsForAction(actionInContext: recorderActions.ActionInContext): { method: string, apiName: string, params: any } {
   const { action } = actionInContext;

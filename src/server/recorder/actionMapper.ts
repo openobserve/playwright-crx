@@ -318,7 +318,7 @@ export function mapActionToBrowserStep(
         ...base,
         action: 'assert',
         assertion: buildAssertion(action),
-        snapshot: action.snapshot,
+        snapshot: action.ariaSnapshot,
       };
     case 'closePage':
       // Skip closePage — no user-facing step
@@ -429,7 +429,7 @@ function buildActionFromStep(step: BrowserStep): Action {
       // v1 / recorder-internal asserts: the subtype is recovered from whichever
       // field is set.
       if (step.snapshot !== undefined)
-        return { name: 'assertSnapshot', selector, snapshot: step.snapshot, signals: [] };
+        return { name: 'assertSnapshot', selector, ariaSnapshot: step.snapshot, signals: [] };
       if (step.text !== undefined)
         return { name: 'assertText', selector, text: step.text, substring: true, signals: [] };
       if (step.value !== undefined)
@@ -483,6 +483,10 @@ export function isUnsupportedReplayAction(action: string): boolean {
 export function mapBrowserStepToAction(step: BrowserStep): ActionInContext {
   return {
     frame: {
+      // 1.54 added pageGuid to FrameDescription so the recorder can correlate signals
+      // to pages. A step replayed from a saved journey has no live page to name yet —
+      // the player resolves the target through pageAlias — so it is left empty.
+      pageGuid: '',
       pageAlias: step.pageAlias ?? 'page',
       framePath: step.framePath ?? [],
     },

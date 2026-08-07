@@ -16,18 +16,21 @@
 import type { CallLog, ElementInfo, EventData, Mode, Source, SourceHighlight } from '@recorder/recorderTypes';
 import { EventEmitter } from 'events';
 import type { Page } from 'playwright-core/lib/server/page';
-import type { Recorder } from 'playwright-core/lib/server/recorder';
+import { Recorder, RecorderEvent } from 'playwright-core/lib/server/recorder';
 import type * as channels from '../../protocol/channels';
 import type { ActionInContextWithLocation } from './parser';
 import { PopupRecorderWindow } from './popupRecorderWindow';
 import { SidepanelRecorderWindow } from './sidepanelRecorderWindow';
-import type { IRecorderApp } from 'playwright-core/lib/server/recorder/recorderFrontend';
 import type { ActionInContext, ActionWithSelector } from '@recorder/actions';
+import type * as actions from '@recorder/actions';
 import { parse } from './parser';
+import { generateCode } from 'playwright-core/lib/server/codegen/language';
 import { languageSet } from 'playwright-core/lib/server/codegen/languages';
+import { collapseActions } from 'playwright-core/lib/server/recorder/recorderUtils';
 import type { Crx } from '../crx';
 import type { LanguageGeneratorOptions } from 'playwright-core/lib/server/codegen/types';
 import { serverSideCallMetadata } from 'playwright-core/lib/server';
+import { toLanguage } from './recorderUtils';
 
 export type RecorderMessage = { type: 'recorder' } & (
   | { method: 'resetCallLogs' }
@@ -51,12 +54,13 @@ export interface RecorderWindow {
   hideApp?: () => any;
 }
 
-export class CrxRecorderApp extends EventEmitter implements IRecorderApp {
+export class CrxRecorderApp extends EventEmitter {
   readonly wsEndpointForTest: string | undefined;
   private _crx: Crx;
   readonly _recorder: Recorder;
   private _filename?: string;
   private _sources?: Source[];
+  private _recorderSources: Source[] = [];
   private _mode: Mode = 'none';
   private _window?: RecorderWindow;
   private _editedCode?: EditedCode;
@@ -72,6 +76,78 @@ export class CrxRecorderApp extends EventEmitter implements IRecorderApp {
       this._recorder.clearErrors();
       this.resetCallLogs().catch(() => {});
     });
+
+    // 1.54 reversed the Recorder <-> RecorderApp dependency (microsoft/playwright#36544):
+    // the recorder streams events instead of calling into an IRecorderApp, and the app
+    // is now responsible for turning actions into code. Everything below replaces what
+    // the deleted ContextRecorder/RecorderCollection used to push at us.
+    recorder.on(RecorderEvent.ActionAdded, (action: actions.ActionInContext) => {
+      this._recordedActions.push(action as ActionInContextWithLocation);
+      // New recorded actions supersede hand-edited code; without this the stale
+      // EditedCode keeps winning in _getActions() and newly recorded steps vanish.
+      if (this._editedCode) {
+        this._editedCode.stopLoad();
+        this._editedCode = undefined;
+      }
+      this._generateSources();
+    });
+    recorder.on(RecorderEvent.SignalAdded, (signal: actions.SignalInContext) => {
+      const lastAction = this._recordedActions.findLast(a => a.frame.pageGuid === signal.frame.pageGuid);
+      if (lastAction)
+        lastAction.action.signals.push(signal.signal);
+      this._generateSources();
+    });
+    recorder.on(RecorderEvent.ModeChanged, (mode: Mode) => {
+      this.setMode(mode).catch(() => {});
+    });
+    recorder.on(RecorderEvent.UserSourcesChanged, (sources: Source[]) => {
+      this.setSources([...this._recorderSources, ...sources]).catch(() => {});
+    });
+    recorder.on(RecorderEvent.CallLogsUpdated, (callLogs: CallLog[]) => {
+      this.updateCallLogs(callLogs).catch(() => {});
+    });
+    recorder.on(RecorderEvent.ElementPicked, (elementInfo: ElementInfo, userGesture?: boolean) => {
+      this.elementPicked(elementInfo, userGesture).catch(() => {});
+    });
+    recorder.on(RecorderEvent.PausedStateChanged, (paused: boolean) => {
+      this.setPaused(paused).catch(() => {});
+    });
+  }
+
+  // Code generation moved app-side in 1.54. Mirrors what RecorderCollection +
+  // ContextRecorder did together: collapse the action list, then render it through
+  // every registered language generator so the UI's language chooser keeps working.
+  private _generateSources() {
+    const collapsed = collapseActions(this._recordedActions);
+    const languageGeneratorOptions: LanguageGeneratorOptions = {
+      browserName: 'chromium',
+      launchOptions: {},
+      contextOptions: {},
+    };
+
+    const primaryLanguage = this._filename ?? 'playwright-test';
+    const recorderSources: Source[] = [];
+    for (const languageGenerator of languageSet()) {
+      const { header, footer, actionTexts, text } = generateCode(collapsed, languageGenerator, languageGeneratorOptions);
+      recorderSources.push({
+        isPrimary: languageGenerator.id === primaryLanguage,
+        timestamp: 0,
+        isRecorded: true,
+        label: languageGenerator.name,
+        group: languageGenerator.groupName,
+        id: languageGenerator.id,
+        text,
+        header,
+        footer,
+        actions: actionTexts,
+        language: languageGenerator.highlighter,
+        highlight: [],
+        revealLine: text.split('\n').length - 1,
+      });
+    }
+
+    this._recorderSources = recorderSources;
+    this.setActions(this._recordedActions, recorderSources).catch(() => {});
   }
 
   async open(options?: channels.CrxApplicationShowRecorderParams) {
@@ -89,8 +165,10 @@ export class CrxRecorderApp extends EventEmitter implements IRecorderApp {
 
     // set in recorder before, so that if it opens the recorder UI window, it will already reflect the changes
     this._onMessage({ type: 'recorderEvent', event: 'clear', params: {} });
-    this._onMessage({ type: 'recorderEvent', event: 'fileChanged', params: { file: language } });
-    this._recorder.setOutput(language, undefined);
+    // 1.54 renamed the recorder-UI event param `file` -> `fileId`.
+    this._onMessage({ type: 'recorderEvent', event: 'fileChanged', params: { fileId: language } });
+    // 1.54: setOutput(codegenId, file) -> setLanguage(highlighterLanguage).
+    this._recorder.setLanguage(toLanguage(language));
     this._recorder.setMode(mode);
 
     if (this._window.isClosed()) {
@@ -206,7 +284,8 @@ export class CrxRecorderApp extends EventEmitter implements IRecorderApp {
     if (type === 'recorderEvent') {
       switch (event) {
         case 'fileChanged':
-          this._filename = params.file;
+          this._filename = params.fileId;
+          this._recorder.setLanguage(toLanguage(params.fileId));
           if (this._editedCode?.hasErrors()) {
             this._updateCode(null);
             // force editor sources to refresh
@@ -268,7 +347,9 @@ export class CrxRecorderApp extends EventEmitter implements IRecorderApp {
         return actions;
     }
 
-    const source = this._sources?.find(s => s.id === this._filename);
+    // Prefer the app-generated sources: since 1.54 they are the authoritative
+    // rendering of the recorded actions, while `_sources` also carries user sources.
+    const source = this._recorderSources.find(s => s.id === this._filename) ?? this._sources?.find(s => s.id === this._filename);
     if (!source)
       return [];
 
@@ -345,18 +426,19 @@ class EditedCode {
 
     this.stopLoad();
     try {
-      const [{ actions, options }] = parse(this.code);
+      const [{ actions }] = parse(this.code);
       this._actions = actions;
-      const { deviceName, contextOptions } = { deviceName: '', contextOptions: {}, ...options };
-      this._recorder.loadScript({ actions, deviceName, contextOptions: contextOptions as LanguageGeneratorOptions['contextOptions'], text: this.code });
+      this._highlight = [];
     } catch (error) {
       this._actions = [];
       // syntax error / parsing error
       const line = error.loc.line ?? error.loc.start.line ?? this.code.split('\n').length;
       this._highlight = [{ line, type: 'error', message: error.message }];
-      this._recorder.loadScript({ actions: this._actions, deviceName: '', contextOptions: {}, text: this.code, highlight: this._highlight });
     }
 
+    // 1.54 removed `Recorder.loadScript()` — sources are owned by the recorder app
+    // now, so the parsed result is surfaced through `decorate()` on the app's own
+    // sources rather than pushed back into the recorder.
     this._onLoaded?.();
   }
 }

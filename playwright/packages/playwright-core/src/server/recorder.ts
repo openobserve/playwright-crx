@@ -261,12 +261,9 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
     this._refreshOverlay();
   }
 
-  resume() {
-    this._debugger.resume(false);
-  }
-
-  mode() {
-    return this._mode;
+  url(): string | undefined {
+    const page = this._context.pages()[0];
+    return page?.mainFrame().url();
   }
 
   setHighlightedSelector(selector: string) {
@@ -385,7 +382,11 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
   private _updateSources() {
     // Remove old decorations.
     const timestamp = monotonicTime();
-    for (const source of [...this._recorderSources, ...this._userSources.values()]) {
+    // patch(playwright-crx): 1.54 moved recorder-generated sources into the recorder app,
+    // so the recorder only owns user sources now. (The upstream merge left behind
+    // references to a `_recorderSources` field that no longer exists here — reading it
+    // threw at runtime.) Highlighting of generated sources is the app's job.
+    for (const source of this._userSources.values()) {
       source.highlight = [];
       source.revealLine = undefined;
     }
@@ -395,7 +396,7 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
       if (!metadata.location)
         continue;
       const { file, line } = metadata.location;
-      let source = this._userSources.get(file) ?? this._recorderSources.find(rs => rs.id === file);
+      let source = this._userSources.get(file);
       if (!source) {
         source = { isPrimary: false, isRecorded: false, label: file, id: file, text: this._readSource(file), highlight: [], language: languageForFile(file), timestamp };
         this._userSources.set(file, source);
