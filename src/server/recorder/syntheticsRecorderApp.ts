@@ -97,6 +97,8 @@ export class SyntheticsRecorderApp extends EventEmitter {
   private _network = new NetworkRecorder();
   /** Whether the network buffer is live, so the final rebuild runs exactly once. */
   private _collecting = false;
+  /** The in-flight final rebuild, shared so every setMode('none') caller awaits it. */
+  private _finalRebuild?: Promise<void>;
 
   constructor(
     crx: Crx,
@@ -281,10 +283,18 @@ export class SyntheticsRecorderApp extends EventEmitter {
       //
       // Recording stops here, so this is the last moment the whole recording is
       // visible. `disable()` clears the buffer, so the order matters.
+      //
+      // The rebuild promise is remembered because since 1.54 setMode('none') arrives
+      // TWICE: once from our own RecorderEvent.ModeChanged subscription (not awaited)
+      // and once from the awaited call in _hide(). Without sharing the promise, the
+      // `_collecting` guard would let the awaited call return before the rebuild the
+      // event-driven call started had finished — which is exactly the "caller reads the
+      // step list before the rebuild lands" bug this await exists to prevent.
       if (this._collecting) {
         this._collecting = false;
-        await this.setActions(this._recordedActions, this._sources ?? []);
+        this._finalRebuild = this.setActions(this._recordedActions, this._sources ?? []);
       }
+      await this._finalRebuild;
       this._network.disable();
     }
 
