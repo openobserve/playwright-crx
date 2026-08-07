@@ -49,6 +49,7 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
   switch (action.name) {
     case 'navigate': {
       const params: channels.FrameGotoParams = {
+        timeout: kDefaultTimeout,
         url: action.url,
       };
       return { method: 'goto', apiName: 'page.goto', params };
@@ -65,6 +66,7 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
 
     case 'click': {
       const params: channels.FrameClickParams = {
+        timeout: kDefaultTimeout,
         selector,
         strict: true,
         modifiers: toKeyboardModifiers(action.modifiers),
@@ -76,6 +78,7 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
     }
     case 'press': {
       const params: channels.FramePressParams = {
+        timeout: kDefaultTimeout,
         selector,
         strict: true,
         key: [...toKeyboardModifiers(action.modifiers), action.key].join('+'),
@@ -84,6 +87,7 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
     }
     case 'fill': {
       const params: channels.FrameFillParams = {
+        timeout: kDefaultTimeout,
         selector,
         strict: true,
         value: action.text,
@@ -92,6 +96,7 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
     }
     case 'setInputFiles': {
       const params: channels.FrameSetInputFilesParams = {
+        timeout: kDefaultTimeout,
         selector,
         strict: true,
         localPaths: action.files,
@@ -100,6 +105,7 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
     }
     case 'check': {
       const params: channels.FrameCheckParams = {
+        timeout: kDefaultTimeout,
         selector,
         strict: true,
       };
@@ -107,6 +113,7 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
     }
     case 'uncheck': {
       const params: channels.FrameUncheckParams = {
+        timeout: kDefaultTimeout,
         selector,
         strict: true,
       };
@@ -114,6 +121,7 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
     }
     case 'select': {
       const params: channels.FrameSelectOptionParams = {
+        timeout: kDefaultTimeout,
         selector,
         strict: true,
         options: action.options.map(option => ({ value: option })),

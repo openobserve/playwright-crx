@@ -35,7 +35,6 @@ import { HeadlessRecorderWindow } from './headlessRecorderWindow';
 import type { RecorderEventData, RecorderMessage, RecorderWindow } from './crxRecorderApp';
 import { mapActionsToBrowserSteps } from './actionMapper';
 import type { BrowserStep } from './actionMapper';
-import { serverSideCallMetadata } from 'playwright-core/lib/server';
 import { BrowserContext } from 'playwright-core/lib/server/browserContext';
 import type { Response } from 'playwright-core/lib/server/network';
 import { monotonicTime } from 'playwright-core/lib/utils';
@@ -406,7 +405,7 @@ export class SyntheticsRecorderApp extends EventEmitter {
       const incognitoCrxApp = await this._crx.get({ incognito });
       await incognitoCrxApp?.close({ closeWindows: true });
     }
-    const crxApp = await this._crx.get({ incognito }) ?? await this._crx.start({ incognito }, serverSideCallMetadata());
+    const crxApp = await this._crx.get({ incognito }) ?? await this._crx.start({ incognito });
     await this._crx.player.run(crxApp._context, this._recordedActions);
   }
 

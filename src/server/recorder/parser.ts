@@ -134,8 +134,18 @@ export type TestBrowserContextOptions = Pick<BrowserContextOptions,
   | 'viewport'
   | 'permissions'
   | 'serviceWorkers'
-  | 'recordHar'
-> & { storageState?: string };
+> & {
+  storageState?: string;
+  // 1.54 removed `recordHar` from the protocol's BrowserNewContextOptions, but the
+  // parser still recognises `routeFromHAR(...)` in parsed test code and reports it
+  // here, so the shape is declared locally instead of picked from upstream.
+  recordHar?: {
+    path: string;
+    content?: 'embed' | 'attach' | 'omit';
+    mode?: 'full' | 'minimal';
+    urlGlob?: string;
+  };
+};
 
 export type TestOptions = {
   deviceName?: string;
@@ -295,7 +305,9 @@ export function parse(code: string, file: string = 'playwright-test') {
 
     return {
       action,
-      frame: { pageAlias: pageAlias ?? 'page', framePath: [] },
+      // pageGuid is required on FrameDescription since 1.54; parsed code has no live
+      // page to name, and the player resolves the target through pageAlias.
+      frame: { pageGuid: '', pageAlias: pageAlias ?? 'page', framePath: [] },
       startTime: 0,
       location: { file, ...indexToLineColumn(code, expr.start) },
     };
@@ -404,7 +416,7 @@ export function parse(code: string, file: string = 'playwright-test') {
       // it has page fixture, let's push a openPage action
       actions.push({
         action: { name: 'openPage', signals: [], url: '' },
-        frame: { pageAlias: 'page', framePath: [] },
+        frame: { pageGuid: '', pageAlias: 'page', framePath: [] },
         location: { file, ...indexToLineColumn(code, fn.start) },
         startTime: 0
       });

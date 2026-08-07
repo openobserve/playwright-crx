@@ -29,8 +29,7 @@ import { languageSet } from 'playwright-core/lib/server/codegen/languages';
 import { collapseActions } from 'playwright-core/lib/server/recorder/recorderUtils';
 import type { Crx } from '../crx';
 import type { LanguageGeneratorOptions } from 'playwright-core/lib/server/codegen/types';
-import { serverSideCallMetadata } from 'playwright-core/lib/server';
-import { toLanguage } from './recorderUtils';
+import { toLanguage, traceParamsForAction } from './recorderUtils';
 
 export type RecorderMessage = { type: 'recorder' } & (
   | { method: 'resetCallLogs' }
@@ -42,7 +41,10 @@ export type RecorderMessage = { type: 'recorder' } & (
   | { method: 'elementPicked', elementInfo: ElementInfo, userGesture?: boolean }
 );
 
-export type RecorderEventData =  (EventData | { event: 'resetCallLogs' | 'codeChanged' | 'cursorActivity', params: any }) & { type: string };
+// `fileChanged` is what the recorder UI actually dispatches (recorder.tsx), with a
+// `fileId` param since 1.54. Upstream's EventData union lists `languageChanged`
+// instead — a stale type, not a renamed event — so it is spelled out here.
+export type RecorderEventData =  (EventData | { event: 'resetCallLogs' | 'codeChanged' | 'cursorActivity' | 'fileChanged', params: any }) & { type: string };
 
 export interface RecorderWindow {
   isClosed(): boolean;
@@ -74,7 +76,28 @@ export class CrxRecorderApp extends EventEmitter {
     this._recorder = recorder;
     this._crx.player.on('start', () => {
       this._recorder.clearErrors();
+      this._replayCallLogs = [];
+      this._replayedActions = [];
       this.resetCallLogs().catch(() => {});
+    });
+
+    // Replay call logs are rebuilt here because in 1.54 only the *dispatcher* layer
+    // drives instrumentation.onBeforeCall/onAfterCall, and the player calls frame
+    // methods directly — so replay no longer produces call logs on its own. Without
+    // this, the recorder's call-log panel stays empty for the whole replay.
+    this._crx.player.on('stepStarted', ({ actionIndex }: { actionIndex: number }) => {
+      const action = this._replayedActions[actionIndex];
+      if (!action)
+        return;
+      this._replayCallLogs[actionIndex] = this._buildCallLog(action, 'in-progress');
+      this.updateCallLogs(this._replayCallLogs.filter(Boolean)).catch(() => {});
+    });
+    this._crx.player.on('stepResult', ({ actionIndex, passed, error }: { actionIndex: number, passed: boolean, error?: string }) => {
+      const action = this._replayedActions[actionIndex];
+      if (!action)
+        return;
+      this._replayCallLogs[actionIndex] = this._buildCallLog(action, passed ? 'done' : 'error', error);
+      this.updateCallLogs(this._replayCallLogs.filter(Boolean)).catch(() => {});
     });
 
     // 1.54 reversed the Recorder <-> RecorderApp dependency (microsoft/playwright#36544):
@@ -112,6 +135,27 @@ export class CrxRecorderApp extends EventEmitter {
     recorder.on(RecorderEvent.PausedStateChanged, (paused: boolean) => {
       this.setPaused(paused).catch(() => {});
     });
+  }
+
+  // The actions handed to the player for the current replay, indexed the same way the
+  // player's stepStarted/stepResult actionIndex is, plus the call log built from them.
+  private _replayedActions: ActionInContextWithLocation[] = [];
+  private _replayCallLogs: CallLog[] = [];
+
+  private _buildCallLog(action: ActionInContextWithLocation, status: CallLog['status'], error?: string): CallLog {
+    const { apiName } = traceParamsForAction(action as ActionInContext);
+    return {
+      id: `crx-replay@${action.location?.line ?? 0}`,
+      title: apiName,
+      messages: error ? [error] : [],
+      status,
+      error,
+      reveal: true,
+      params: {
+        selector: (action.action as ActionWithSelector).selector,
+        url: action.action.name === 'navigate' ? action.action.url : undefined,
+      },
+    };
   }
 
   // Code generation moved app-side in 1.54. Mirrors what RecorderCollection +
@@ -325,8 +369,11 @@ export class CrxRecorderApp extends EventEmitter {
       const incognitoCrxApp = await this._crx.get({ incognito });
       await incognitoCrxApp?.close({ closeWindows: true });
     }
-    const crxApp = await this._crx.get({ incognito }) ?? await this._crx.start({ incognito }, serverSideCallMetadata());
-    await this._crx.player.run(crxApp._context, this._getActions());
+    const crxApp = await this._crx.get({ incognito }) ?? await this._crx.start({ incognito });
+    // The player skips a leading openPage for the 'page' alias, so index the same list
+    // it iterates or stepStarted/stepResult would point at the wrong action.
+    this._replayedActions = this._getActions().filter(a => !(a.action.name === 'openPage' && a.frame.pageAlias === 'page'));
+    await this._crx.player.run(crxApp._context, this._replayedActions);
   }
 
   _sendMessage(msg: RecorderMessage) {
