@@ -99,6 +99,8 @@ export class SyntheticsRecorderApp extends EventEmitter {
   private _collecting = false;
   /** The in-flight final rebuild, shared so every setMode('none') caller awaits it. */
   private _finalRebuild?: Promise<void>;
+  /** Kept so the journey origin can be recovered when no navigate action was recorded. */
+  private _context?: BrowserContext;
 
   constructor(
     crx: Crx,
@@ -110,6 +112,7 @@ export class SyntheticsRecorderApp extends EventEmitter {
     this._crx = crx;
     this._recorder = recorder;
     this._forwardCallback = forwardCallback;
+    this._context = context;
 
     // P4.1.1 — the source is the extension's real Playwright context, not raw
     // CDP. It is the same API the probe waits on, so one matcher serves both
@@ -368,7 +371,18 @@ export class SyntheticsRecorderApp extends EventEmitter {
       if (a.action.name === 'navigate' || a.action.name === 'openPage')
         return a.action.url;
     }
-    return undefined;
+    // Fall back to the page being recorded.
+    //
+    // A recorded navigate/openPage is not guaranteed to exist: the extension opens the
+    // recording tab *already at* the target URL (prepareRecordingWindow), so the journey can
+    // legitimately begin with a click. Since 1.54 it is also never guaranteed —
+    // Recorder.forContext() installs the recorder, and emits the initial openPage, before the
+    // app has subscribed to ActionAdded, so that action is gone before anyone can hear it.
+    // (In 1.53 Recorder.show() built the app through a factory while installing.)
+    //
+    // Without an origin, every step bails out of settle computation and a journey records no
+    // wait conditions at all — the silent failure this fallback exists to prevent.
+    return this._context?.pages()[0]?.mainFrame().url() || undefined;
   }
 
   async setActions(actions: ActionInContext[], sources: Source[]) {

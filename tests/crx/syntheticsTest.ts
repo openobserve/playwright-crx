@@ -36,9 +36,29 @@ export type RecordedStep = {
   pageAlias?: string;
   framePath?: string[];
   locator?: { candidates: Array<{ kind: string; value: string; origin?: string }> };
-  settle?: { navigation?: { url_pattern: string }; responses?: unknown[]; observed_duration_ms?: number };
+  settle?: {
+    navigation?: { url_pattern: string };
+    responses?: Array<{ url_pattern: string; method?: string; required: boolean }>;
+    observed_duration_ms?: number;
+  };
   [k: string]: unknown;
 };
+
+/**
+ * Find a recorded step by any of its locator candidates.
+ *
+ * v2 replaced the bare `selector`/`selector_type` pair with the ranked `locator` bundle, so a
+ * step is identified by what its candidates point at. Tests that still look up `step.selector`
+ * silently match nothing — the field is never emitted.
+ */
+export function findStep(steps: RecordedStep[], needle: string): RecordedStep | undefined {
+  return steps.find(s => s.locator?.candidates?.some(c => c.value.includes(needle)));
+}
+
+/** The candidate values of each step — for a readable failure message. */
+export function describeSteps(steps: RecordedStep[]): string {
+  return JSON.stringify(steps.map(s => s.locator?.candidates?.[0]?.value ?? s.action));
+}
 
 /** A payload the extension pushed over the bridge, as the O2 page sees it. */
 export type PushedPayload = { method: string } & Record<string, any>;
