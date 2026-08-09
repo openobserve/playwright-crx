@@ -257,19 +257,29 @@ three. Another argument for pushing logic down to L1 rather than adding L3 cases
 
 ---
 
-### 7.4 The fake footprint, if we ever want mid-tier tests
+### 7.4 Decision: no Chrome API fake — ever
 
-Recorded here so the decision is informed rather than rediscovered. Faking the IO tier would
-need: `runtime` (onConnect/onMessage/sendMessage/connect/Port), `tabs`
+**Settled.** Anything that touches `chrome.*` is tested against a real headed Chrome running
+the real extension. Nothing is faked.
+
+For the record, faking that tier would have meant standing up: `runtime`
+(onConnect/onMessage/sendMessage/connect/Port), `tabs`
 (query/update/sendMessage/create/onRemoved/onUpdated), `windows`
 (create/get/remove/update/getLastFocused), `storage.session`, `action`,
 `extension.isAllowedIncognitoAccess`, `scripting.executeScript` — plus doubles for
 `crx.start`, `Crx.recorderAppFactoryOverride`, `mapBrowserStepsToActions` and
 `describeReplayFidelity`.
 
-That is a large surface to fake and keep honest, which is why this design puts the pure logic
-in L1 and leaves anything that genuinely touches `chrome.*` to L3 against a real browser.
-**Recommendation: do not build a chrome fake.** Extract instead.
+That surface is both large and *load-bearing*: a fake would have to encode our beliefs about
+MV3 worker eviction, incognito window ownership and `chrome.debugger` attach semantics — the
+exact beliefs that turned out to be wrong during the 1.54 upgrade. A fake that matches our
+assumptions passes while the product is broken. So the split is:
+
+- **L1** covers logic that is deterministic given its inputs and needs *no* chrome API at all
+  (it is pure, not faked — `computeReplayOffset`, `buildReplayContext`, `describeMode`, …).
+- **L3** covers everything else, against a real browser.
+
+There is no middle tier, by choice.
 
 ## 8. Typecheck gate
 

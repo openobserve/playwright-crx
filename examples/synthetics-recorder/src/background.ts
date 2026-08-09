@@ -205,6 +205,11 @@ function runO2Command(command: O2Command, respond: (response?: any) => void): bo
         .catch(err => respond({ success: false, error: err.message }));
       return true;
   }
+
+  // An unrecognised command must still be answered. The O2 page correlates replies by nonce,
+  // so falling through without responding leaves it waiting out its own 60s timeout with no
+  // way to tell "this build does not support that command" from "the extension is wedged".
+  respond({ success: false, error: `unknown command: ${(command as { action?: string }).action ?? '(none)'}` });
   return false;
 }
 
