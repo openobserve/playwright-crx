@@ -329,6 +329,38 @@ minutes; steps 1–3 turn a meaningful share of that into a sub-second signal, f
   `locator.candidates[0].value`) as part of step 4 — **a suite that is never green cannot tell
   you when you broke something.**
 
+## 10a. Status — what has been built (2026-08-09)
+
+Steps 4 and 6 of the delivery plan are done, and they paid for themselves immediately.
+
+| Built | Result |
+|---|---|
+| `tests/crx/syntheticsTest.ts` — shared real-Chrome fixture (`o2` bridge) | no `chrome.*` faked; consolidates the `sendCommand` copied byte-identically into 4 specs |
+| `tests/crx/synthetics-lifecycle.spec.ts` — 5 new L3 tests | **5/5 green**: replay failure, stop-mid-replay, cross-origin navigation, MV3 worker teardown, unknown command |
+| `synthetics-v2-recording` migrated onto the fixture | **247 → 126 lines**, 3/3 green (2 were red at baseline) |
+| Stale `step.selector` lookups replaced with `findStep()` | the v1 field BrowserStep records as having "went with version 1 (Phase 2c)" |
+
+**Two product defects found and fixed by writing these tests:**
+
+1. **Unresponsive unknown command** (predicted as latent defect #2 above). `runO2Command` fell
+   through without calling `respond()`, stranding the O2 page on a nonce until its own 60 s
+   timeout. The test went 12.8 s (timing out) → 2.8 s once fixed.
+2. **Journeys recorded no network wait conditions at all.** Every step had an empty
+   `settle.responses` — the core of v2 capture, silently producing nothing. A regression from
+   the 1.54 adaptation: 1.53's `Recorder.show(context, factory, params)` built the app *while
+   installing*, so it heard the initial `openPage`; 1.54's `forContext()` + `_createRecorderApp()`
+   emits it before anything subscribes, leaving `_journeyOrigin()` undefined — and `setActions`
+   skips settle computation entirely without an origin.
+
+The second one is the argument for this whole design, stated as an event rather than a
+prediction: it was **hidden behind the stale tests**. They died on the `selector` lookup long
+before reaching the settle assertions, so the defect shipped invisibly. A suite that is never
+green cannot tell you when you broke something.
+
+**Suite state:** 219 passed / 4 failed, versus 196 / 19 at the migration baseline —
+**15 of the 19 baseline failures fixed, zero regressions** (verified by diffing the failing
+sets).
+
 ## 11. How we will know it worked
 
 - A deliberately broken `handleRecorderMessage` fails a unit test in **< 5 s**, naming the behaviour.
