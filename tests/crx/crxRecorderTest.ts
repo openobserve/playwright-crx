@@ -155,15 +155,18 @@ export const test = crxTest.extend<{
                   await locator.click();
                   break;
                 case 'assertSnapshot':
-                  // ensure snapshot is toggled (for some reason, it may take more than one click)
-                  const assertBtn = recorderPage.getByTitle('Assert snapshot');
-                  while (await assertBtn.evaluate(e => !e.classList.contains('toggled')))
-                    await assertBtn.click();
-                  // Waiting on the toolbar button alone is not enough: since 1.54,
-                  // Recorder.setMode() emits ModeChanged (which toggles the button)
-                  // *before* it issues the async overlay refresh, so the page can still
-                  // be in recording mode here and the click below gets recorded as a
-                  // plain click instead of an assertion. Wait for the page overlay.
+                  // Click exactly once, then wait for the *page overlay* to enter the mode.
+                  //
+                  // This used to be a `while (!toggled) click()` loop, on the theory that the
+                  // toggle "may take more than one click". It re-read the toolbar button
+                  // before React had re-rendered it, clicked again, and toggled the mode back
+                  // OFF — after which the click below was recorded as a plain click instead of
+                  // an assertion. Waiting on the toolbar button is also not enough on its own:
+                  // since 1.54 Recorder.setMode() emits ModeChanged (which toggles the button)
+                  // *before* it issues the async overlay refresh, so the page can still be in
+                  // recording mode when the button already looks right. The overlay is the
+                  // thing the next click is actually interpreted by, so wait on that.
+                  await recorderPage.getByTitle('Assert snapshot').click();
                   await page.locator('x-pw-glass').locator('x-pw-tool-item.snapshot.toggled').waitFor({ timeout: 5000 });
                   await locator.click();
                   break;

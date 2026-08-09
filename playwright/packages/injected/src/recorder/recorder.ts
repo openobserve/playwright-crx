@@ -533,6 +533,14 @@ class RecordActionTool implements RecorderTool {
         return true;
       if (isMouseOrPointerEvent && (action.name === 'click' || action.name === 'check' || action.name === 'uncheck'))
         return true;
+      // patch(playwright-crx): a select is *performed* by Playwright (the recorder replays
+      // it through performAction), and that replay dispatches a plain `change` event —
+      // which is neither a KeyboardEvent nor a MouseEvent, so neither branch above catches
+      // it. The recorder therefore recorded the action it had just performed, and
+      // performing that one re-fired `change` again: one user selectOption produced ~250
+      // recorded selects at ~4ms intervals until the page went away.
+      if (!isKeyEvent && !isMouseOrPointerEvent && action.name === 'select')
+        return true;
     }
 
     // Consume event if action is not being executed.
