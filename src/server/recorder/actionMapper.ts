@@ -461,12 +461,17 @@ function buildActionFromStep(step: BrowserStep): Action {
 }
 
 /**
- * Step actions the player cannot execute. Upstream Playwright's recorder action
- * model (ActionName in @recorder/actions) has no hover/scroll/wait/screenshot, so
- * these have never been replayable — they enter journeys only from O2's manual
- * step editor or from legacy monitors. They are retired from the v2 vocabulary;
- * this list exists so existing journeys still replay, with the step reported
- * honestly. See spec X-9 and P1.R.2a.
+ * Step actions the player cannot execute. They enter journeys from O2's manual step
+ * editor or from legacy monitors, and are retired from the v2 vocabulary; this list
+ * exists so existing journeys still replay, with the step reported honestly rather
+ * than as a pass. See spec X-9 and P1.R.2a.
+ *
+ * `hover` was on this list because upstream's recorder model had no such action at all.
+ * Playwright 1.56 added one, reachable from the new right-click action picker, so a
+ * hover CAN now be captured — and `Frame.hover` could execute it. Keeping it here is a
+ * deliberate hold: whether hover re-enters the v2 vocabulary is a product decision, not
+ * something to change while chasing a version bump. Until it is made, a recorded hover
+ * is reported as "not simulated", which is honest but wastes a capability we now have.
  */
 export const UNSUPPORTED_REPLAY_ACTIONS: readonly string[] = [
   'hover',

@@ -44,12 +44,14 @@ const ignores = [
   "node_modules/",
   "output/",
   "**/playwright-report/",
+  "examples",
   "packages/*/lib/",
   "packages/playwright-core/bundles/zip/src/third_party/",
   "packages/playwright-core/src/generated/*",
   "packages/playwright-core/src/third_party/",
   "packages/playwright-core/types/*",
   "packages/playwright-ct-core/src/generated/*",
+  "packages/playwright/bundles/expect/third_party/",
   "packages/html-reporter/bundle.ts",
   "packages/html-reporter/playwright.config.ts",
   "packages/html-reporter/playwright/*",
@@ -176,7 +178,7 @@ export const baseRules = {
       before: true,
     },
   ],
-  "@stylistic/func-call-spacing": 2,
+  "@stylistic/function-call-spacing": 2,
   "@stylistic/type-annotation-spacing": 2,
 
   // file whitespace
@@ -184,7 +186,7 @@ export const baseRules = {
   "no-mixed-spaces-and-tabs": 2,
   "no-trailing-spaces": 2,
   "linebreak-style": [process.platform === "win32" ? 0 : 2, "unix"],
-  indent: [
+  "@stylistic/indent": [
     2,
     2,
     { SwitchCase: 1, CallExpression: { arguments: 2 }, MemberExpression: 2 },
