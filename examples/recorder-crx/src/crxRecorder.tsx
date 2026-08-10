@@ -74,6 +74,26 @@ export const CrxRecorder: React.FC = ({
   const [mode, setMode] = React.useState<Mode>('none');
   const [selectedFileId, setSelectedFileId] = React.useState<string>(defaultSettings.targetLanguage);
 
+  // `window.dispatch` has to exist before the *children* mount, not merely before this
+  // component's own effect runs. 1.55 gave the vendored Recorder a mount effect that
+  // dispatches `setAutoExpect`, and React runs child effects before the parent's — so
+  // assigning dispatch inside the effect below left that call hitting `undefined`, and a
+  // TypeError thrown from an effect unmounts the whole tree. The popup came up blank and
+  // every recorder and player test died on a closed page.
+  //
+  // So it is assigned during render (as the vendored UI does for its own window hooks)
+  // and buffers anything sent before the port is connected.
+  const portRef = React.useRef<chrome.runtime.Port>();
+  const pendingRef = React.useRef<any[]>([]);
+  window.dispatch = async (data: any) => {
+    if (portRef.current)
+      portRef.current.postMessage({ type: 'recorderEvent', ...data });
+    else
+      pendingRef.current.push(data);
+    if (data.event === 'fileChanged')
+      setSelectedFileId(data.params.fileId);
+  };
+
   React.useEffect(() => {
     const port = chrome.runtime.connect({ name: 'recorder' });
     const onMessage = (msg: any) => {
@@ -108,11 +128,10 @@ export const CrxRecorder: React.FC = ({
     };
     port.onMessage.addListener(onMessage);
 
-    window.dispatch = async (data: any) => {
+    portRef.current = port;
+    for (const data of pendingRef.current.splice(0))
       port.postMessage({ type: 'recorderEvent', ...data });
-      if (data.event === 'fileChanged')
-        setSelectedFileId(data.params.fileId);
-    };
+
     loadSettings().then(settings => {
       setSettings(settings);
       setSelectedFileId(settings.targetLanguage);
@@ -122,6 +141,7 @@ export const CrxRecorder: React.FC = ({
 
     return () => {
       removeSettingsChangedListener(setSettings);
+      portRef.current = undefined;
       port.disconnect();
     };
   }, []);

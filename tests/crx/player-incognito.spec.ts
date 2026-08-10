@@ -25,7 +25,7 @@ test('should play in incognito', async ({ configureRecorder, attachRecorder, pag
   await configureRecorder({ playInIncognito: true });
 
   const recorderPage = await attachRecorder(page);
-  await recorderPage.getByTitle('Record').click();
+  await recorderPage.getByTitle('Record', { exact: true }).click();
 
   editCode(recorderPage, `import { test, expect } from '@playwright/test';
 
@@ -55,7 +55,7 @@ test('should close and reopen incognito window on replay', async ({ configureRec
   await configureRecorder({ playInIncognito: true });
 
   const recorderPage = await attachRecorder(page);
-  await recorderPage.getByTitle('Record').click();
+  await recorderPage.getByTitle('Record', { exact: true }).click();
 
   editCode(recorderPage, `import { test, expect } from '@playwright/test';
 
