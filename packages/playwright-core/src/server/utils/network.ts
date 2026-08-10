@@ -22,6 +22,7 @@ import url from 'url';
 
 import { HttpsProxyAgent, SocksProxyAgent, getProxyForUrl } from '../../utilsBundle';
 import { httpHappyEyeballsAgent, httpsHappyEyeballsAgent } from './happyEyeballs';
+import { ManualPromise } from '../../utils/isomorphic/manualPromise';
 
 import type net from 'net';
 import type { ProxySettings } from '../types';
@@ -39,8 +40,9 @@ export type HTTPRequestParams = {
 export const NET_DEFAULT_TIMEOUT = 30_000;
 
 export function httpRequest(params: HTTPRequestParams, onResponse: (r: http.IncomingMessage) => void, onError: (error: Error) => void): { cancel(error: Error | undefined): void } {
-  const parsedUrl = new URL(params.url);
-  const options: https.RequestOptions = {
+  const parsedUrl = url.parse(params.url);
+  let options: https.RequestOptions = {
+    ...parsedUrl,
     agent: parsedUrl.protocol === 'https:' ? httpsHappyEyeballsAgent : httpHappyEyeballsAgent,
     method: params.method || 'GET',
     headers: params.headers,
@@ -50,15 +52,19 @@ export function httpRequest(params: HTTPRequestParams, onResponse: (r: http.Inco
 
   const proxyURL = getProxyForUrl(params.url);
   if (proxyURL) {
-    const parsedProxyURL = new URL(proxyURL);
+    const parsedProxyURL = url.parse(proxyURL);
     if (params.url.startsWith('http:')) {
-      parsedUrl.pathname = parsedUrl.href;
-      parsedUrl.host = parsedProxyURL.host;
+      options = {
+        path: parsedUrl.href,
+        host: parsedProxyURL.hostname,
+        port: parsedProxyURL.port,
+        headers: options.headers,
+        method: options.method
+      };
     } else {
-      options.agent = new HttpsProxyAgent({
-        ...convertURLtoLegacyUrl(parsedProxyURL),
-        secureProxy: parsedProxyURL.protocol === 'https:',
-      });
+      (parsedProxyURL as any).secureProxy = parsedProxyURL.protocol === 'https:';
+
+      options.agent = new HttpsProxyAgent(parsedProxyURL);
       options.rejectUnauthorized = false;
     }
   }
@@ -76,8 +82,8 @@ export function httpRequest(params: HTTPRequestParams, onResponse: (r: http.Inco
     }
   };
   const request = options.protocol === 'https:' ?
-    https.request(parsedUrl, options, requestCallback) :
-    http.request(parsedUrl, options, requestCallback);
+    https.request(options, requestCallback) :
+    http.request(options, requestCallback);
   request.on('error', onError);
   if (params.socketTimeout !== undefined) {
     request.setTimeout(params.socketTimeout, () =>  {
@@ -85,27 +91,37 @@ export function httpRequest(params: HTTPRequestParams, onResponse: (r: http.Inco
       request.abort();
     });
   }
-  cancelRequest = e => request.destroy(e);
+  cancelRequest = e => {
+    try {
+      request.destroy(e);
+    } catch {
+    }
+  };
   request.end(params.data);
   return { cancel: e => cancelRequest(e) };
 }
 
-export function fetchData(progress: Progress | undefined, params: HTTPRequestParams, onError?: (params: HTTPRequestParams, response: http.IncomingMessage) => Promise<Error>): Promise<string> {
-  const promise = new Promise<string>((resolve, reject) => {
-    const { cancel } = httpRequest(params, async response => {
-      if (response.statusCode !== 200) {
-        const error = onError ? await onError(params, response) : new Error(`fetch failed: server returned code ${response.statusCode}. URL: ${params.url}`);
-        reject(error);
-        return;
-      }
-      let body = '';
-      response.on('data', (chunk: string) => body += chunk);
-      response.on('error', (error: any) => reject(error));
-      response.on('end', () => resolve(body));
-    }, reject);
-    progress?.cleanupWhenAborted(cancel);
-  });
-  return progress ? progress.race(promise) : promise;
+export async function fetchData(progress: Progress | undefined, params: HTTPRequestParams, onError?: (params: HTTPRequestParams, response: http.IncomingMessage) => Promise<Error>): Promise<string> {
+  const promise = new ManualPromise<string>();
+  const { cancel } = httpRequest(params, async response => {
+    if (response.statusCode !== 200) {
+      const error = onError ? await onError(params, response) : new Error(`fetch failed: server returned code ${response.statusCode}. URL: ${params.url}`);
+      promise.reject(error);
+      return;
+    }
+    let body = '';
+    response.on('data', (chunk: string) => body += chunk);
+    response.on('error', (error: any) => promise.reject(error));
+    response.on('end', () => promise.resolve(body));
+  }, error => promise.reject(error));
+  if (!progress)
+    return promise;
+  try {
+    return await progress.race(promise);
+  } catch (error) {
+    cancel(error);
+    throw error;
+  }
 }
 
 function shouldBypassProxy(url: URL, bypass?: string): boolean {
@@ -132,27 +148,23 @@ export function createProxyAgent(proxy?: ProxySettings, forUrl?: URL) {
   if (!/^\w+:\/\//.test(proxyServer))
     proxyServer = 'http://' + proxyServer;
 
-  const proxyOpts = new URL(proxyServer);
+  const proxyOpts = url.parse(proxyServer);
   if (proxyOpts.protocol?.startsWith('socks')) {
     return new SocksProxyAgent({
       host: proxyOpts.hostname,
       port: proxyOpts.port || undefined,
     });
   }
-  if (proxy.username) {
-    proxyOpts.username = proxy.username;
-    proxyOpts.password = proxy.password || '';
-  }
+  if (proxy.username)
+    proxyOpts.auth = `${proxy.username}:${proxy.password || ''}`;
 
   if (forUrl && ['ws:', 'wss:'].includes(forUrl.protocol)) {
     // Force CONNECT method for WebSockets.
-    // TODO: switch to URL instance instead of legacy object once https-proxy-agent supports it.
-    return new HttpsProxyAgent(convertURLtoLegacyUrl(proxyOpts));
+    return new HttpsProxyAgent(proxyOpts);
   }
 
   // TODO: We should use HttpProxyAgent conditional on proxyOpts.protocol instead of always using CONNECT method.
-  // TODO: switch to URL instance instead of legacy object once https-proxy-agent supports it.
-  return new HttpsProxyAgent(convertURLtoLegacyUrl(proxyOpts));
+  return new HttpsProxyAgent(proxyOpts);
 }
 
 export function createHttpServer(requestListener?: (req: http.IncomingMessage, res: http.ServerResponse) => void): http.Server;
@@ -223,22 +235,5 @@ function decorateServer(server: net.Server) {
       socket.destroy();
     sockets.clear();
     return close.call(server, callback);
-  };
-}
-
-function convertURLtoLegacyUrl(url: URL): url.Url {
-  return {
-    auth: url.username ? url.username + ':' + url.password : null,
-    hash: url.hash || null,
-    host: url.hostname ? url.hostname + ':' + url.port : null,
-    hostname: url.hostname || null,
-    href: url.href,
-    path: url.pathname + url.search,
-    pathname: url.pathname,
-    protocol: url.protocol,
-    search: url.search || null,
-    slashes: true,
-    port: url.port || null,
-    query: url.search.slice(1) || null,
   };
 }
