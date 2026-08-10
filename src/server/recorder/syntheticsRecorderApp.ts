@@ -242,6 +242,18 @@ export class SyntheticsRecorderApp extends EventEmitter {
     // initial openPage step that install() just generated.
     this._recorder.setMode(mode);
 
+    // Seed the journey's opening navigation.
+    //
+    // The recorder emits an `openPage` for already-open pages while installing, but that
+    // emission is gated on `_enabled`, which is only set by setMode() — which runs *after*
+    // install. So the opening action was dropped, and because the extension opens the
+    // recording tab already AT the target URL (prepareRecordingWindow) there is no later
+    // navigation signal to recover it: journeys reached the web app with no navigate step
+    // and replay had nowhere to start. clear() re-signals navigation for every open page,
+    // which the signal processor turns into the `navigate` action.
+    if (this._recorder._isRecording())
+      this._recorder.clear();
+
     this.emit('show');
     this.setMode(mode);
   }

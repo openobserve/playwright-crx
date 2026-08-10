@@ -250,6 +250,12 @@ export class CrxRecorderApp extends EventEmitter {
     this._recorder.setLanguage(toLanguage(language));
     this._recorder.setMode(mode);
 
+    // Seed the opening navigation: the recorder's own `openPage` for already-open pages is
+    // emitted while installing, before setMode() enables ActionAdded, so it is dropped.
+    // clear() re-signals navigation for every open page. See syntheticsRecorderApp.open().
+    if (this._recorder._isRecording())
+      this._recorder.clear();
+
     if (this._window.isClosed()) {
       await this._window.open();
       this.emit('show');

@@ -499,7 +499,13 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
   }
 
   clear(): void {
-    if (this._params.mode === 'recording') {
+    // patch(playwright-crx): gate on the CURRENT mode, not the mode the recorder was
+    // constructed with. crx must construct the recorder at 'none' and switch it to
+    // 'recording' afterwards (the `_enabled` flag that gates ActionAdded is only set
+    // inside setMode(), which early-returns when the mode already matches), so
+    // `_params.mode` is never 'recording' here and this seeding never ran — leaving a
+    // journey with no opening navigation step.
+    if (this._isRecording()) {
       for (const page of this._context.pages())
         this._onFrameNavigated(page.mainFrame(), page);
     }
