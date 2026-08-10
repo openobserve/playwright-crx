@@ -101,7 +101,8 @@ export class Crx extends SdkObject {
       };
       const browserOptions: BrowserOptions = {
         name: 'chromium',
-        isChromium: true,
+        // 1.59 replaced the isChromium boolean with a browserType discriminant.
+        browserType: 'chromium',
         headful: true,
         persistent: newContextOptions,
         browserProcess,

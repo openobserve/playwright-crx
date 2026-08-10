@@ -33,6 +33,15 @@ export async function runBrowserBackendAtEnd(_context: unknown, _errorMessage?: 
 }
 
 /**
+ * Replaced `runBrowserBackendAtEnd` in 1.59: same job — hold the browser open at the end
+ * of a test so an MCP agent can drive it — reached only when the run asked to pause.
+ * Kept alongside the old name because the import list is the contract we are standing in
+ * for, and a name that vanishes upstream costs nothing to keep here.
+ */
+export async function runDaemonForContext(_testInfo: unknown, _context: unknown): Promise<void> {
+}
+
+/**
  * Added to the same module in 1.57 and installed as `TestInfo._onCustomMessageCallback`.
  * It answers MCP requests from a connected agent — initialize, listTools, callTool. In an
  * extension there is no channel those requests could arrive on, so the handler is never

@@ -117,7 +117,7 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
   // androidWebView: [AndroidWebView.prototype],
   // androidInput: [AndroidInput.prototype],
   // androidSocket: [AndroidSocket.prototype],
-  browser: [Browser.prototype, { newContext: true, newPage: true, newBrowserCDPSession: true, startTracing: true, stopTracing: true, close: true }],
+  browser: [Browser.prototype, { newContext: true, newPage: true, newBrowserCDPSession: true, startTracing: true, stopTracing: true, close: true, bind: true, unbind: true }],
   browserContext: [BrowserContext.prototype, {
     newPage: true,
     cookies: true,
@@ -140,6 +140,7 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
     waitForEvent: true,
     storageState: true,
     newCDPSession: true,
+    setStorageState: true,
     close: true
   }],
   browserType: [BrowserType.prototype, { launch: true, launchServer: true, launchPersistentContext: true, connect: true, connectOverCDP: true }],
@@ -196,6 +197,7 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
     allInnerTexts: true,
     allTextContents: true,
     waitFor: true,
+    normalize: true,
   }],
   frameLocator: [FrameLocator.prototype, {}],
   elementHandle: [ElementHandle.prototype, {
@@ -375,14 +377,21 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
     waitForFunction: true,
     pause: true,
     pdf: true,
-    // Added to Page in 1.56 (requests/consoleMessages/pageErrors) and 1.58 (agent).
-    // Wrapped like every other async Page API so their api-name attribution stays inside
-    // the crx zone; the type here is exhaustive, so a new method that is not listed fails
-    // the build rather than silently escaping it.
+    // Added to Page in 1.56. Wrapped like every other async Page API so their api-name
+    // attribution stays inside the crx zone; the type here is exhaustive, so a new method
+    // that is not listed fails the build rather than silently escaping it. (1.58's
+    // page.agent() was gone again by 1.59 — the same exhaustiveness caught its removal.)
     requests: true,
     consoleMessages: true,
     pageErrors: true,
-    agent: true,
+    // 1.59: aria snapshotting on the page, the pick-locator pair the recorder now
+    // drives through the client API, and the console/error clears that go with
+    // consoleMessages/pageErrors above.
+    ariaSnapshot: true,
+    pickLocator: true,
+    cancelPickLocator: true,
+    clearConsoleMessages: true,
+    clearPageErrors: true,
   }],
   selectors: [Selectors.prototype, { register: true }],
   tracing: [Tracing.prototype, { group: true, groupEnd: true, start: true, startChunk: true, stop: true, stopChunk: true }],

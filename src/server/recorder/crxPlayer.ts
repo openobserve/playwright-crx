@@ -148,7 +148,8 @@ export default class CrxPlayer extends EventEmitter {
       // we intercept incognito call logs and forward them into the recorder
       const instrumentationListener: InstrumentationListener = {
         onBeforeCall: recorder.onBeforeCall.bind(recorder),
-        onBeforeInputAction: recorder.onBeforeInputAction.bind(recorder),
+        // 1.59 dropped onBeforeInputAction from the Recorder. It only ever cleared the
+        // highlight before an input action; the recorder now does that from onBeforeCall.
         onCallLog: recorder.onCallLog.bind(recorder),
         onAfterCall: recorder.onAfterCall.bind(recorder),
       };

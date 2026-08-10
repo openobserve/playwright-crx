@@ -30,6 +30,12 @@
       "playwright-core/lib/*": ["./playwright/packages/playwright-core/src/*"],
       "@playwright/test/lib/*": ["./playwright/packages/playwright/src/*"],
       "tests/*": ["./playwright/tests/*"],
+      // `utilsBundle` serves the yaml bundled under playwright-core, but a bare `yaml`
+      // import resolves to the copy at our own root — a different version, with a
+      // different shape. Nothing broke while the two happened to agree; 1.59 moved them
+      // apart, and passing the bundle's yaml to a type written against the root one
+      // stopped compiling. Point the type at what is actually loaded.
+      "yaml": ["./playwright/packages/playwright-core/bundles/utils/node_modules/yaml"],
     }
   },
   "include": ["src"],
