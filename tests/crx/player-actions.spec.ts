@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { dumpLogHeaders, expect, test } from './crxRecorderTest';
+import { dumpLogHeaders, expect, test, recordButton } from './crxRecorderTest';
 
 test('should play all supported actions except setInputFiles', async ({ context, page, recorderPage, baseURL, mockPaths, recordAction, attachRecorder }) => {
   await mockPaths({
@@ -49,7 +49,7 @@ test('should play all supported actions except setInputFiles', async ({ context,
   // closePage
   await recordAction(() => page1.close());
 
-  await recorderPage.getByTitle('Record', { exact: true }).click();
+  await recordButton(recorderPage).click();
 
   // just to make sure it navigates to root.html
   await page.goto(`${baseURL}/empty.html`);
@@ -124,7 +124,7 @@ test('should fail while playing setInputFiles', async ({ page, recorderPage, bas
     await page.locator('[type=file]').setInputFiles(`${basePath}/file-to-upload.txt`);
   });
 
-  await recorderPage.getByTitle('Record', { exact: true }).click();
+  await recordButton(recorderPage).click();
 
   // just to make sure it navigates to root.html
   await page.goto(`${baseURL}/empty.html`);

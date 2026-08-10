@@ -21,6 +21,24 @@ import type { AssertAction } from '../../playwright/packages/recorder/src/action
 
 export { expect } from './crxTest';
 
+/**
+ * The recorder's Record button — the single most clicked control in this suite.
+ *
+ * Addressed in one place because its identity keeps moving with the vendored UI: through
+ * 1.54 the title was `Record`; 1.55 added a settings row titled "Automatically generate
+ * assertions while recording", which `getByTitle('Record')` matched too (substring, case
+ * insensitive); 1.56 renamed the button's own title to `Start Recording`/`Stop Recording`,
+ * toggling with state, so an exact `Record` matched nothing at all and every test that
+ * touches recording timed out at once.
+ *
+ * The anchored regex survives both: it cannot match the settings row, and it does not care
+ * which half of the toggle is showing. Whether it is *on* is still read from the `toggled`
+ * class rather than from the title, so a further rename does not silently invert the check.
+ */
+export function recordButton(recorderPage: Page): Locator {
+  return recorderPage.getByTitle(/^(Start|Stop) Recording$/);
+}
+
 declare function attach(tab: chrome.tabs.Tab): Promise<void>;
 declare function _setUnderTest(): void;
 
@@ -106,10 +124,10 @@ export const test = crxTest.extend<{
             try {
               await locator.waitFor({ state: 'attached', timeout: 100 });
             } catch (e) {
-              if (await recorderPage.getByTitle('Record', { exact: true }).evaluate(e => e.classList.contains('toggled'))) {
-                await recorderPage.getByTitle('Record', { exact: true }).click();
+              if (await recordButton(recorderPage).evaluate(e => e.classList.contains('toggled'))) {
+                await recordButton(recorderPage).click();
                 await page.reload();
-                await recorderPage.getByTitle('Record', { exact: true }).click();
+                await recordButton(recorderPage).click();
               } else {
                 await page.reload();
               }

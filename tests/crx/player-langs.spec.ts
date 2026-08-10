@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { dumpLogHeaders, expect, test } from './crxRecorderTest';
+import { dumpLogHeaders, expect, test, recordButton } from './crxRecorderTest';
 
 test.beforeEach(async ({ page, recordAction, baseURL }) => {
   await recordAction(() => page.goto(`${baseURL}/input/textarea.html`));
@@ -37,7 +37,7 @@ const langs = {
 
 for (const [lang, { linenumber, line }] of Object.entries(langs)) {
   test(`should step in ${lang}`, async ({ recorderPage, baseURL }) => {
-    await recorderPage.getByTitle('Record', { exact: true }).click();
+    await recordButton(recorderPage).click();
 
     await recorderPage.locator('.source-chooser').selectOption(lang);
 
@@ -59,7 +59,7 @@ for (const [lang, { linenumber, line }] of Object.entries(langs)) {
 }
 
 test('should support target change while steping', async ({ recorderPage }) => {
-  await recorderPage.getByTitle('Record', { exact: true }).click();
+  await recordButton(recorderPage).click();
 
   await recorderPage.getByTitle('Step Over (F10)').click();
   await recorderPage.getByTitle('Step Over (F10)').click();

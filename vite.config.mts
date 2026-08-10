@@ -36,6 +36,12 @@ export default defineConfig({
       './babelBundleImpl': '../../bundles/babel/src/babelBundleImpl',
       './expectBundleImpl': '../../bundles/expect/src/expectBundleImpl',
 
+      // 1.56 made `playwright/src/index.ts` import the MCP test backend, which drags the
+      // whole MCP tree — SDK, zod, zod-to-json-schema, node built-ins — into the service
+      // worker for a code path that can only no-op inside an extension. Cut at the one
+      // edge that reaches it; see the shim for why this is not bundled instead.
+      './mcp/test/browserBackend': path.resolve(__dirname, './src/shims/mcpTestBrowserBackend'),
+
       // shims
       '_url': path.resolve(__dirname, './node_modules/url'),
       '_util': path.resolve(__dirname, './node_modules/util'),

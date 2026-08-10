@@ -76,6 +76,20 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
       };
       return { method: 'click', apiName: 'locator.click', params };
     }
+    // 1.56 added `hover` to the recorder's action model (reachable from the new
+    // right-click action picker). The player still declines to replay it — see
+    // UNSUPPORTED_REPLAY_ACTIONS — but this function must still describe it: it feeds the
+    // call log for every action in a journey, and a missing case returned undefined,
+    // which the caller spreads.
+    case 'hover': {
+      const params: channels.FrameHoverParams = {
+        timeout: kDefaultTimeout,
+        selector,
+        strict: true,
+        position: action.position,
+      };
+      return { method: 'hover', apiName: 'locator.hover', params };
+    }
     case 'press': {
       const params: channels.FramePressParams = {
         timeout: kDefaultTimeout,

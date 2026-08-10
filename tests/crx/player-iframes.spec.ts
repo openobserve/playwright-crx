@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { dumpLogHeaders, expect, test } from './crxRecorderTest';
+import { dumpLogHeaders, expect, test, recordButton } from './crxRecorderTest';
 
 test('should resume with iframes', async ({ recorderPage, recordAction, baseURL, page, mockPaths }) => {
   await mockPaths({
@@ -26,7 +26,7 @@ test('should resume with iframes', async ({ recorderPage, recordAction, baseURL,
   await recordAction(() => page.locator('iframe').contentFrame().getByRole('button', { name: 'Button1' }).click());
   await recordAction(() => page.locator('iframe').contentFrame().frameLocator('iframe').getByRole('button', { name: 'Button2' }).click());
 
-  await recorderPage.getByTitle('Record', { exact: true }).click();
+  await recordButton(recorderPage).click();
 
   await page.goto('about:blank');
 

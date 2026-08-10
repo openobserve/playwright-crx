@@ -67,20 +67,20 @@ export type StepResultData = {
 
 export type SyntheticsForwardMessage =
   | (RecorderMessage & {
-      browserSteps?: BrowserStep[];
-      generatedCode?: string;
-      generatedLanguage?: string;
-    })
+    browserSteps?: BrowserStep[];
+    generatedCode?: string;
+    generatedLanguage?: string;
+  })
   | {
-      type: 'recorder';
-      method: 'stepReplayStarted';
-      stepStarted: StepStartedData;
-    }
+    type: 'recorder';
+    method: 'stepReplayStarted';
+    stepStarted: StepStartedData;
+  }
   | {
-      type: 'recorder';
-      method: 'stepReplayResult';
-      stepResult: StepResultData;
-    };
+    type: 'recorder';
+    method: 'stepReplayResult';
+    stepResult: StepResultData;
+  };
 
 export type SyntheticsForwardCallback = (msg: SyntheticsForwardMessage) => void;
 
