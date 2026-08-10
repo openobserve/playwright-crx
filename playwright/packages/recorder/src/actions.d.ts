@@ -37,10 +37,12 @@ export type ActionBase = {
   name: ActionName,
   signals: Signal[],
   ariaSnapshot?: string,
+  preconditionSelector?: string,
 };
 
 export type ActionWithSelector = ActionBase & {
   selector: string,
+  ref?: string,
   // Every selector the generator produced for this element, ordered
   // most-stable-first. `selector` is `selectors[0]`.
   //
@@ -48,6 +50,11 @@ export type ActionWithSelector = ActionBase & {
   // (`generateSelector(..., { multiple: true })`); the recorder simply threw it
   // away. Carrying it here is what lets a monitor survive a cosmetic markup
   // change instead of breaking on it.
+  //
+  // 1.55 added `ref` — a live handle into the page, resolved at capture time and
+  // meaningless once the page is gone. It answers "which element right now"; the
+  // ranked list answers "how do I find this element again tomorrow". They are not
+  // substitutes, so both are carried.
   selectors?: string[],
 };
 
@@ -86,10 +93,8 @@ export type ClosesPageAction = ActionBase & {
   name: 'closePage',
 };
 
-export type PressAction = ActionBase & {
+export type PressAction = ActionWithSelector & {
   name: 'press',
-  selector: string,
-  selectors?: string[],
   key: string,
   modifiers: number,
 };

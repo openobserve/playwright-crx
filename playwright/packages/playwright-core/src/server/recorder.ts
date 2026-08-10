@@ -24,7 +24,6 @@ import { buildFullSelector, generateFrameSelector, metadataToCallLog } from './r
 import { locatorOrSelectorAsSelector } from '../utils/isomorphic/locatorParser';
 import { stringifySelector } from '../utils/isomorphic/selectorParser';
 import { ProgressController } from './progress';
-import { serverSideCallMetadata } from './instrumentation';
 import { RecorderSignalProcessor } from './recorder/recorderSignalProcessor';
 import * as rawRecorderSource from './../generated/pollingRecorderSource';
 import { eventsHelper, monotonicTime } from './../utils';
@@ -62,7 +61,7 @@ export type RecorderEventMap = {
   [RecorderEvent.ModeChanged]: [mode: Mode];
   [RecorderEvent.ElementPicked]: [elementInfo: ElementInfo, userGesture?: boolean];
   [RecorderEvent.CallLogsUpdated]: [callLogs: CallLog[]];
-  [RecorderEvent.UserSourcesChanged]: [sources: Source[]];
+  [RecorderEvent.UserSourcesChanged]: [sources: Source[], pausedSourceId?: string];
   [RecorderEvent.ActionAdded]: [action: actions.ActionInContext];
   [RecorderEvent.SignalAdded]: [signal: actions.SignalInContext];
   [RecorderEvent.PageNavigated]: [url: string];
@@ -159,7 +158,7 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
       this.emit(RecorderEvent.ContextClosed);
     });
 
-    const controller = new ProgressController(serverSideCallMetadata(), this._context);
+    const controller = new ProgressController();
     await controller.run(async progress => {
       await this._context.exposeBinding(progress, '__pw_recorderState', false, async source => {
         let actionSelector: string | undefined;
@@ -306,6 +305,17 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
     this._refreshOverlay();
   }
 
+  pausedSourceId() {
+    for (const { metadata } of this._debugger.pausedDetails()) {
+      if (!metadata.location)
+        continue;
+      const source = this._userSources.get(metadata.location.file);
+      if (!source)
+        continue;
+      return source.id;
+    }
+  }
+
   userSources() {
     return [...this._userSources.values()];
   }
@@ -381,11 +391,6 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
 
   private _updateSources() {
     // Remove old decorations.
-    const timestamp = monotonicTime();
-    // patch(playwright-crx): 1.54 moved recorder-generated sources into the recorder app,
-    // so the recorder only owns user sources now. (The upstream merge left behind
-    // references to a `_recorderSources` field that no longer exists here — reading it
-    // threw at runtime.) Highlighting of generated sources is the app's job.
     for (const source of this._userSources.values()) {
       source.highlight = [];
       source.revealLine = undefined;
@@ -398,7 +403,7 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
       const { file, line } = metadata.location;
       let source = this._userSources.get(file);
       if (!source) {
-        source = { isPrimary: false, isRecorded: false, label: file, id: file, text: this._readSource(file), highlight: [], language: languageForFile(file), timestamp };
+        source = { isRecorded: false, label: file, id: file, text: this._readSource(file), highlight: [], language: languageForFile(file) };
         this._userSources.set(file, source);
       }
       if (line) {
@@ -407,7 +412,7 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
         source.revealLine = line;
       }
     }
-    this.emit(RecorderEvent.UserSourcesChanged, this.userSources());
+    this.emit(RecorderEvent.UserSourcesChanged, this.userSources(), this.pausedSourceId());
   }
 
   async onBeforeInputAction(sdkObject: SdkObject, metadata: CallMetadata) {
@@ -551,7 +556,8 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
   }
 
   private async _recordAction(frame: Frame, action: actions.Action) {
-    this._signalProcessor.addAction(await this._createActionInContext(frame, action));
+    const actionInContext = await this._createActionInContext(frame, action);
+    this._signalProcessor.addAction(actionInContext);
   }
 
   private _onFrameNavigated(frame: Frame, page: Page) {
@@ -582,7 +588,7 @@ function isScreenshotCommand(metadata: CallMetadata) {
   return metadata.method.toLowerCase().includes('screenshot');
 }
 
-function languageForFile(file: string) {
+function languageForFile(file: string): Language {
   if (file.endsWith('.py'))
     return 'python';
   if (file.endsWith('.java'))
