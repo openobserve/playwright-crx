@@ -125,9 +125,13 @@ function shouldPauseOnCall(sdkObject: SdkObject, metadata: CallMetadata): boolea
 }
 
 function shouldPauseBeforeStep(metadata: CallMetadata): boolean {
-  // patch(playwright-crx): the crx player pauses between steps by marking its own
-  // metadata as `playing`; without this the debugger only ever pauses on actions
-  // upstream considers pausable, and stepping through a replay does nothing.
+  // patch(playwright-crx): pairs with the `playing` guard in onBeforeInputAction above.
+  // The mechanism is inherited from ruifigueira: a player that tagged its own metadata
+  // `playing` got a debugger pause before each replayed step. Nothing sets the flag
+  // today — the 1.54 rewrite moved stepping into CrxRecorderApp, which drives it by
+  // action index rather than through the debugger — so both halves are currently inert.
+  // Kept because they are load-bearing only together: dropping one without the other
+  // would turn replay into a double-pause the moment anything sets the flag again.
   if (metadata.playing)
     return true;
   if (metadata.internal)

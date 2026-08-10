@@ -19,6 +19,7 @@ import './shims/global';
 import './protocol/validator';
 
 import { DispatcherConnection, RootDispatcher } from 'playwright-core/lib/server';
+import { ChannelOwner } from 'playwright-core/lib/client/channelOwner';
 import { CrxConnection } from './client/crxConnection';
 import type { CrxPlaywright as CrxPlaywrightAPI } from './client/crxPlaywright';
 import { CrxPlaywright } from './server/crxPlaywright';
@@ -55,6 +56,16 @@ clientConnection.onmessage = message => setImmediate(() => dispatcherConnection.
 
 clientConnection.toImpl = (x: any) => x ? dispatcherConnection._dispatcherByGuid.get(x._guid)!._object : dispatcherConnection._dispatcherByGuid.get('');
 (playwrightAPI as any)._toImpl = clientConnection.toImpl;
+
+// 1.55 dropped `_toImpl()` from ChannelOwner. In plain Playwright that method only ever
+// worked in-process, so upstream lost nothing by removing it — but playwright-crx *is*
+// in-process by construction, and reaching the server-side object from a client handle
+// is how anything embedding this library (and our own parse tests) crosses that line.
+// Restored on the prototype verbatim, so a version bump doesn't silently remove a method
+// from our published surface.
+(ChannelOwner.prototype as any)._toImpl = function() {
+  return (this as any)._connection.toImpl?.(this);
+};
 
 export const { _crx: crx, selectors, errors } = playwrightAPI;
 export default playwrightAPI;

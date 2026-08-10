@@ -126,6 +126,17 @@ export const CrxRecorder: React.FC = ({
     };
   }, []);
 
+  // 1.55 removed `isPrimary`/`timestamp` from Source, and with them the Recorder
+  // component's fallback for choosing a file to display. It now renders exactly the
+  // source last named by `window.playwrightSelectSource` — and an empty editor before
+  // any such call. This popup has always owned the selection (it comes from the saved
+  // target language), so it now has to push it down; without this the code panel stays
+  // blank until the user picks a language by hand.
+  React.useEffect(() => {
+    if (sources.some(s => s.id === selectedFileId))
+      window.playwrightSelectSource?.(selectedFileId);
+  }, [sources, selectedFileId]);
+
   const source = React.useMemo(() => sources.find(s => s.id === selectedFileId), [sources, selectedFileId]);
 
   const requestStorageState = React.useCallback(() => {

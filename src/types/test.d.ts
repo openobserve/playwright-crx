@@ -306,7 +306,7 @@ interface TestProject<TestArgs = {}, WorkerArgs = {}> {
   grep?: RegExp|Array<RegExp>;
 
   /**
-   * Filter to only run tests with a title **not** matching one of the patterns. This is the opposite of
+   * Filter to only run tests with a title **not** matching any of the patterns. This is the opposite of
    * [testProject.grep](https://playwright.dev/docs/api/class-testproject#test-project-grep). Also available globally
    * and in the [command line](https://playwright.dev/docs/test-cli) with the `--grep-invert` option.
    *
@@ -4187,7 +4187,7 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * });
    * ```
    *
-   * You can also call `test.skip()` without arguments inside the test body to always mark the test as failed. We
+   * You can also call `test.skip()` without arguments inside the test body to always skip the test. However, we
    * recommend using `test.skip(title, body)` instead.
    *
    * ```js
@@ -4204,9 +4204,9 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "skipped" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "skipped", based on test fixtures. Test or tests are marked as "skipped"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   skip(title: string, body: TestBody<TestArgs & WorkerArgs>): void;
@@ -4268,7 +4268,7 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * });
    * ```
    *
-   * You can also call `test.skip()` without arguments inside the test body to always mark the test as failed. We
+   * You can also call `test.skip()` without arguments inside the test body to always skip the test. However, we
    * recommend using `test.skip(title, body)` instead.
    *
    * ```js
@@ -4285,9 +4285,9 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "skipped" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "skipped", based on test fixtures. Test or tests are marked as "skipped"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   skip(title: string, details: TestDetails, body: TestBody<TestArgs & WorkerArgs>): void;
@@ -4349,7 +4349,7 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * });
    * ```
    *
-   * You can also call `test.skip()` without arguments inside the test body to always mark the test as failed. We
+   * You can also call `test.skip()` without arguments inside the test body to always skip the test. However, we
    * recommend using `test.skip(title, body)` instead.
    *
    * ```js
@@ -4366,9 +4366,9 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "skipped" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "skipped", based on test fixtures. Test or tests are marked as "skipped"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   skip(): void;
@@ -4430,7 +4430,7 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * });
    * ```
    *
-   * You can also call `test.skip()` without arguments inside the test body to always mark the test as failed. We
+   * You can also call `test.skip()` without arguments inside the test body to always skip the test. However, we
    * recommend using `test.skip(title, body)` instead.
    *
    * ```js
@@ -4447,9 +4447,9 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "skipped" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "skipped", based on test fixtures. Test or tests are marked as "skipped"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   skip(condition: boolean, description?: string): void;
@@ -4511,7 +4511,7 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * });
    * ```
    *
-   * You can also call `test.skip()` without arguments inside the test body to always mark the test as failed. We
+   * You can also call `test.skip()` without arguments inside the test body to always skip the test. However, we
    * recommend using `test.skip(title, body)` instead.
    *
    * ```js
@@ -4528,9 +4528,9 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "skipped" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "skipped", based on test fixtures. Test or tests are marked as "skipped"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   skip(callback: ConditionBody<TestArgs & WorkerArgs>, description?: string): void;
@@ -4607,9 +4607,9 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "fixme" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "fixme", based on test fixtures. Test or tests are marked as "fixme"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   fixme(title: string, body: TestBody<TestArgs & WorkerArgs>): void;
@@ -4685,9 +4685,9 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "fixme" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "fixme", based on test fixtures. Test or tests are marked as "fixme"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   fixme(title: string, details: TestDetails, body: TestBody<TestArgs & WorkerArgs>): void;
@@ -4763,9 +4763,9 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "fixme" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "fixme", based on test fixtures. Test or tests are marked as "fixme"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   fixme(): void;
@@ -4841,9 +4841,9 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "fixme" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "fixme", based on test fixtures. Test or tests are marked as "fixme"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   fixme(condition: boolean, description?: string): void;
@@ -4919,9 +4919,9 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "fixme" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "fixme", based on test fixtures. Test or tests are marked as "fixme"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   fixme(callback: ConditionBody<TestArgs & WorkerArgs>, description?: string): void;
@@ -6982,6 +6982,10 @@ export interface PlaywrightTestOptions {
    * a single `pfxPath`, or their corresponding direct value equivalents (`cert` and `key`, or `pfx`). Optionally,
    * `passphrase` property should be provided if the certificate is encrypted. The `origin` property should be provided
    * with an exact match to the request origin that the certificate is valid for.
+   *
+   * Client certificate authentication is only active when at least one client certificate is provided. If you want to
+   * reject all client certificates sent by the server, you need to provide a client certificate with an `origin` that
+   * does not match any of the domains you plan to visit.
    *
    * **NOTE** When using WebKit on macOS, accessing `localhost` will not pick up client certificates. You can make it
    * work by replacing `localhost` with `local.playwright`.
@@ -9915,6 +9919,12 @@ export interface TestStepInfo {
    * @param description Optional description that will be reflected in a test report.
    */
   skip(condition: boolean, description?: string): void;
+
+  /**
+   * The full title path starting with the test file name, including the step titles. See also
+   * [testInfo.titlePath](https://playwright.dev/docs/api/class-testinfo#test-info-title-path).
+   */
+  titlePath: Array<string>;
 }
 
 /**

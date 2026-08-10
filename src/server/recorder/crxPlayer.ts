@@ -26,14 +26,38 @@ import type { FrameDescription } from '@recorder/actions';
 import type { StructuredError } from './syntheticsRecorderApp';
 import { toClickOptions } from 'playwright-core/lib/server/recorder/recorderRunner';
 import { parseAriaSnapshotUnsafe } from 'playwright-core/lib/utils/isomorphic/ariaSnapshot';
-import { serverSideCallMetadata } from 'playwright-core/lib/server';
 import { ProgressController } from 'playwright-core/lib/server/progress';
+import type { CallMetadata } from 'playwright-core/lib/server/instrumentation';
 import type { Progress } from 'playwright-core/lib/server/progress';
 import type { Crx } from '../crx';
 import type { InstrumentationListener, SdkObject } from 'playwright-core/lib/server/instrumentation';
 import { yaml } from 'playwright-core/lib/utilsBundle';
 
 class Stopped extends Error {}
+
+// 1.55 deleted `serverSideCallMetadata()` and gave ProgressController a default
+// metadata of its own — but that default is `internal: true`, which upstream uses to
+// keep housekeeping calls out of traces. Replay steps are not housekeeping, so the
+// player keeps building the same non-internal metadata 1.54 gave it.
+function playerCallMetadata(): CallMetadata {
+  return { id: '', startTime: 0, endTime: 0, type: 'Internal', method: '', params: {}, log: [] };
+}
+
+// 1.55 also removed ProgressController's SdkObject, and with it the instrumentation
+// call it used to make from `progress.log` (see the 1.54 controller, which did
+// `instrumentation.onCallLog(sdkObject, metadata, logName, message)` on every log).
+// The controller now only offers an opt-in callback, so callers forward the logs
+// themselves; upstream's own dispatcher does exactly this in `_runCommand`.
+//
+// This is not cosmetic for us: the recorder's call-log panel — and the incognito
+// forwarding listener installed in run() — are fed entirely from onCallLog. Without
+// this, a replay executes correctly but narrates nothing.
+function progressControllerFor(sdkObject: SdkObject): ProgressController {
+  const metadata = playerCallMetadata();
+  return new ProgressController(metadata, message => {
+    sdkObject.instrumentation.onCallLog(sdkObject, metadata, sdkObject.logName || 'api', message);
+  });
+}
 
 function buildStructuredError(
   e: unknown,
@@ -112,7 +136,7 @@ export default class CrxPlayer extends EventEmitter {
       context = page.browserContext;
     } else {
       context = pageOrContext;
-      page = context.pages()[0] ?? await new ProgressController(serverSideCallMetadata(), context)
+      page = context.pages()[0] ?? await progressControllerFor(context)
           .run(progress => context.newPage(progress, false));
     }
 
@@ -228,7 +252,7 @@ export default class CrxPlayer extends EventEmitter {
   //
   // The controller is stored on the instance so stop() can abort the call in flight.
   private async _runWithProgress<T>(sdkObject: SdkObject, task: (progress: Progress) => Promise<T>, timeout: number): Promise<T> {
-    const controller = new ProgressController(serverSideCallMetadata(), sdkObject);
+    const controller = progressControllerFor(sdkObject);
     this._currentController = controller;
     try {
       return await controller.run(task, timeout);

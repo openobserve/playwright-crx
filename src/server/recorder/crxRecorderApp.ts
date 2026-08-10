@@ -47,7 +47,10 @@ export type RecorderMessage = { type: 'recorder' } & (
 // `fileChanged` is what the recorder UI actually dispatches (recorder.tsx), with a
 // `fileId` param since 1.54. Upstream's EventData union lists `languageChanged`
 // instead — a stale type, not a renamed event — so it is spelled out here.
-export type RecorderEventData =  (EventData | { event: 'resetCallLogs' | 'codeChanged' | 'cursorActivity' | 'fileChanged', params: any }) & { type: string };
+// `setAutoExpect` is dispatched by the vendored recorder UI (1.55) but is absent from
+// upstream's EventData union, which lists only the events the UI had when it was written
+// — upstream matches on raw strings, so the union never had to keep up.
+export type RecorderEventData =  (EventData | { event: 'resetCallLogs' | 'codeChanged' | 'cursorActivity' | 'fileChanged' | 'setAutoExpect', params: any }) & { type: string };
 
 export interface RecorderWindow {
   isClosed(): boolean;
@@ -64,6 +67,11 @@ export class CrxRecorderApp extends EventEmitter {
   private _crx: Crx;
   readonly _recorder: Recorder;
   private _filename?: string;
+  // 1.55 added a "Generate assertions" switch to the recorder toolbar. It is a pure
+  // codegen option — it makes the generators emit an expect() for each action's
+  // preconditionSelector — but the UI is vendored, so the switch renders in our popup
+  // whether or not we honour it. Honouring it beats shipping a control that lies.
+  private _generateAutoExpect = false;
   private _sources?: Source[];
   private _recorderSources: Source[] = [];
   private _mode: Mode = 'none';
@@ -195,15 +203,17 @@ export class CrxRecorderApp extends EventEmitter {
       // `launch({ headless: false })`, changing the code shown and saved.
       launchOptions: { headless: false },
       contextOptions: {},
+      generateAutoExpect: this._generateAutoExpect,
     };
 
-    const primaryLanguage = this._filename ?? 'playwright-test';
     const recorderSources: Source[] = [];
     for (const languageGenerator of languageSet()) {
       const { header, footer, actionTexts, text } = generateCode(collapsed, languageGenerator, languageGeneratorOptions);
       recorderSources.push({
-        isPrimary: languageGenerator.id === primaryLanguage,
-        timestamp: 0,
+        // 1.55 removed `isPrimary` and `timestamp` from Source. They were how the Recorder
+        // component chose a file to display when nothing was selected; it now shows only
+        // what `window.playwrightSelectSource` last named. The popup owns that choice and
+        // pushes it (see crxRecorder.tsx) — nothing to carry here any more.
         isRecorded: true,
         label: languageGenerator.name,
         group: languageGenerator.groupName,
@@ -393,8 +403,9 @@ export class CrxRecorderApp extends EventEmitter {
         case 'fileChanged':
           this._filename = params.fileId;
           this._recorder.setLanguage(toLanguage(params.fileId));
-          // isPrimary follows the chosen language, so the sources have to be rebuilt —
-          // the recorder used to do this when it owned them.
+          // The chosen language decides which source the highlight and revealLine attach
+          // to, so the sources have to be rebuilt — the recorder used to do this when it
+          // owned them.
           this._publishSources();
           if (this._editedCode?.hasErrors()) {
             this._updateCode(null);
@@ -402,6 +413,10 @@ export class CrxRecorderApp extends EventEmitter {
             if (this._sources)
               this.setSources(this._sources);
           }
+          break;
+        case 'setAutoExpect':
+          this._generateAutoExpect = !!params.autoExpect;
+          this._publishSources();
           break;
         case 'codeChanged':
           this._updateCode(params.code);

@@ -205,8 +205,9 @@ export class SyntheticsRecorderApp extends EventEmitter {
     for (const languageGenerator of languageSet()) {
       const { header, footer, actionTexts, text } = generateCode(collapsed, languageGenerator, options);
       sources.push({
-        isPrimary: languageGenerator.id === 'playwright-test',
-        timestamp: 0,
+        // `isPrimary`/`timestamp` left with Source in 1.55. They only ever mattered to the
+        // recorder UI's file picker, which the synthetics recorder does not run — its
+        // consumer is the web app, and that selects by `id`.
         isRecorded: true,
         label: languageGenerator.name,
         group: languageGenerator.groupName,
