@@ -874,7 +874,9 @@ interface TestConfig<TestArgs = {}, WorkerArgs = {}> {
    * - A module name like `'my-awesome-reporter'`.
    * - A relative path to the reporter like `'./reporters/my-awesome-reporter.js'`.
    *
-   * You can pass options to the reporter in a tuple like `['json', { outputFile: './report.json' }]`.
+   * You can pass options to the reporter in a tuple like `['json', { outputFile: './report.json' }]`. If the property
+   * is not specified, Playwright uses the `'dot'` reporter when the CI environment variable is set, and the `'list'`
+   * reporter otherwise.
    *
    * Learn more in the [reporters guide](https://playwright.dev/docs/test-reporters).
    *
@@ -988,6 +990,31 @@ interface TestConfig<TestArgs = {}, WorkerArgs = {}> {
    *   use: {
    *     baseURL: 'http://localhost:3000',
    *   },
+   * });
+   * ```
+   *
+   * If your webserver runs on varying ports, use `wait` to capture the port:
+   *
+   * ```js
+   * import { defineConfig } from '@playwright/test';
+   *
+   * export default defineConfig({
+   *   webServer: {
+   *     command: 'npm run start',
+   *     wait: {
+   *       stdout: '/Listening on port (?<my_server_port>\\d+)/'
+   *     },
+   *   },
+   * });
+   * ```
+   *
+   * ```js
+   * import { test, expect } from '@playwright/test';
+   *
+   * test.use({ baseUrl: `http://localhost:${process.env.MY_SERVER_PORT ?? 3000}` });
+   *
+   * test('homepage', async ({ page }) => {
+   *   await page.goto('/');
    * });
    * ```
    *
@@ -1760,6 +1787,26 @@ interface TestConfig<TestArgs = {}, WorkerArgs = {}> {
   snapshotPathTemplate?: string;
 
   /**
+   * Tag or tags prepended to each test in the report. Useful for tagging your test run to differentiate between
+   * [CI environments](https://playwright.dev/docs/test-sharding#merging-reports-from-multiple-environments).
+   *
+   * Note that each tag must start with `@` symbol. Learn more about [tagging](https://playwright.dev/docs/test-annotations#tag-tests).
+   *
+   * **Usage**
+   *
+   * ```js
+   * // playwright.config.ts
+   * import { defineConfig } from '@playwright/test';
+   *
+   * export default defineConfig({
+   *   tag: process.env.CI_ENVIRONMENT_NAME,  // for example "@APIv2"
+   * });
+   * ```
+   *
+   */
+  tag?: string|Array<string>;
+
+  /**
    * Directory that will be recursively scanned for test files. Defaults to the directory of the configuration file.
    *
    * **Usage**
@@ -2035,6 +2082,11 @@ export interface FullConfig<TestArgs = {}, WorkerArgs = {}> {
      */
     current: number;
   };
+
+  /**
+   * Resolved global tags. See [testConfig.tag](https://playwright.dev/docs/api/class-testconfig#test-config-tag).
+   */
+  tags: Array<string>;
 
   /**
    * See [testConfig.updateSnapshots](https://playwright.dev/docs/api/class-testconfig#test-config-update-snapshots).
@@ -6181,7 +6233,7 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    *     const name = this.constructor.name + '.' + (context.name as string);
    *     return test.step(name, async () => {
    *       return await target.call(this, ...args);
-   *     });
+   *     }, { box: true });
    *   };
    * }
    *
@@ -6340,7 +6392,7 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
      *     const name = this.constructor.name + '.' + (context.name as string);
      *     return test.step(name, async () => {
      *       return await target.call(this, ...args);
-     *     });
+     *     }, { box: true });
      *   };
      * }
      *
@@ -7705,6 +7757,27 @@ interface AsymmetricMatchers {
    */
   arrayContaining(sample: Array<unknown>): AsymmetricMatcher;
   /**
+   * `expect.arrayOf()` matches array of objects created from the
+   * [`constructor`](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-array-of-option-constructor)
+   * or a corresponding primitive type. Use it inside
+   * [expect(value).toEqual(expected)](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-to-equal)
+   * to perform pattern matching.
+   *
+   * **Usage**
+   *
+   * ```js
+   * // Match instance of a class.
+   * class Example {}
+   * expect([new Example(), new Example()]).toEqual(expect.arrayOf(Example));
+   *
+   * // Match any string.
+   * expect(['a', 'b', 'c']).toEqual(expect.arrayOf(String));
+   * ```
+   *
+   * @param constructor Constructor of the expected object like `ExampleClass`, or a primitive boxed type like `Number`.
+   */
+  arrayOf(sample: unknown): AsymmetricMatcher;
+  /**
    * Compares floating point numbers for approximate equality. Use this method inside
    * [expect(value).toEqual(expected)](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-to-equal)
    * to perform pattern matching. When just comparing two numbers, prefer
@@ -8087,6 +8160,7 @@ interface GenericAssertions<R> {
    * - [expect(value).any(constructor)](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-any)
    * - [expect(value).anything()](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-anything)
    * - [expect(value).arrayContaining(expected)](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-array-containing)
+   * - [expect(value).arrayOf(constructor)](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-array-of)
    * - [expect(value).closeTo(expected[, numDigits])](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-close-to)
    * - [expect(value).objectContaining(expected)](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-object-containing)
    * - [expect(value).stringContaining(expected)](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-string-containing)
@@ -10145,6 +10219,25 @@ interface TestConfigWebServer {
    * of the command. Default to `"ignore"`.
    */
   stdout?: "pipe"|"ignore";
+
+  /**
+   * Consider command started only when given output has been produced.
+   */
+  wait?: {
+    /**
+     * Regular expression to wait for in the `stdout` of the command output. Named capture groups are stored in the
+     * environment, for example `/Listening on port (?<my_server_port>\\d+)/` will store the port number in
+     * `process.env['MY_SERVER_PORT']`.
+     */
+    stdout?: RegExp;
+
+    /**
+     * Regular expression to wait for in the `stderr` of the command output. Named capture groups are stored in the
+     * environment, for example `/Listening on port (?<my_server_port>\\d+)/` will store the port number in
+     * `process.env['MY_SERVER_PORT']`.
+     */
+    stderr?: RegExp;
+  };
 
   /**
    * How long to wait for the process to start up and be available in milliseconds. Defaults to 60000.

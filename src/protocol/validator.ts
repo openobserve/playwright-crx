@@ -39,8 +39,8 @@ scheme.PlaywrightInitializer = tObject({
   chromium: tChannel(['BrowserType']),
   firefox: tChannel(['BrowserType']),
   webkit: tChannel(['BrowserType']),
-  _bidiChromium: tChannel(['BrowserType']),
-  _bidiFirefox: tChannel(['BrowserType']),
+  // 1.57 dropped _bidiChromium/_bidiFirefox from PlaywrightInitializer; the bidi
+  // browser types are no longer surfaced on the Playwright channel.
   android: tChannel(['Android']),
   electron: tChannel(['Electron']),
   utils: tOptional(tChannel(['LocalUtils'])),

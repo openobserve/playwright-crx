@@ -31,3 +31,17 @@
  */
 export async function runBrowserBackendAtEnd(_context: unknown, _errorMessage?: string): Promise<void> {
 }
+
+/**
+ * Added to the same module in 1.57 and installed as `TestInfo._onCustomMessageCallback`.
+ * It answers MCP requests from a connected agent — initialize, listTools, callTool. In an
+ * extension there is no channel those requests could arrive on, so the handler is never
+ * invoked; it throws rather than returning a plausible-looking empty answer, because a
+ * silent no-op here would be indistinguishable from a working MCP backend that does
+ * nothing.
+ */
+export function createCustomMessageHandler(_testInfo: unknown, _context: unknown) {
+  return async (_data: unknown): Promise<never> => {
+    throw new Error('playwright-crx does not host an MCP backend');
+  };
+}

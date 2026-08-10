@@ -16,7 +16,6 @@
 
 // some types are commented out because they are not used in the extension
 import {
-  Accessibility,
   Browser,
   BrowserContext,
   BrowserType,
@@ -61,7 +60,7 @@ import {
 import { currentZone } from 'playwright-core/lib/utils';
 
 type ApiTypeMap = {
-  'accessibility': Accessibility,
+  // 'accessibility' left with page.accessibility, removed upstream in 1.57.
   // 'android': Android,
   // 'androidDevice': AndroidDevice,
   // 'androidWebView': AndroidWebView,
@@ -113,7 +112,6 @@ type KeysOfAsyncMethods<T> = {
 }[Extract<keyof T, string>];
 
 const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsyncMethods<ApiTypeMap[ApiK]>]: boolean }] } = {
-  accessibility: [Accessibility.prototype, { snapshot: true }],
   // android: [Android.prototype],
   // androidDevice: [AndroidDevice.prototype],
   // androidWebView: [AndroidWebView.prototype],
@@ -387,7 +385,8 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
   selectors: [Selectors.prototype, { register: true }],
   tracing: [Tracing.prototype, { group: true, groupEnd: true, start: true, startChunk: true, stop: true, stopChunk: true }],
   video: [Video.prototype, { delete: true, path: true, saveAs: true }],
-  worker: [Worker.prototype, { evaluate: true, evaluateHandle: true }],
+  // waitForEvent added to Worker in 1.57.
+  worker: [Worker.prototype, { evaluate: true, evaluateHandle: true, waitForEvent: true }],
   session: [CDPSession.prototype, { send: true, detach: true }],
   playwright: [Playwright.prototype, { devices: false }],
   webError: [WebError.prototype, {}],

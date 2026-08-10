@@ -32,17 +32,15 @@ export class CrxPlaywrightDispatcher extends Dispatcher<Playwright, channels.Pla
   _type_Playwright;
 
   constructor(scope: RootDispatcher, playwright: CrxPlaywright) {
-    // 1.54: browser-type dispatchers take a `denyLaunch` flag, and the bidi entries were
-    // renamed to `_bidiChromium`/`_bidiFirefox`. crx never launches a browser itself
-    // (it attaches over chrome.debugger), but denyLaunch stays false to preserve the
-    // previous behaviour of these channels rather than silently tightening it.
+    // 1.54: browser-type dispatchers take a `denyLaunch` flag. crx never launches a
+    // browser itself (it attaches over chrome.debugger), but denyLaunch stays false to
+    // preserve the previous behaviour of these channels rather than silently tightening
+    // it. 1.57 removed the bidi browser types from PlaywrightInitializer entirely.
     const denyLaunch = false;
     super(scope, playwright, 'Playwright', {
       chromium: new BrowserTypeDispatcher(scope, playwright.chromium, denyLaunch),
       firefox: new BrowserTypeDispatcher(scope, playwright.firefox, denyLaunch),
       webkit: new BrowserTypeDispatcher(scope, playwright.webkit, denyLaunch),
-      _bidiChromium: new BrowserTypeDispatcher(scope, playwright._bidiChromium, denyLaunch),
-      _bidiFirefox: new BrowserTypeDispatcher(scope, playwright._bidiFirefox, denyLaunch),
       // 1.55 dropped denyLaunch from AndroidDispatcher — it stored the flag and never
       // read it, so there is nothing to preserve here.
       android: new AndroidDispatcher(scope, playwright.android),
