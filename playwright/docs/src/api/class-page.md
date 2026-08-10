@@ -559,6 +559,7 @@ page.
 
 ## async method: Page.addInitScript
 * since: v1.8
+- returns: <[Disposable]>
 
 Adds a script which would be evaluated in one of the following scenarios:
 * Whenever the page is navigated.
@@ -709,65 +710,16 @@ current working directory.
 
 Raw CSS content to be injected into frame.
 
-## async method: Page.agent
-* since: v1.58
-* langs: js
-* hidden
-- returns: <[PageAgent]>
-
-Initialize page agent with the llm provider and cache.
-
-### option: Page.agent.cache
-* since: v1.58
-* hidden
-- `cache` <[Object]>
-  - `cacheFile` ?<[string]> Cache file to use/generate code for performed actions into. Cache is not used if not specified (default).
-  - `cacheOutFile` ?<[string]> When specified, generated entries are written into the `cacheOutFile` instead of updating the `cacheFile`.
-
-### option: Page.agent.expect
-* since: v1.58
-* hidden
-- `expect` <[Object]>
-  - `timeout` ?<[int]> Default timeout for expect calls in milliseconds, defaults to 5000ms.
-
-### option: Page.agent.limits
-* since: v1.58
-* hidden
-- `limits` <[Object]>
-  - `maxTokens` ?<[int]> Maximum number of tokens to consume. The agentic loop will stop after input + output tokens exceed this value. Defaults to unlimited.
-  - `maxActions` ?<[int]> Maximum number of agentic actions to generate, defaults to 10.
-  - `maxActionRetries` ?<[int]> Maximum number retries per action, defaults to 3.
-
-Limits to use for the agentic loop.
-
-### option: Page.agent.provider
-* since: v1.58
-* hidden
-- `provider` <[Object]>
-  - `api` <[PageAgentAPI]<"openai"|"openai-compatible"|"anthropic"|"google">> API to use.
-  - `apiEndpoint` ?<[string]> Endpoint to use if different from default.
-  - `apiKey` <[string]> API key for the LLM provider.
-  - `apiTimeout` ?<[int]> Amount of time to wait for the provider to respond to each request.
-  - `model` <[string]> Model identifier within the provider. Required in non-cache mode.
-
-### option: Page.agent.secrets
-* since: v1.58
-* hidden
-- `secrets` ?<[Object]<[string], [string]>>
-
-Secrets to hide from the LLM.
-
-### option: Page.agent.systemPrompt
-* since: v1.58
-* hidden
-- `systemPrompt` <[string]>
-
-System prompt for the agent's loop.
-
 ## async method: Page.bringToFront
 * since: v1.8
 
 Brings page to front (activates tab).
+
+## async method: Page.cancelPickLocator
+* since: v1.59
+
+Cancels an ongoing [`method: Page.pickLocator`] call by deactivating pick locator mode.
+If no pick locator mode is active, this method is a no-op.
 
 ## async method: Page.check
 * since: v1.8
@@ -1724,6 +1676,7 @@ Optional argument to pass to [`param: expression`].
 
 ## async method: Page.exposeBinding
 * since: v1.8
+- returns: <[Disposable]>
 
 The method adds a function called [`param: name`] on the `window` object of every frame in this page. When called, the
 function executes [`param: callback`] and returns a [Promise] which resolves to the return value of [`param: callback`].
@@ -1889,6 +1842,7 @@ supported. When passing by value, multiple arguments are supported.
 
 ## async method: Page.exposeFunction
 * since: v1.8
+- returns: <[Disposable]>
 
 The method adds a function called [`param: name`] on the `window` object of every frame in the page. When called, the
 function executes [`param: callback`] and returns a [Promise] which resolves to the return value of [`param: callback`].
@@ -2177,7 +2131,7 @@ var frame = page.FrameByUrl(".*domain.*");
 * langs: js
 - `frameSelector` <[string]|[Object]>
   - `name` ?<[string]> Frame name specified in the `iframe`'s `name` attribute. Optional.
-  - `url` ?<[string]|[RegExp]|[function]\([URL]\):[boolean]> A glob pattern, regex pattern or predicate receiving
+  - `url` ?<[string]|[RegExp]|[URLPattern]|[function]\([URL]\):[boolean]> A glob pattern, regex pattern, URL pattern, or predicate receiving
     frame's `url` as a [URL] object. Optional.
 
 Frame name or other frame lookup options.
@@ -2729,11 +2683,29 @@ Returns whether the element is [visible](../actionability.md#visible). [`param: 
 - type: <[Keyboard]>
 
 
+## async method: Page.clearConsoleMessages
+* since: v1.59
+
+Clears all stored console messages from this page. Subsequent calls to [`method: Page.consoleMessages`] will only return messages logged after the clear.
+
+## async method: Page.clearPageErrors
+* since: v1.59
+
+Clears all stored page errors from this page. Subsequent calls to [`method: Page.pageErrors`] will only return errors thrown after the clear.
+
 ## async method: Page.consoleMessages
 * since: v1.56
 - returns: <[Array]<[ConsoleMessage]>>
 
 Returns up to (currently) 200 last console messages from this page. See [`event: Page.console`] for more details.
+
+### option: Page.consoleMessages.filter
+* since: v1.59
+- `filter` <[ConsoleMessagesFilter]<"all"|"since-navigation">>
+
+Controls which messages are returned:
+- `'since-navigation'` (default) — returns only messages logged after the last committed main-frame navigation.
+- `'all'` — returns all stored console messages.
 
 
 ## async method: Page.pageErrors
@@ -2749,6 +2721,14 @@ Returns up to (currently) 200 last page errors from this page. See [`event: Page
 - returns: <[Array]<[string]>>
 
 Returns up to (currently) 200 last page errors from this page. See [`event: Page.pageError`] for more details.
+
+### option: Page.pageErrors.filter
+* since: v1.59
+- `filter` <[PageErrorsFilter]<"all"|"since-navigation">>
+
+Controls which errors are returned:
+- `'since-navigation'` (default) — returns only errors thrown after the last committed main-frame navigation.
+- `'all'` — returns all stored page errors.
 
 
 ## method: Page.locator
@@ -3052,6 +3032,39 @@ Whether or not to generate tagged (accessible) PDF. Defaults to `false`.
 
 Whether or not to embed the document outline into the PDF. Defaults to `false`.
 
+## async method: Page.pickLocator
+* since: v1.59
+- returns: <[Locator]>
+
+Enters pick locator mode where hovering over page elements highlights them and shows the corresponding locator.
+Once the user clicks an element, the mode is deactivated and the [Locator] for the picked element is returned.
+
+**Usage**
+
+```js
+const locator = await page.pickLocator();
+console.log(locator);
+```
+
+```java
+Locator locator = page.pickLocator();
+System.out.println(locator);
+```
+
+```python async
+locator = await page.pick_locator()
+print(locator)
+```
+
+```python sync
+locator = page.pick_locator()
+print(locator)
+```
+
+```csharp
+var locator = await page.PickLocatorAsync();
+Console.WriteLine(locator);
+```
 
 ## async method: Page.press
 * since: v1.8
@@ -3541,6 +3554,7 @@ API testing helper associated with this page. This method returns the same insta
 
 ## async method: Page.route
 * since: v1.8
+- returns: <[Disposable]>
 
 Routing provides the capability to modify network requests that are made by a page.
 
@@ -3680,6 +3694,8 @@ await page.RouteAsync("/api/**", async r =>
 });
 ```
 
+If a request matches multiple registered routes, the most recently registered route takes precedence.
+
 Page routes take precedence over browser context routes (set up with [`method: BrowserContext.route`]) when request
 matches both handlers.
 
@@ -3691,6 +3707,14 @@ Enabling routing disables http cache.
 
 ### param: Page.route.url
 * since: v1.8
+* langs: js
+- `url` <[string]|[RegExp]|[URLPattern]|[function]\([URL]\):[boolean]>
+
+A glob pattern, regex pattern, URL pattern, or predicate that receives a [URL] to match during routing. If [`option: Browser.newContext.baseURL`] is set in the context options and the provided URL is a string that does not start with `*`, it is resolved using the [`new URL()`](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) constructor.
+
+### param: Page.route.url
+* since: v1.8
+* langs: python, csharp, java
 - `url` <[string]|[RegExp]|[function]\([URL]\):[boolean]>
 
 A glob pattern, regex pattern, or predicate that receives a [URL] to match during routing. If [`option: Browser.newContext.baseURL`] is set in the context options and the provided URL is a string that does not start with `*`, it is resolved using the [`new URL()`](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) constructor.
@@ -3823,6 +3847,14 @@ await page.RouteWebSocketAsync("/ws", ws => {
 
 ### param: Page.routeWebSocket.url
 * since: v1.48
+* langs: js
+- `url` <[string]|[RegExp]|[URLPattern]|[function]\([URL]\):[boolean]>
+
+Only WebSockets with the url matching this pattern will be routed. A string pattern can be relative to the [`option: Browser.newContext.baseURL`] context option.
+
+### param: Page.routeWebSocket.url
+* since: v1.48
+* langs: python, csharp, java
 - `url` <[string]|[RegExp]|[function]\([URL]\):[boolean]>
 
 Only WebSockets with the url matching this pattern will be routed. A string pattern can be relative to the [`option: Browser.newContext.baseURL`] context option.
@@ -3840,6 +3872,24 @@ Handler function to route the WebSocket.
 - `handler` <[function]\([WebSocketRoute]\)>
 
 Handler function to route the WebSocket.
+
+
+## property: Page.screencast
+* since: v1.59
+- type: <[Screencast]>
+
+[Screencast] object associated with this page.
+
+**Usage**
+
+```js
+page.screencast.on('screencastFrame', data => {
+  console.log('received frame, jpeg size:', data.length);
+});
+await page.screencast.start();
+// ... perform actions ...
+await page.screencast.stop();
+```
 
 
 ## async method: Page.screenshot
@@ -4177,6 +4227,30 @@ Page width in pixels.
 
 Page height in pixels.
 
+## async method: Page.ariaSnapshot
+* since: v1.59
+- returns: <[string]>
+
+Captures the aria snapshot of the page. Read more about [aria snapshots](../aria-snapshots.md).
+
+### option: Page.ariaSnapshot.mode
+* since: v1.59
+- `mode` <[AriaSnapshotMode]<"ai"|"default">>
+
+When set to `"ai"`, returns a snapshot optimized for AI consumption: including element references like `[ref=e2]` and snapshots of `<iframe>`s. Defaults to `"default"`.
+
+### option: Page.ariaSnapshot.timeout = %%-input-timeout-%%
+* since: v1.59
+
+### option: Page.ariaSnapshot.timeout = %%-input-timeout-js-%%
+* since: v1.59
+
+### option: Page.ariaSnapshot.depth
+* since: v1.59
+- `depth` <[int]>
+
+When specified, limits the depth of the snapshot.
+
 ## async method: Page.tap
 * since: v1.8
 * discouraged: Use locator-based [`method: Locator.tap`] instead. Read more about [locators](../locators.md).
@@ -4348,9 +4422,17 @@ the [`param: url`].
 
 ### param: Page.unroute.url
 * since: v1.8
+* langs: js
+- `url` <[string]|[RegExp]|[URLPattern]|[function]\([URL]\):[boolean]>
+
+A glob pattern, regex pattern, URL pattern, or predicate receiving [URL] to match while routing.
+
+### param: Page.unroute.url
+* since: v1.8
+* langs: python, csharp, java
 - `url` <[string]|[RegExp]|[function]\([URL]\):[boolean]>
 
-A glob pattern, regex pattern or predicate receiving [URL] to match while routing.
+A glob pattern, regex pattern, or predicate receiving [URL] to match while routing.
 
 ### param: Page.unroute.handler
 * since: v1.8
@@ -4374,11 +4456,11 @@ Optional handler function to route the request.
 * since: v1.8
 - returns: <[null]|[Video]>
 
-Video object associated with this page.
+Video object associated with this page. Can be used to access the video file when using the `recordVideo` context option.
 
 ## method: Page.viewportSize
 * since: v1.8
-- returns: <[null]|[Object]>
+- returns: <[null]|[Object=PageViewportSizeResult]>
   - `width` <[int]> page width in pixels.
   - `height` <[int]> page height in pixels.
 
@@ -4846,7 +4928,10 @@ a navigation.
 ### param: Page.waitForNavigation.action = %%-csharp-wait-for-event-action-%%
 * since: v1.12
 
-### option: Page.waitForNavigation.url = %%-wait-for-navigation-url-%%
+### option: Page.waitForNavigation.url = %%-js-wait-for-navigation-url-%%
+* since: v1.8
+
+### option: Page.waitForNavigation.url = %%-python-csharp-java-wait-for-navigation-url-%%
 * since: v1.8
 
 ### option: Page.waitForNavigation.waitUntil = %%-navigation-wait-until-%%
@@ -5383,7 +5468,10 @@ await page.ClickAsync("a.delayed-navigation"); // clicking the link will indirec
 await page.WaitForURLAsync("**/target.html");
 ```
 
-### param: Page.waitForURL.url = %%-wait-for-navigation-url-%%
+### param: Page.waitForURL.url = %%-js-wait-for-navigation-url-%%
+* since: v1.11
+
+### param: Page.waitForURL.url = %%-python-csharp-java-wait-for-navigation-url-%%
 * since: v1.11
 
 ### option: Page.waitForURL.timeout = %%-navigation-timeout-%%

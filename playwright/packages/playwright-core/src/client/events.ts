@@ -34,6 +34,10 @@ export const Events = {
     Disconnected: 'disconnected'
   },
 
+  Debugger: {
+    PausedStateChanged: 'pausedstatechanged'
+  },
+
   BrowserContext: {
     Console: 'console',
     Close: 'close',
@@ -76,10 +80,6 @@ export const Events = {
     Popup: 'popup',
     WebSocket: 'websocket',
     Worker: 'worker',
-  },
-
-  PageAgent: {
-    Turn: 'turn',
   },
 
   WebSocket: {

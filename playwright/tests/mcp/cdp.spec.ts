@@ -55,9 +55,7 @@ test('cdp server reuse tab', async ({ cdpServer, startClient, server }) => {
   })).toHaveResponse({
     page: `- Page URL: ${server.HELLO_WORLD}
 - Page Title: Title`,
-    snapshot: `\`\`\`yaml
-- generic [active] [ref=e1]: Hello, world!
-\`\`\``,
+    inlineSnapshot: `- generic [active] [ref=e1]: Hello, world!`,
   });
 });
 
@@ -73,7 +71,7 @@ test('should throw connection error and allow re-connecting', async ({ cdpServer
     name: 'browser_navigate',
     arguments: { url: server.PREFIX },
   })).toHaveResponse({
-    error: expect.stringContaining(`Error: browserType.connectOverCDP: connect ECONNREFUSED`),
+    error: expect.stringContaining(`Error: connect ECONNREFUSED`),
     isError: true,
   });
   await cdpServer.start();
@@ -109,4 +107,30 @@ test('cdp server with headers', async ({ startClient, server }) => {
     isError: true,
   });
   expect(authHeader).toBe('Bearer 1234567890');
+});
+
+test('cdp server with empty and complex headers', async ({ startClient, server }) => {
+  let customHeader = '';
+  let emptyHeader = '';
+  server.setRoute('/json/version/', (req, res) => {
+    customHeader = req.headers['x-forwarded-proto'] as string;
+    emptyHeader = req.headers['x-empty'] as string;
+    res.end();
+  });
+
+  const { client } = await startClient({
+    args: [
+      `--cdp-endpoint=${server.PREFIX}`,
+      '--cdp-header', 'X-Forwarded-Proto: value:with:colons',
+      '--cdp-header', 'X-Empty'
+    ]
+  });
+  expect(await client.callTool({
+    name: 'browser_navigate',
+    arguments: { url: server.HELLO_WORLD },
+  })).toHaveResponse({
+    isError: true,
+  });
+  expect(customHeader).toBe('value:with:colons');
+  expect(emptyHeader).toBe('');
 });

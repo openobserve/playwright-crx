@@ -25,7 +25,7 @@ export type JsonStackFrame = { file: string, line: number, column: number };
 
 export type JsonStdIOType = 'stdout' | 'stderr';
 
-export type JsonConfig = Pick<reporterTypes.FullConfig, 'configFile' | 'globalTimeout' | 'maxFailures' | 'metadata' | 'rootDir' | 'version' | 'workers' | 'globalSetup' | 'globalTeardown'> & {
+export type JsonConfig = Pick<reporterTypes.FullConfig, 'configFile' | 'globalTimeout' | 'maxFailures' | 'metadata' | 'rootDir' | 'version' | 'workers' | 'globalSetup' | 'globalTeardown' | 'shard'> & {
   // optional for backwards compatibility
   tags?: reporterTypes.FullConfig['tags'],
   webServer?: reporterTypes.FullConfig['webServer'],
@@ -56,6 +56,7 @@ export type JsonProject = {
   testMatch: JsonPattern[];
   timeout: number;
   use: { [key: string]: any };
+  ignoreSnapshots?: boolean;
 };
 
 export type JsonSuite = {
@@ -337,8 +338,19 @@ export class TeleReporterReceiver {
       projectSuite = new TeleSuite(project.name, 'project');
       this._rootSuite._addSuite(projectSuite);
     }
+
+    const parsed = this._parseProject(project);
     // Always update project in watch mode.
-    projectSuite._project = this._parseProject(project);
+    projectSuite._project = parsed;
+
+    let index = -1;
+    if (this._options.mergeProjects)
+      index = this._config.projects.findIndex(p => p.name === project.name);
+    if (index === -1)
+      this._config.projects.push(parsed);
+    else
+      this._config.projects[index] = parsed;
+
     for (const suite of project.suites)
       this._mergeSuiteInto(suite, projectSuite);
   }
@@ -444,11 +456,7 @@ export class TeleReporterReceiver {
   }
 
   private async _onEnd(result: JsonFullResult): Promise<void> {
-    await this._reporter.onEnd?.({
-      status: result.status,
-      startTime: new Date(result.startTime),
-      duration: result.duration,
-    });
+    await this._reporter.onEnd?.(asFullResult(result));
   }
 
   private _onExit(): Promise<void> | void {
@@ -456,7 +464,7 @@ export class TeleReporterReceiver {
   }
 
   private _parseConfig(config: JsonConfig): reporterTypes.FullConfig {
-    const result = { ...baseFullConfig, ...config };
+    const result = asFullConfig(config);
     if (this._options.configOverrides) {
       result.configFile = this._options.configOverrides.configFile;
       result.reportSlowTests = this._options.configOverrides.reportSlowTests;
@@ -482,6 +490,7 @@ export class TeleReporterReceiver {
       dependencies: project.dependencies,
       teardown: project.teardown,
       snapshotDir: this._absolutePath(project.snapshotDir),
+      ignoreSnapshots: project.ignoreSnapshots ?? false,
       use: project.use,
     };
   }
@@ -777,8 +786,6 @@ export const baseFullConfig: reporterTypes.FullConfig = {
   tags: [],
   updateSnapshots: 'missing',
   updateSourceMethod: 'patch',
-  // @ts-expect-error runAgents is hidden
-  runAgents: 'none',
   version: '',
   workers: 0,
   webServer: null,
@@ -844,4 +851,16 @@ export function computeTestCaseOutcome(test: reporterTypes.TestCase) {
   if (expected === 0 && skipped === 0)
     return 'unexpected';  // only failures
   return 'flaky';  // expected+unexpected or skipped+unexpected
+}
+
+export function asFullResult(result: JsonFullResult): reporterTypes.FullResult {
+  return {
+    status: result.status,
+    startTime: new Date(result.startTime),
+    duration: result.duration,
+  };
+}
+
+export function asFullConfig(config: JsonConfig): reporterTypes.FullConfig {
+  return { ...baseFullConfig, ...config };
 }

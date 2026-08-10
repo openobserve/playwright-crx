@@ -1,7 +1,7 @@
 /**
  * Copyright (c) Microsoft Corporation.
  *
- * Licensed under the Apache License, Version 2.0 (the 'License");
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -28,7 +28,10 @@ export class CDPSessionDispatcher extends Dispatcher<CDPSession, channels.CDPSes
   constructor(scope: BrowserDispatcher | BrowserContextDispatcher, cdpSession: CDPSession) {
     super(scope, cdpSession, 'CDPSession', {});
     this.addObjectListener(CDPSession.Events.Event, ({ method, params }) => this._dispatchEvent('event', { method, params }));
-    this.addObjectListener(CDPSession.Events.Closed, () => this._dispose());
+    this.addObjectListener(CDPSession.Events.Closed, () => {
+      this._dispatchEvent('close');
+      this._dispose();
+    });
   }
 
   async send(params: channels.CDPSessionSendParams, progress: Progress): Promise<channels.CDPSessionSendResult> {

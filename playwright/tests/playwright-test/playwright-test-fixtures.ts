@@ -18,6 +18,7 @@ import type { JSONReport, JSONReportSpec, JSONReportSuite, JSONReportTest, JSONR
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { execSync } from 'node:child_process';
 import { PNG } from 'playwright-core/lib/utilsBundle';
 import type { CommonFixtures, CommonWorkerFixtures, TestChildProcess } from '../config/commonFixtures';
 import { commonFixtures } from '../config/commonFixtures';
@@ -26,6 +27,7 @@ import { serverFixtures } from '../config/serverFixtures';
 import type { TestInfo } from './stable-test-runner';
 import { expect } from './stable-test-runner';
 import { test as base } from './stable-test-runner';
+import { inheritAndCleanEnv } from '../config/utils';
 export { countTimes } from '../config/commonFixtures';
 
 type CliRunResult = {
@@ -131,7 +133,7 @@ function startPlaywrightTest(childProcess: CommonFixtures['childProcess'], baseD
 function startPlaywrightChildProcess(childProcess: CommonFixtures['childProcess'], baseDir: string, args: string[], env: NodeJS.ProcessEnv, options: RunOptions): TestChildProcess {
   return childProcess({
     command: ['node', cliEntrypoint, ...args],
-    env: cleanEnv(env),
+    env: inheritAndCleanEnv(env),
     cwd: options.cwd ? path.resolve(baseDir, options.cwd) : baseDir,
   });
 }
@@ -206,43 +208,11 @@ async function runPlaywrightTest(childProcess: CommonFixtures['childProcess'], b
 async function runPlaywrightCLI(childProcess: CommonFixtures['childProcess'], args: string[], baseDir: string, env: NodeJS.ProcessEnv): Promise<{ output: string, stdout: string, stderr: string, exitCode: number }> {
   const testProcess = childProcess({
     command: ['node', cliEntrypoint, ...args],
-    env: cleanEnv(env),
+    env: inheritAndCleanEnv(env),
     cwd: baseDir,
   });
   const { exitCode } = await testProcess.exited;
   return { exitCode, output: testProcess.output, stdout: testProcess.stdout, stderr: testProcess.stderr };
-}
-
-export function cleanEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    // BEGIN: Reserved CI
-    CI: undefined,
-    BUILD_URL: undefined,
-    CI_COMMIT_SHA: undefined,
-    CI_JOB_URL: undefined,
-    CI_PROJECT_URL: undefined,
-    GITHUB_ACTIONS: undefined,
-    GITHUB_REPOSITORY: undefined,
-    GITHUB_RUN_ID: undefined,
-    GITHUB_SERVER_URL: undefined,
-    GITHUB_SHA: undefined,
-    GITHUB_EVENT_PATH: undefined,
-    // END: Reserved CI
-    PW_TEST_HTML_REPORT_OPEN: undefined,
-    PLAYWRIGHT_HTML_OPEN: undefined,
-    PW_TEST_DEBUG_REPORTERS: undefined,
-    PW_TEST_REPORTER: undefined,
-    PW_TEST_REPORTER_WS_ENDPOINT: undefined,
-    PW_TEST_SOURCE_TRANSFORM: undefined,
-    PW_TEST_SOURCE_TRANSFORM_SCOPE: undefined,
-    PWTEST_BOT_NAME: undefined,
-    PWTEST_SHARD_WEIGHTS: undefined,
-    TEST_WORKER_INDEX: undefined,
-    TEST_PARALLEL_INDEX: undefined,
-    NODE_OPTIONS: undefined,
-    ...env,
-  };
 }
 
 export type RunOptions = {
@@ -252,6 +222,7 @@ export type RunOptions = {
 type Fixtures = {
   writeFiles: (files: Files) => Promise<string>;
   deleteFile: (file: string) => Promise<void>;
+  git: (command: string) => void;
   runInlineTest: (files: Files, params?: Params, env?: NodeJS.ProcessEnv, options?: RunOptions) => Promise<RunResult>;
   runCLICommand: (files: Files, command: string, args?: string[]) => Promise<{ stdout: string, stderr: string, exitCode: number }>;
   startCLICommand: (files: Files, command: string, args?: string[], options?: RunOptions, env?: NodeJS.ProcessEnv) => Promise<TestChildProcess>;
@@ -276,6 +247,16 @@ export const test = base
           const baseDir = testInfo.outputPath();
           await fs.promises.unlink(path.join(baseDir, file));
         });
+      },
+
+      git: async ({}, use, testInfo) => {
+        const baseDir = testInfo.outputPath();
+        const git = (command: string) => execSync(`git ${command}`, { cwd: baseDir, stdio: process.env.PWTEST_DEBUG ? 'inherit' : 'ignore' });
+        git(`init --initial-branch=main`);
+        git(`config --local user.name "Robert Botman"`);
+        git(`config --local user.email "botty@mcbotface.com"`);
+        git(`config --local core.autocrlf false`);
+        await use((command: string) => git(command));
       },
 
       runInlineTest: async ({ childProcess, mergeReports, useIntermediateMergeReport }, use, testInfo: TestInfo) => {
@@ -345,7 +326,7 @@ export const test = base
           const cwd = options.cwd ? path.resolve(test.info().outputDir, options.cwd) : test.info().outputDir;
           const testProcess = childProcess({
             command,
-            env: cleanEnv(env),
+            env: inheritAndCleanEnv(env),
             cwd,
           });
           const { exitCode } = await testProcess.exited;

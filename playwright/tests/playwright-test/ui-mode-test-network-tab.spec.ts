@@ -80,7 +80,7 @@ test('should filter network requests by multiple resource types', async ({ runUI
   await page.getByText('Network', { exact: true }).click();
 
   const networkItems = page.getByRole('list', { name: 'Network requests' }).getByRole('listitem');
-  await expect(networkItems).toHaveCount(9);
+  await expect(networkItems).toHaveCount(10);
 
   await page.getByText('JS', { exact: true }).click();
   await expect(networkItems).toHaveCount(1);
@@ -101,7 +101,7 @@ test('should filter network requests by multiple resource types', async ({ runUI
   await expect(networkItems.getByText('image.png')).toBeVisible();
 
   await page.getByText('All', { exact: true }).click();
-  await expect(networkItems).toHaveCount(9);
+  await expect(networkItems).toHaveCount(10);
 });
 
 test('should filter network requests by url', async ({ runUITest, server }) => {
@@ -186,6 +186,32 @@ test('should format JSON request body', async ({ runUITest, server }) => {
     '    ]',
     '  }',
     '}',
+  ], { useInnerText: true });
+});
+
+test('should format XML request body', async ({ runUITest, server }) => {
+  const { page } = await runUITest({
+    'network-tab.test.ts': `
+      import { test, expect } from '@playwright/test';
+      test('network tab test', async ({ page }) => {
+        await page.goto('${server.PREFIX}/network-tab/network.html');
+        await page.evaluate(() => (window as any).donePromise);
+      });
+    `,
+  });
+
+  await page.getByText('network tab test').dblclick();
+  await expect(page.getByTestId('workbench-run-status')).toContainText('Passed');
+
+  await page.getByText('Network', { exact: true }).click();
+  await page.getByText('post-xml-data').click();
+  await page.getByRole('tabpanel', { name: 'Network' }).getByRole('tab', { name: 'Payload' }).click();
+  const payloadPanel = page.getByRole('tabpanel', { name: 'Payload' });
+  await expect(payloadPanel.locator('.CodeMirror-code .CodeMirror-line')).toHaveText([
+    '<?xml version="1.0"?>',
+    '<note to="Alice" from="Bob">',
+    '    <body>Hello &amp; welcome!</body>',
+    '</note>'
   ], { useInnerText: true });
 });
 
@@ -321,10 +347,10 @@ test('should copy network request', async ({ runUITest, server }) => {
 
   await page.getByRole('tab', { name: 'Network' }).click();
   await page.getByRole('listitem').filter({ hasText: 'post-data-1' }).click();
-  await page.getByRole('button', { name: 'Copy request' }).hover();
 
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
 
+  await page.getByRole('button', { name: 'Copy request' }).hover();
   await page.getByRole('button', { name: 'Copy as cURL' }).click();
   await expect(async () => {
     const curlRequest = await page.evaluate(() => (window as any).__clipboardCall);
@@ -339,6 +365,7 @@ test('should copy network request', async ({ runUITest, server }) => {
     }
   }).toPass();
 
+  await page.getByRole('button', { name: 'Copy request' }).hover();
   await page.getByRole('button', { name: 'Copy as Fetch' }).click();
   await expect(async () => {
     const fetchRequest = await page.evaluate(() => (window as any).__clipboardCall);
@@ -348,6 +375,7 @@ test('should copy network request', async ({ runUITest, server }) => {
     expect(fetchRequest).toContain(`"method": "POST"`);
   }).toPass();
 
+  await page.getByRole('button', { name: 'Copy request' }).hover();
   await page.getByRole('button', { name: 'Copy as Playwright' }).click();
   await expect(async () => {
     const playwrightRequest = await page.evaluate(() => (window as any).__clipboardCall);
@@ -372,7 +400,6 @@ test('should not preserve selection across test runs', async ({ runUITest, serve
       import { test, expect } from '@playwright/test';
       test('network tab test', async ({ page }) => {
         await page.goto('${server.PREFIX}/network-tab/network.html');
-        await page.evaluate(() => (window as any).donePromise);
       });
     `,
   });
@@ -381,11 +408,35 @@ test('should not preserve selection across test runs', async ({ runUITest, serve
   await expect(page.getByTestId('workbench-run-status')).toContainText('Passed');
 
   await page.getByRole('tab', { name: 'Network' }).click();
-  const networkItem = page.getByRole('listitem').filter({ hasText: 'network.html' });
-  await networkItem.click();
+  await page.getByRole('listitem').filter({ hasText: 'network.html' }).click();
   const headersPanel = page.getByRole('tabpanel', { name: 'Headers' });
   await expect(headersPanel).toBeVisible();
 
   await page.getByRole('treeitem', { name: 'network tab test' }).dblclick();
   await expect(headersPanel).toBeHidden();
+  await expect(page.getByTestId('workbench-run-status')).toContainText('Passed');
+  await expect(headersPanel).toBeHidden();
+});
+
+test('should preserve selection during test run', async ({ runUITest, server }, testInfo) => {
+  const { page } = await runUITest({
+    'network-tab.test.ts': `
+      import { test, expect } from '@playwright/test';
+      test('network tab test', async ({ page }) => {
+        await page.goto('${server.PREFIX}/network-tab/network.html');
+        // Keep test running to make sure that selected network entry stay open
+        await page.waitForTimeout(${testInfo.timeout});
+      });
+    `,
+  });
+
+  await page.getByRole('treeitem', { name: 'network tab test' }).dblclick();
+  await page.getByRole('tab', { name: 'Network' }).click();
+  await page.getByRole('listitem').filter({ hasText: 'network.html' }).click();
+  const headersPanel = page.getByRole('tabpanel', { name: 'Headers' });
+  await expect(headersPanel).toBeVisible();
+
+  // Wait to ensure that trace polling (every 500ms) does not close the selected entry
+  await page.waitForTimeout(1000);
+  await expect(headersPanel).toBeVisible();
 });

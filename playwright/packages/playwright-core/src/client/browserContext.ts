@@ -22,7 +22,9 @@ import { ChannelOwner } from './channelOwner';
 import { evaluationScript } from './clientHelper';
 import { Clock } from './clock';
 import { ConsoleMessage } from './consoleMessage';
+import { Debugger } from './debugger';
 import { Dialog } from './dialog';
+import { DisposableObject, DisposableStub } from './disposable';
 import { TargetClosedError, parseError } from './errors';
 import { Events } from './events';
 import { APIRequestContext } from './fetch';
@@ -68,18 +70,18 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
   private _closedPromise: Promise<void>;
   readonly _options: channels.BrowserNewContextParams;
 
+  readonly debugger: Debugger;
   readonly request: APIRequestContext;
   readonly tracing: Tracing;
   readonly clock: Clock;
 
   readonly _serviceWorkers = new Set<Worker>();
   private _harRecorders = new Map<string, { path: string, content: 'embed' | 'attach' | 'omit' | undefined }>();
-  _closingStatus: 'none' | 'closing' | 'closed' = 'none';
+  private _closingStatus: 'none' | 'closing' | 'closed' = 'none';
   private _closeReason: string | undefined;
   private _harRouters: HarRouter[] = [];
   private _onRecorderEventSink: RecorderEventSink | undefined;
-  private _allowedProtocols: string[] | undefined;
-  private _allowedDirectories: string[] | undefined;
+
 
   static from(context: channels.BrowserContextChannel): BrowserContext {
     return (context as any)._object;
@@ -93,10 +95,10 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
     super(parent, type, guid, initializer);
     this._options = initializer.options;
     this._timeoutSettings = new TimeoutSettings(this._platform);
+    this.debugger = Debugger.from(initializer.debugger);
     this.tracing = Tracing.from(initializer.tracing);
     this.request = APIRequestContext.from(initializer.requestContext);
     this.request._timeoutSettings = this._timeoutSettings;
-    this.request._checkUrlAllowed = (url: string) => this._checkUrlAllowed(url);
     this.clock = new Clock(this);
 
     this._channel.on('bindingCall', ({ binding }) => this._onBinding(BindingCall.from(binding)));
@@ -230,7 +232,7 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
     const routeHandlers = this._routes.slice();
     for (const routeHandler of routeHandlers) {
       // If the page or the context was closed we stall all requests right away.
-      if (page?._closeWasCalled || this._closingStatus !== 'none')
+      if (page?._closeWasCalled || this.isClosed())
         return;
       if (!routeHandler.matches(route.request().url()))
         continue;
@@ -292,6 +294,10 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
     return [...this._pages];
   }
 
+  isClosed(): boolean {
+    return this._closingStatus !== 'none';
+  }
+
   async newPage(): Promise<Page> {
     if (this._ownerPage)
       throw new Error('Please use browser.newContext()');
@@ -349,25 +355,28 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
     await this._channel.setHTTPCredentials({ httpCredentials: httpCredentials || undefined });
   }
 
-  async addInitScript(script: Function | string | { path?: string, content?: string }, arg?: any): Promise<void> {
+  async addInitScript(script: Function | string | { path?: string, content?: string }, arg?: any) {
     const source = await evaluationScript(this._platform, script, arg);
-    await this._channel.addInitScript({ source });
+    return DisposableObject.from((await this._channel.addInitScript({ source })).disposable);
   }
 
-  async exposeBinding(name: string, callback: (source: structs.BindingSource, ...args: any[]) => any, options: { handle?: boolean } = {}): Promise<void> {
-    await this._channel.exposeBinding({ name, needsHandle: options.handle });
+  async exposeBinding(name: string, callback: (source: structs.BindingSource, ...args: any[]) => any, options: { handle?: boolean } = {}): Promise<DisposableObject> {
+    const result = await this._channel.exposeBinding({ name, needsHandle: options.handle });
     this._bindings.set(name, callback);
+    return DisposableObject.from(result.disposable);
   }
 
-  async exposeFunction(name: string, callback: Function): Promise<void> {
-    await this._channel.exposeBinding({ name });
+  async exposeFunction(name: string, callback: Function): Promise<DisposableObject> {
+    const result = await this._channel.exposeBinding({ name });
     const binding = (source: structs.BindingSource, ...args: any[]) => callback(...args);
     this._bindings.set(name, binding);
+    return DisposableObject.from(result.disposable);
   }
 
-  async route(url: URLMatch, handler: network.RouteHandlerCallback, options: { times?: number } = {}): Promise<void> {
+  async route(url: URLMatch, handler: network.RouteHandlerCallback, options: { times?: number } = {}): Promise<DisposableStub> {
     this._routes.unshift(new network.RouteHandler(this._platform, this._options.baseURL, url, handler, options.times));
     await this._updateInterceptionPatterns({ title: 'Route requests' });
+    return new DisposableStub(() => this.unroute(url, handler));
   }
 
   async routeWebSocket(url: URLMatch, handler: network.WebSocketRouteHandlerCallback): Promise<void> {
@@ -471,6 +480,11 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
     return state;
   }
 
+  async setStorageState(storageState: string | SetStorageState): Promise<void> {
+    const state = await prepareStorageState(this._platform, storageState);
+    await this._channel.setStorageState({ storageState: state });
+  }
+
   backgroundPages(): Page[] {
     return [];
   }
@@ -502,7 +516,7 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
   }
 
   async close(options: { reason?: string } = {}): Promise<void> {
-    if (this._closingStatus !== 'none')
+    if (this.isClosed())
       return;
     this._closeReason = options.reason;
     this._closingStatus = 'closing';
@@ -546,40 +560,6 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
     await this._channel.exposeConsoleApi();
   }
 
-  _setAllowedProtocols(protocols: string[]) {
-    this._allowedProtocols = protocols;
-  }
-
-  _checkUrlAllowed(url: string) {
-    if (!this._allowedProtocols)
-      return;
-    let parsedURL;
-    try {
-      parsedURL = new URL(url);
-    } catch (e) {
-      throw new Error(`Access to ${url} is blocked. Invalid URL: ${e.message}`);
-    }
-    if (!this._allowedProtocols.includes(parsedURL.protocol))
-      throw new Error(`Access to "${parsedURL.protocol}" URL is blocked. Allowed protocols: ${this._allowedProtocols.join(', ')}. Attempted URL: ${url}`);
-  }
-
-  _setAllowedDirectories(rootDirectories: string[]) {
-    this._allowedDirectories = rootDirectories;
-  }
-
-  _checkFileAccess(filePath: string) {
-    if (!this._allowedDirectories)
-      return;
-    const path = this._platform.path().resolve(filePath);
-    const isInsideDir = (container: string, child: string): boolean => {
-      const path = this._platform.path();
-      const rel = path.relative(container, child);
-      return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel);
-    };
-    if (this._allowedDirectories.some(root => isInsideDir(root, path)))
-      return;
-    throw new Error(`File access denied: ${filePath} is outside allowed roots. Allowed roots: ${this._allowedDirectories.length ? this._allowedDirectories.join(', ') : 'none'}`);
-  }
 }
 
 async function prepareStorageState(platform: Platform, storageState: string | SetStorageState): Promise<NonNullable<channels.BrowserNewContextParams['storageState']>> {

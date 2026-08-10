@@ -254,7 +254,7 @@ export class CRNetworkManager {
       this._requestIdToRequestWillBeSentEvent.delete(requestId);
     } else {
       const existingRequest = this._requestIdToRequest.get(requestId);
-      const alreadyContinuedParams = existingRequest?._route?._alreadyContinuedParams;
+      const alreadyContinuedParams = existingRequest?._originalRequestRoute?._alreadyContinuedParams;
       if (alreadyContinuedParams && !event.redirectedRequestId) {
         // Sometimes Chromium network stack restarts the request internally.
         // For example, when no-cors request hits a "less public address space", it should be resent with cors.
@@ -385,7 +385,7 @@ export class CRNetworkManager {
         return Buffer.from(response.body, response.base64Encoded ? 'base64' : 'utf8');
 
       // Make sure no network requests sent while reading the body for fulfilled requests.
-      if (request._route?._fulfilled)
+      if (request._originalRequestRoute?._fulfilled)
         return Buffer.from('');
 
       // For <link prefetch we are going to receive empty body with non-empty content-length expectation. Reach out for the actual content.
@@ -426,7 +426,8 @@ export class CRNetworkManager {
         responseStart: -1,
       };
     }
-    const response = new network.Response(request.request, responsePayload.status, responsePayload.statusText, headersObjectToArray(responsePayload.headers), timing, getResponseBody, !!responsePayload.fromServiceWorker, responsePayload.protocol);
+    const response = new network.Response(request.request, responsePayload.status, responsePayload.statusText, headersObjectToArray(responsePayload.headers), timing, getResponseBody, !!responsePayload.fromServiceWorker);
+    response._setHttpVersion(responsePayload?.protocol ?? null);
     if (responsePayload?.remoteIPAddress && typeof responsePayload?.remotePort === 'number') {
       response._serverAddrFinished({
         ipAddress: responsePayload.remoteIPAddress,
@@ -566,7 +567,6 @@ class InterceptableRequest {
   readonly _documentId: string | undefined;
   readonly _timestamp: number;
   readonly _wallTime: number;
-  readonly _route: RouteImpl | null;
   // Only first request in the chain can be intercepted, so this will
   // store the first and only Route in the chain (if any).
   readonly _originalRequestRoute: RouteImpl | undefined;
@@ -591,7 +591,6 @@ class InterceptableRequest {
     this._requestId = requestWillBeSentEvent.requestId;
     this._interceptionId = requestPausedEvent && requestPausedEvent.requestId;
     this._documentId = documentId;
-    this._route = route;
     this._originalRequestRoute = route ?? redirectedFrom?._originalRequestRoute;
 
     const {

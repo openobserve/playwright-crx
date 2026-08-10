@@ -17,11 +17,43 @@ test('assert a value', async ({ page }) => {
 * since: v1.9
 - returns: <[GenericAssertions]>
 
-Makes the assertion check for the opposite condition. For example, the following code passes:
+Makes the assertion check for the opposite condition.
+
+**Usage**
+
+For example, the following code passes:
 
 ```js
 const value = 1;
 expect(value).not.toBe(2);
+```
+
+## property: GenericAssertions.resolves
+* since: v1.9
+- returns: <[GenericAssertions]>
+
+Use `resolves` to unwrap the value of a fulfilled promise so any other matcher can be chained. If the promise is rejected the assertion fails.
+
+For example, this code tests that the promise resolves and that the resulting value is `'lemon'`:
+
+```js
+test('resolves to lemon', async () => {
+  await expect(Promise.resolve('lemon')).resolves.toBe('lemon');
+});
+```
+
+## property: GenericAssertions.rejects
+* since: v1.9
+- returns: <[GenericAssertions]>
+
+Use `.rejects` to unwrap the reason of a rejected promise so any other matcher can be chained. If the promise is fulfilled the assertion fails.
+
+For example, this code tests that the promise rejects with reason `'octopus'`:
+
+```js
+test('rejects to octopus', async () => {
+  await expect(Promise.reject(new Error('octopus'))).rejects.toThrow('octopus');
+});
 ```
 
 

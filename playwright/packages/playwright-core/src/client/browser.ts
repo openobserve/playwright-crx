@@ -34,8 +34,9 @@ export class Browser extends ChannelOwner<channels.BrowserChannel> implements ap
   private _closedPromise: Promise<void>;
   _shouldCloseConnectionOnClose = false;
   _browserType!: BrowserType;
-  _options: LaunchOptions = {};
+  private _options: LaunchOptions = {};
   readonly _name: string;
+  readonly _browserName: 'chromium' | 'webkit' | 'firefox';
   private _path: string | undefined;
   _closeReason: string | undefined;
 
@@ -46,6 +47,7 @@ export class Browser extends ChannelOwner<channels.BrowserChannel> implements ap
   constructor(parent: ChannelOwner, type: string, guid: string, initializer: channels.BrowserInitializer) {
     super(parent, type, guid, initializer);
     this._name = initializer.name;
+    this._browserName = initializer.browserName;
     this._channel.on('context', ({ context }) => this._didCreateContext(BrowserContext.from(context)));
     this._channel.on('close', () => this._didClose());
     this._closedPromise = new Promise(f => this.once(Events.Browser.Disconnected, f));
@@ -124,6 +126,15 @@ export class Browser extends ChannelOwner<channels.BrowserChannel> implements ap
 
   version(): string {
     return this._initializer.version;
+  }
+
+  async bind(title: string, options: { workspaceDir?: string, metadata?: Record<string, any>, host?: string, port?: number } = {}): Promise<{ endpoint: string }> {
+    const { endpoint } = await this._channel.startServer({ title, ...options });
+    return { endpoint };
+  }
+
+  async unbind(): Promise<void> {
+    await this._channel.stopServer();
   }
 
   async newPage(options: BrowserContextOptions = {}): Promise<Page> {

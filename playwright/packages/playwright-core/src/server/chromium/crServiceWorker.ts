@@ -23,6 +23,7 @@ import { toConsoleMessageLocation } from './crProtocolHelper';
 
 import type { CRBrowserContext } from './crBrowser';
 import type { CRSession } from './crConnection';
+import type { Protocol } from './protocol';
 
 export class CRServiceWorker extends Worker {
   readonly browserContext: CRBrowserContext;
@@ -35,13 +36,17 @@ export class CRServiceWorker extends Worker {
     this.browserContext = browserContext;
     if (!process.env.PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK)
       this._networkManager = new CRNetworkManager(null, this);
-    session.once('Runtime.executionContextCreated', event => {
+
+    session.on('Inspector.targetCrashed', () => this._prepareContextForRestart());
+
+    session.on('Runtime.executionContextCreated', (event: Protocol.Runtime.executionContextCreatedPayload) => {
       this.createExecutionContext(new CRExecutionContext(session, event.context));
+      if (this.browserContext._browser.majorVersion() < 143)
+        this.workerScriptLoaded();
     });
+
     if (this.browserContext._browser.majorVersion() >= 143)
       session.on('Inspector.workerScriptLoaded', () => this.workerScriptLoaded());
-    else
-      this.workerScriptLoaded();
 
     if (this._networkManager && this._isNetworkInspectionEnabled()) {
       this.updateRequestInterception();
@@ -55,12 +60,12 @@ export class CRServiceWorker extends Worker {
       if (!this.existingExecutionContext || process.env.PLAYWRIGHT_DISABLE_SERVICE_WORKER_CONSOLE)
         return;
       const args = event.args.map(o => createHandle(this.existingExecutionContext!, o));
-      const message = new ConsoleMessage(null, this, event.type, undefined, args, toConsoleMessageLocation(event.stackTrace));
+      const message = new ConsoleMessage(null, this, event.type, undefined, args, toConsoleMessageLocation(event.stackTrace), event.timestamp);
       this.browserContext.emit(BrowserContext.Events.Console, message);
     });
 
-    session.send('Runtime.enable', {}).catch(e => { });
-    session.send('Runtime.runIfWaitingForDebugger').catch(e => { });
+    session.send('Runtime.enable', {}).catch(e => {});
+    session.send('Runtime.runIfWaitingForDebugger').catch(e => {});
     session.on('Inspector.targetReloadedAfterCrash', () => {
       // Resume service worker after restart.
       session._sendMayFail('Runtime.runIfWaitingForDebugger', {});

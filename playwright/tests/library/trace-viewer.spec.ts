@@ -32,6 +32,7 @@ const test = playwrightTest.extend<TraceViewerFixtures>(traceViewerFixtures);
 
 test.skip(({ trace }) => trace === 'on');
 test.skip(({ mode }) => mode.startsWith('service'));
+test.skip(process.env.PW_CLOCK === 'frozen');
 test.slow();
 
 let traceFile: string;
@@ -112,6 +113,10 @@ test('should open trace viewer on specific host', async ({ showTraceViewer }, te
 
 test('should show tracing.group in the action list with location', async ({ runAndTrace, page, context }) => {
   test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36483' });
+  test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/39302' });
+
+  const sourceFile = test.info().outputPath('source.js');
+  await fs.promises.writeFile(sourceFile, 'buddy beaver');
 
   const traceViewer = await test.step('create trace with groups', async () => {
     await page.context().tracing.group('ignored group');
@@ -124,15 +129,21 @@ test('should show tracing.group in the action list with location', async ({ runA
       await context.tracing.group('inner group 2');
       await expect(page.getByText('Hello')).toBeVisible();
       await context.tracing.groupEnd();
+      await context.tracing.group('inner group 3', { location: { file: sourceFile, line: 1, column: 1 } });
+      await expect(page.getByText('Hello')).toBeVisible();
+      await context.tracing.groupEnd();
       await context.tracing.groupEnd();
     });
   });
+
+  await fs.promises.rm(sourceFile);
 
   await expect(traceViewer.actionTitles).toHaveText([
     /outer group/,
     /Navigate/,
     /inner group 1 {{ eager_beaver }}/,
     /inner group 2/,
+    /inner group 3/,
     /toBeVisible/,
   ]);
 
@@ -144,12 +155,16 @@ test('should show tracing.group in the action list with location', async ({ runA
     /inner group 1 {{ eager_beaver }}/,
     /Click.*locator/,
     /inner group 2/,
+    /inner group 3/,
   ]);
   await traceViewer.showSourceTab();
   await expect(traceViewer.sourceCodeTab.locator('.source-line-running')).toHaveText(/DO NOT TOUCH THIS LINE/);
 
   await traceViewer.selectAction('inner group 2');
   await expect(traceViewer.sourceCodeTab.locator('.source-line-running')).toContainText("await context.tracing.group('inner group 2');");
+
+  await traceViewer.selectAction('inner group 3');
+  await expect(traceViewer.sourceCodeTab.locator('.source-line-running')).toContainText('buddy beaver');
 });
 
 test('should open simple trace viewer', async ({ showTraceViewer }) => {
@@ -174,6 +189,20 @@ test('should open simple trace viewer', async ({ showTraceViewer }) => {
     /Hover/,
     /Close page/,
   ]);
+});
+
+test('should filter actions by text', async ({ showTraceViewer }) => {
+  const traceViewer = await showTraceViewer(traceFile);
+  const filterInput = traceViewer.page.getByRole('searchbox', { name: 'Filter actions' });
+  await expect(filterInput).toBeVisible();
+
+  const fullCount = await traceViewer.actionTitles.count();
+  await filterInput.fill('Click');
+  await expect(traceViewer.actionTitles.filter({ hasText: 'Click' }).first()).toBeVisible();
+  expect(await traceViewer.actionTitles.count()).toBeLessThan(fullCount);
+
+  await filterInput.fill('');
+  await expect(traceViewer.actionTitles).toHaveCount(fullCount);
 });
 
 test('should open uncompressed trace directory', async ({ showTraceViewer }) => {
@@ -278,13 +307,6 @@ test('should contain action info', async ({ showTraceViewer }) => {
     /\d+m?sattempting click action/,
     /\d+m?s  click action done/,
   ]);
-});
-
-test('should render network bars', async ({ page, runAndTrace, server }) => {
-  const traceViewer = await runAndTrace(async () => {
-    await page.goto(server.EMPTY_PAGE);
-  });
-  await expect(traceViewer.page.locator('.timeline-bar.network')).toHaveCount(1);
 });
 
 test('should render console', async ({ showTraceViewer, browserName }) => {
@@ -463,7 +485,7 @@ test('should filter network requests by multiple resource types', async ({ page,
   await expect(networkRequests.getByText('image.png')).toBeVisible();
 
   await traceViewer.page.getByText('All', { exact: true }).click();
-  await expect(networkRequests).toHaveCount(9);
+  await expect(networkRequests).toHaveCount(10);
 });
 
 test('should show font preview', async ({ page, runAndTrace, server }) => {
@@ -1199,7 +1221,7 @@ test('should display waitForLoadState even if did not wait for it', async ({ run
 });
 
 test('should display language-specific locators', async ({ runAndTrace, server, page, toImpl }) => {
-  toImpl(page).attribution.playwright.options.sdkLanguage = 'python';
+  toImpl(page).attribution.browser.options.sdkLanguage = 'python';
   const traceViewer = await runAndTrace(async () => {
     await page.setContent('<button>Submit</button>');
     await page.getByRole('button', { name: 'Submit' }).click();
@@ -1208,7 +1230,7 @@ test('should display language-specific locators', async ({ runAndTrace, server, 
     /Set content/,
     /Click.*get_by_role\("button", name="Submit"\)/,
   ]);
-  toImpl(page).attribution.playwright.options.sdkLanguage = 'javascript';
+  toImpl(page).attribution.browser.options.sdkLanguage = 'javascript';
 });
 
 test('should pick locator', async ({ page, runAndTrace, server }) => {
@@ -1780,9 +1802,9 @@ test('should show only one pointer with multilevel iframes', async ({ page, runA
     await page.frameLocator('iframe').frameLocator('iframe').locator('button').click({ position: { x: 5, y: 5 } });
   });
   const snapshotFrame = await traceViewer.snapshotFrame('Click');
-  await expect.soft(snapshotFrame.locator('x-pw-pointer')).not.toBeAttached();
+  await expect.soft(snapshotFrame.locator('x-pw-pointer')).toBeAttached();
   await expect.soft(snapshotFrame.frameLocator('iframe').locator('x-pw-pointer')).not.toBeAttached();
-  await expect.soft(snapshotFrame.frameLocator('iframe').frameLocator('iframe').locator('x-pw-pointer')).toBeVisible();
+  await expect.soft(snapshotFrame.frameLocator('iframe').frameLocator('iframe').locator('x-pw-pointer')).not.toBeAttached();
 });
 
 test('should show a popover', async ({ runAndTrace, page, server, platform, browserName, macVersion }) => {
@@ -2247,4 +2269,13 @@ test('should capture iframe with srcdoc', async ({ page, server, runAndTrace }) 
 
   const frame = await traceViewer.snapshotFrame('Evaluate');
   await expect(frame.frameLocator('iframe').getByRole('button')).toHaveText('Hello iframe');
+});
+
+test('take trace paths via stdin', async ({ showTraceViewer }) => {
+  const traceViewer = await showTraceViewer(undefined, { stdin: true });
+  await expect(traceViewer.page).toHaveTitle('Playwright Trace Viewer');
+  traceViewer.process.write(traceFile);
+  await expect(traceViewer.actionTitles).toContainText([
+    /Create page/,
+  ]);
 });

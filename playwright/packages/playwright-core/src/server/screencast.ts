@@ -1,7 +1,7 @@
 /**
  * Copyright (c) Microsoft Corporation.
  *
- * Licensed under the Apache License, Version 2.0 (the 'License");
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -14,193 +14,160 @@
  * limitations under the License.
  */
 
-import path from 'path';
-import { assert, createGuid, eventsHelper, RegisteredListener } from '../utils';
+import { renderTitleForCall } from '../utils';
 import { debugLogger } from '../utils';
-import { VideoRecorder } from './videoRecorder';
 import { Page } from './page';
-import { registry } from './registry';
 
 import type * as types from './types';
+import type { CallMetadata, InstrumentationListener, SdkObject } from './instrumentation';
 
-export class Screencast {
-  private _page: Page;
-  private _videoRecorder: VideoRecorder | null = null;
-  private _videoId: string | null = null;
-  private _screencastClients = new Set<unknown>();
+export type ScreencastClient = {
+  onFrame: (frame: types.ScreencastFrame) => Promise<void> | void;
+  gracefulClose?: () => Promise<void> | void;
+  dispose: () => void;
+  size?: types.Size;
+  quality?: number;
+};
 
-  // Aiming at 25 fps by default - each frame is 40ms, but we give some slack with 35ms.
-  // When throttling for tracing, 200ms between frames, except for 10 frames around the action.
-  private _frameThrottler = new FrameThrottler(10, 35, 200);
-  private _frameListener: RegisteredListener | null = null;
+type AnnotatePosition = 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right';
+
+type ActionOptions = {
+  duration?: number,
+  position?: AnnotatePosition,
+  fontSize?: number,
+};
+
+export class Screencast implements InstrumentationListener {
+  readonly page: Page;
+  private _clients = new Set<ScreencastClient>();
+  private _actions: ActionOptions | undefined;
+  private _size: types.Size | undefined;
 
   constructor(page: Page) {
-    this._page = page;
+    this.page = page;
+    this.page.instrumentation.addListener(this, page.browserContext);
   }
 
-  stopFrameThrottler() {
-    this._frameThrottler.dispose();
-  }
-
-  setOptions(options: { width: number, height: number, quality: number } | null) {
-    this._setOptions(options).catch(e => debugLogger.log('error', e));
-    this._frameThrottler.setThrottlingEnabled(!!options);
-  }
-
-  throttleFrameAck(ack: () => void) {
-    // Don't ack immediately, tracing has smart throttling logic that is implemented here.
-    this._frameThrottler.ack(ack);
-  }
-
-  temporarilyDisableThrottling() {
-    this._frameThrottler.recharge();
-  }
-
-  launchVideoRecorder(): types.VideoOptions | undefined {
-    const recordVideo = this._page.browserContext._options.recordVideo;
-    if (!recordVideo)
-      return undefined;
-    assert(!this._videoId);
-    this._videoId = createGuid();
-    const outputFile = path.join(recordVideo.dir, this._videoId + '.webm');
-    const videoOptions = {
-      // validateBrowserContextOptions ensures correct video size.
-      ...recordVideo.size!,
-      outputFile,
-    };
-    // Note: it is important to start video recorder before sending Screencast.startScreencast,
-    // and it is equally important to send Screencast.startScreencast before sending Target.resume.
-    const ffmpegPath = registry.findExecutable('ffmpeg')!.executablePathOrDie(this._page.browserContext._browser.sdkLanguage());
-    this._videoRecorder = new VideoRecorder(ffmpegPath, videoOptions);
-    this._frameListener = eventsHelper.addEventListener(this._page, Page.Events.ScreencastFrame, frame => this._videoRecorder!.writeFrame(frame.buffer, frame.frameSwapWallTime / 1000));
-    this._page.waitForInitializedOrError().then(p => {
-      if (p instanceof Error)
-        this.stopVideoRecording().catch(() => {});
-    });
-    return videoOptions;
-  }
-
-  async startVideoRecording(options: types.VideoOptions) {
-    const videoId = this._videoId;
-    assert(videoId);
-    this._page.once(Page.Events.Close, () => this.stopVideoRecording().catch(() => {}));
-    const gotFirstFrame = new Promise(f => this._page.once(Page.Events.ScreencastFrame, f));
-    await this._startScreencast(this._videoRecorder, {
-      quality: 90,
-      width: options.width,
-      height: options.height,
-    });
-    // Wait for the first frame before reporting video to the client.
-    gotFirstFrame.then(() => {
-      this._page.browserContext._browser._videoStarted(this._page.browserContext, videoId, options.outputFile, this._page.waitForInitializedOrError());
-    });
-  }
-
-  async stopVideoRecording(): Promise<void> {
-    if (!this._videoId)
-      return;
-    if (this._frameListener)
-      eventsHelper.removeEventListeners([this._frameListener]);
-    this._frameListener = null;
-    const videoId = this._videoId;
-    this._videoId = null;
-    const videoRecorder = this._videoRecorder!;
-    this._videoRecorder = null;
-    await this._stopScreencast(videoRecorder);
-    await videoRecorder.stop();
-    // Keep the video artifact in the map until encoding is fully finished, if the context
-    // starts closing before the video is fully written to disk it will wait for it.
-    const video = this._page.browserContext._browser._takeVideo(videoId);
-    video?.reportFinished();
-  }
-
-  private async _setOptions(options: { width: number, height: number, quality: number } | null): Promise<void> {
-    if (options)
-      await this._startScreencast(this, options);
-    else
-      await this._stopScreencast(this);
-  }
-
-  private async _startScreencast(client: unknown, options: { width: number, height: number, quality: number }) {
-    this._screencastClients.add(client);
-    if (this._screencastClients.size === 1) {
-      await this._page.delegate.startScreencast({
-        width: options.width,
-        height: options.height,
-        quality: options.quality,
-      });
+  async handlePageOrContextClose() {
+    const clients = [...this._clients];
+    this._clients.clear();
+    for (const client of clients) {
+      if (client.gracefulClose)
+        await client.gracefulClose();
     }
-  }
-
-  private async _stopScreencast(client: unknown) {
-    this._screencastClients.delete(client);
-    if (!this._screencastClients.size)
-      await this._page.delegate.stopScreencast();
-  }
-}
-
-class FrameThrottler {
-  private _acks: (() => void)[] = [];
-  private _defaultInterval: number;
-  private _throttlingInterval: number;
-  private _nonThrottledFrames: number;
-  private _budget: number;
-  private _throttlingEnabled = false;
-  private _timeoutId: NodeJS.Timeout | undefined;
-
-  constructor(nonThrottledFrames: number, defaultInterval: number, throttlingInterval: number) {
-    this._nonThrottledFrames = nonThrottledFrames;
-    this._budget = nonThrottledFrames;
-    this._defaultInterval = defaultInterval;
-    this._throttlingInterval = throttlingInterval;
-    this._tick();
   }
 
   dispose() {
-    if (this._timeoutId) {
-      clearTimeout(this._timeoutId);
-      this._timeoutId = undefined;
-    }
+    for (const client of this._clients)
+      client.dispose();
+    this._clients.clear();
+    this.page.instrumentation.removeListener(this);
   }
 
-  setThrottlingEnabled(enabled: boolean) {
-    this._throttlingEnabled = enabled;
+  showActions(options: ActionOptions) {
+    this._actions = options;
   }
 
-  recharge() {
-    // Send all acks, reset budget.
-    for (const ack of this._acks)
-      ack();
-    this._acks = [];
-    this._budget = this._nonThrottledFrames;
-    if (this._timeoutId) {
-      clearTimeout(this._timeoutId);
-      this._tick();
-    }
+  hideActions() {
+    this._actions = undefined;
   }
 
-  ack(ack: () => void) {
-    if (!this._timeoutId) {
-      // Already disposed.
-      ack();
+  addClient(client: ScreencastClient): { size: types.Size } {
+    this._clients.add(client);
+    if (this._clients.size === 1)
+      this._startScreencast(client.size, client.quality);
+    return { size: this._size! };
+  }
+
+  removeClient(client: ScreencastClient) {
+    if (!this._clients.has(client))
       return;
-    }
-    this._acks.push(ack);
+    this._clients.delete(client);
+    if (!this._clients.size)
+      this._stopScreencast();
   }
 
-  private _tick() {
-    const ack = this._acks.shift();
-    if (ack) {
-      --this._budget;
-      ack();
+  size(): types.Size | undefined {
+    return this._size;
+  }
+
+  private _startScreencast(size: types.Size | undefined, quality: number | undefined) {
+    this._size = size;
+    if (!this._size) {
+      const viewport = this.page.browserContext._options.viewport || { width: 800, height: 600 };
+      const scale = Math.min(1, 800 / Math.max(viewport.width, viewport.height));
+      this._size = {
+        width: Math.floor(viewport.width * scale),
+        height: Math.floor(viewport.height * scale)
+      };
     }
 
-    if (this._throttlingEnabled && this._budget <= 0) {
-      // Non-throttled frame budget is exceeded. Next ack will be throttled.
-      this._timeoutId = setTimeout(() => this._tick(), this._throttlingInterval);
-    } else {
-      // Either not throttling, or still under budget. Next ack will be after the default timeout.
-      this._timeoutId = setTimeout(() => this._tick(), this._defaultInterval);
+    // Make sure both dimensions are odd, this is required for vp8
+    this._size = {
+      width: this._size.width & ~1,
+      height: this._size.height & ~1
+    };
+
+    this.page.delegate.startScreencast({
+      width: this._size.width,
+      height: this._size.height,
+      quality: quality ?? 90,
+    });
+  }
+
+  private _stopScreencast() {
+    this.page.delegate.stopScreencast();
+  }
+
+  onScreencastFrame(frame: types.ScreencastFrame, ack?: () => void) {
+    const asyncResults: Promise<void>[] = [];
+    for (const client of this._clients) {
+      const result = client.onFrame(frame);
+      if (result)
+        asyncResults.push(result);
     }
+    if (ack) {
+      // Ack when any client resolves (OR logic). This ensures that even if
+      // tracing throttles its response, other clients (like video) that resolve
+      // immediately keep frames flowing.
+      if (!asyncResults.length)
+        ack();
+      else
+        Promise.race(asyncResults).then(ack);
+    }
+  }
+
+  async onBeforeCall(sdkObject: SdkObject, metadata: CallMetadata, parentId?: string): Promise<void> {
+    if (!this._actions)
+      return;
+    metadata.annotate = true;
+  }
+
+  async onBeforeInputAction(sdkObject: SdkObject, metadata: CallMetadata): Promise<void> {
+    if (!this._actions)
+      return;
+
+    const page = sdkObject.attribution.page;
+    if (!page)
+      return;
+
+    const actionTitle = renderTitleForCall(metadata);
+    const utility = await page.mainFrame()._utilityContext();
+
+    // Run this outside of the progress timer.
+    await utility.evaluate(async options => {
+      const { injected, duration } = options;
+      injected.setScreencastAnnotation(options);
+      await new Promise(f => injected.utils.builtins.setTimeout(f, duration));
+      injected.setScreencastAnnotation(null);
+    }, {
+      injected: await utility.injectedScript(),
+      duration: this._actions?.duration ?? 500,
+      point: metadata.point,
+      box: metadata.box,
+      actionTitle,
+      position: this._actions?.position,
+      fontSize: this._actions?.fontSize,
+    }).catch(e => debugLogger.log('error', e));
   }
 }

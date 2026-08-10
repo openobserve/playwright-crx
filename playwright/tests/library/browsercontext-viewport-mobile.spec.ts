@@ -16,7 +16,6 @@
  */
 
 import { browserTest as it, expect } from '../config/browserTest';
-import { hostPlatform } from '../../packages/playwright-core/src/server/utils/hostPlatform';
 
 it.describe('mobile viewport', () => {
   it.skip(({ browserName, isBidi }) => browserName === 'firefox' && !isBidi);
@@ -95,9 +94,8 @@ it.describe('mobile viewport', () => {
     await context.close();
   });
 
-  it('should preserve window.orientation override after navigation', async ({ browser, server, browserName }) => {
-    it.skip(browserName === 'webkit' && hostPlatform.startsWith('ubuntu20.04'), 'Ubuntu 20.04 is frozen');
-    it.skip(browserName === 'webkit' && hostPlatform.startsWith('debian11'), 'Debian 11 is frozen');
+  it('should preserve window.orientation override after navigation', async ({ browser, server, isFrozenWebkit }) => {
+    it.skip(isFrozenWebkit);
 
     const context = await browser.newContext({ viewport: { width: 400, height: 300 }, isMobile: true });
     const page = await context.newPage();
@@ -105,6 +103,18 @@ it.describe('mobile viewport', () => {
     expect(await page.evaluate(() => window.orientation)).toBe(90);
     await page.goto(server.CROSS_PROCESS_PREFIX + '/mobile.html');
     expect(await page.evaluate(() => window.orientation)).toBe(90);
+    await context.close();
+  });
+
+  it('should preserve screen.orientation.type override after navigation', async ({ browser, server, isFrozenWebkit }) => {
+    it.skip(isFrozenWebkit);
+
+    const context = await browser.newContext({ viewport: { width: 300, height: 400 }, isMobile: true });
+    const page = await context.newPage();
+    await page.goto(server.PREFIX + '/mobile.html');
+    expect(await page.evaluate(() => window.screen.orientation.type)).toBe('portrait-primary');
+    await page.goto(server.CROSS_PROCESS_PREFIX + '/mobile.html');
+    expect(await page.evaluate(() => window.screen.orientation.type)).toBe('portrait-primary');
     await context.close();
   });
 

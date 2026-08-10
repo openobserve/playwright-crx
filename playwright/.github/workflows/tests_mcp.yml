@@ -9,6 +9,8 @@ on:
     paths-ignore:
       - 'browser_patches/**'
       - 'docs/**'
+      - 'packages/playwright-core/src/server/bidi/**'
+      - 'tests/bidi/**'
     branches:
       - main
       - release-*
@@ -23,18 +25,19 @@ env:
   # Force terminal colors. @see https://www.npmjs.com/package/colors
   FORCE_COLOR: 1
   ELECTRON_SKIP_BINARY_DOWNLOAD: 1
-  PWDEBUGIMPL: 1
   DEBUG: pw:mcp:error
 
 jobs:
   test_mcp:
-    name: ${{ matrix.os }}
+    name: ${{ matrix.os }} - ${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
     # Used for authentication of flakiness upload
     environment: ${{ github.event_name == 'push' && 'allow-uploading-flakiness-results' || null }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-15, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        shardIndex: [1, 2]
+        shardTotal: [2]
     runs-on: ${{ matrix.os }}
     permissions:
       id-token: write   # This is required for OIDC login (azure/login) to succeed
@@ -43,9 +46,10 @@ jobs:
     - uses: actions/checkout@v6
     - uses: ./.github/actions/run-test
       with:
-        node-version: "20"
-        command: npm run test-mcp
+        node-version: "22"
+        command: npm run test-mcp -- --shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
         bot-name: "mcp-${{ matrix.os }}"
+        shard-index: ${{ matrix.shardIndex }}
         flakiness-client-id: ${{ secrets.AZURE_FLAKINESS_DASHBOARD_CLIENT_ID }}
         flakiness-tenant-id: ${{ secrets.AZURE_FLAKINESS_DASHBOARD_TENANT_ID }}
         flakiness-subscription-id: ${{ secrets.AZURE_FLAKINESS_DASHBOARD_SUBSCRIPTION_ID }}

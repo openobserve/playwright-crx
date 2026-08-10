@@ -60,6 +60,20 @@ it('should report console logs', async function({ page }) {
   expect(page.url()).not.toContain('blob');
 });
 
+it('should have timestamp on worker console messages', async function({ page, isAndroid }) {
+  it.skip(isAndroid, 'there is a time difference between android emulator and host machine');
+
+  const before = Date.now() - 1;  // Account for the rounding of fractional timestamps.
+  const [message] = await Promise.all([
+    page.waitForEvent('console'),
+    page.evaluate(() => new Worker(URL.createObjectURL(new Blob(['console.log("ts")'], { type: 'application/javascript' })))),
+  ]);
+  const after = Date.now() + 1;  // Account for the rounding of fractional timestamps.
+  expect(message.text()).toBe('ts');
+  expect(message.timestamp()).toBeGreaterThanOrEqual(before);
+  expect(message.timestamp()).toBeLessThanOrEqual(after);
+});
+
 it('should not report console logs from workers twice', async function({ page }) {
   const messages = [];
   page.on('console', msg => messages.push(msg.text()));

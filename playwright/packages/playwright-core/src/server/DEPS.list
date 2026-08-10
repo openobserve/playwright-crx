@@ -2,17 +2,20 @@
 ../generated/
 ../protocol/
 ../utils
-../utils/isomorphic/
+../utils/isomorphic/**
 ../utilsBundle.ts
 ../zipBundle.ts
 ./
 ./codegen/
-./isomorphic/
+./isomorphic
 ./har/
 ./recorder/
 ./registry/
 ./trace/recorder/tracing.ts
 ./utils/
+
+[devtoolsController.ts]
+./chromium/
 
 [playwright.ts]
 ./android/
@@ -21,3 +24,7 @@
 ./electron/
 ./firefox/
 ./webkit/
+
+[browser.ts]
+../remote/
+../serverRegistry.ts

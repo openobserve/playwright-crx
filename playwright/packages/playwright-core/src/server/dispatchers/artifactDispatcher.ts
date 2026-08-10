@@ -1,7 +1,7 @@
 /**
  * Copyright (c) Microsoft Corporation.
  *
- * Licensed under the Apache License, Version 2.0 (the 'License");
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -32,7 +32,7 @@ export class ArtifactDispatcher extends Dispatcher<Artifact, channels.ArtifactCh
     return ArtifactDispatcher.fromNullable(parentScope, artifact)!;
   }
 
-  static fromNullable(parentScope: DispatcherScope, artifact: Artifact): ArtifactDispatcher | undefined {
+  static fromNullable(parentScope: DispatcherScope, artifact: Artifact | undefined): ArtifactDispatcher | undefined {
     if (!artifact)
       return undefined;
     const result = parentScope.connection.existingDispatcher<ArtifactDispatcher>(artifact);

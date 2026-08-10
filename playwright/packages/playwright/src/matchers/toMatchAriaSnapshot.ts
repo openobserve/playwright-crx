@@ -46,7 +46,7 @@ export async function toMatchAriaSnapshot(
   if (!testInfo)
     throw new Error(`toMatchAriaSnapshot() must be called during the test`);
 
-  if (testInfo._projectInternal.ignoreSnapshots)
+  if (testInfo._projectInternal.project.ignoreSnapshots)
     return { pass: !this.isNot, message: () => '', name: 'toMatchAriaSnapshot', expected: '' };
 
   const updateSnapshots = testInfo.config.updateSnapshots;
@@ -80,6 +80,11 @@ export async function toMatchAriaSnapshot(
   }
 
   expected = unshift(expected);
+
+  const globalChildren = testInfo._projectInternal.expect?.toMatchAriaSnapshot?.children;
+  if (globalChildren && !expected.match(/^- \/children:/m))
+    expected = `- /children: ${globalChildren}\n` + expected;
+
   const { matches: pass, received, log, timedOut, errorMessage } = await locator._expect('to.match.aria', { expectedValue: expected, isNot: this.isNot, timeout });
   const typedReceived = received as MatcherReceived;
 

@@ -21,7 +21,6 @@ import { BrowserContext, verifyGeolocation } from '../browserContext';
 import * as network from '../network';
 import { WKConnection, WKSession, kPageProxyMessageReceived } from './wkConnection';
 import { WKPage } from './wkPage';
-import { TargetClosedError } from '../errors';
 import { translatePathToWSL } from './webkit';
 
 import type { BrowserOptions } from '../browser';
@@ -33,7 +32,7 @@ import type { Protocol } from './protocol';
 import type { PageProxyMessageReceivedPayload } from './wkConnection';
 import type * as channels from '@protocol/channels';
 
-const BROWSER_VERSION = '26.0';
+const BROWSER_VERSION = '26.4';
 const DEFAULT_USER_AGENT = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/${BROWSER_VERSION} Safari/605.1.15`;
 
 export class WKBrowser extends Browser {
@@ -76,9 +75,6 @@ export class WKBrowser extends Browser {
     for (const wkPage of this._wkPages.values())
       wkPage.didClose();
     this._wkPages.clear();
-    for (const video of this._idToVideo.values())
-      video.artifact.reportFinished(new TargetClosedError(this.closeReason()));
-    this._idToVideo.clear();
     this._didClose();
   }
 
@@ -369,7 +365,6 @@ export class WKBrowserContext extends BrowserContext {
 
   async doClose(reason: string | undefined) {
     if (!this._browserContextId) {
-      await Promise.all(this._wkPages().map(wkPage => wkPage._page.screencast.stopVideoRecording()));
       // Closing persistent context should close the browser.
       await this._browser.close({ reason });
     } else {

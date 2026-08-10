@@ -126,7 +126,7 @@ and Linux and to "Meta" on macOS.
 Defaults to `left`.
 
 ## input-files
-- `files` <[path]|[Array]<[path]>|[Object]|[Array]<[Object]>>
+- `files` <[path]|[Array]<[path]>|[Object=FilePayload]|[Array]<[Object=FilePayload]>>
   - `name` <[string]> File name
   - `mimeType` <[string]> File type
   - `buffer` <[Buffer]> File content
@@ -372,7 +372,6 @@ Emulates consistent window screen size available inside web page via `window.scr
 
 ## page-agent-cache-key
 * since: v1.58
-* hidden
 - `cacheKey` <[string]>
 
 All the agentic actions are converted to the Playwright calls and are cached.
@@ -380,7 +379,6 @@ By default, they are cached globally with the `task` as a key. This option allow
 
 ## page-agent-max-tokens
 * since: v1.58
-* hidden
 - `maxTokens` <[int]>
 
 Maximum number of tokens to consume. The agentic loop will stop after input + output tokens exceed this value.
@@ -388,14 +386,12 @@ Defaults to context-wide value specified in `agent` property.
 
 ## page-agent-max-actions
 * since: v1.58
-* hidden
 - `maxActions` <[int]>
 
 Maximum number of agentic actions to generate, defaults to context-wide value specified in `agent` property.
 
 ## page-agent-max-action-retries
 * since: v1.58
-* hidden
 - `maxActionRetries` <[int]>
 
 Maximum number of retries when generating each action, defaults to context-wide value specified in `agent` property.
@@ -808,12 +804,16 @@ When set to `minimal`, only record information necessary for routing from HAR. T
 ## context-option-recordvideo
 * langs: js
 - `recordVideo` <[Object]>
-  - `dir` <[path]> Path to the directory to put videos into.
-  - `size` ?<[Object]> Optional dimensions of the recorded videos. If not specified the size will be equal to `viewport`
+  - `dir` ?<[path]> Path to the directory to put videos into. If not specified, the videos will be stored in `artifactsDir` (see [`method: BrowserType.launch`] options).
+  - `size` ?<[Object=RecordVideoSize]> Optional dimensions of the recorded videos. If not specified the size will be equal to `viewport`
     scaled down to fit into 800x800. If `viewport` is not configured explicitly the video size defaults to 800x450.
     Actual picture of each page will be scaled down if necessary to fit the specified size.
     - `width` <[int]> Video frame width.
     - `height` <[int]> Video frame height.
+  - `showActions` ?<[Object=ShowActionsOptions]> If specified, enables visual annotations on interacted elements during video recording.
+    - `duration` ?<[float]> How long each annotation is displayed in milliseconds. Defaults to `500`.
+    - `position` ?<[AnnotatePosition]<"top-left"|"top"|"top-right"|"bottom-left"|"bottom"|"bottom-right">> Position of the action title overlay. Defaults to `"top-right"`.
+    - `fontSize` ?<[int]> Font size of the action title in pixels. Defaults to `24`.
 
 Enables video recording for all pages into `recordVideo.dir` directory. If not specified videos are not recorded. Make
 sure to await [`method: BrowserContext.close`] for videos to be saved.
@@ -894,10 +894,19 @@ Options to select. If the `<select>` has the `multiple` attribute, all matching 
 first option matching one of the passed options is selected. String values are matching both values and labels. Option
 is considered matching if all specified properties match.
 
-## wait-for-navigation-url
+## js-wait-for-navigation-url
+* langs: js
+- `url` <[string]|[RegExp]|[URLPattern]|[function]\([URL]\):[boolean]>
+
+A glob pattern, regex pattern, URL pattern, or predicate receiving [URL] to match while waiting for the navigation. Note that if
+the parameter is a string without wildcard characters, the method will wait for navigation to URL that is exactly
+equal to the string.
+
+## python-csharp-java-wait-for-navigation-url
+* langs: python, csharp, java
 - `url` <[string]|[RegExp]|[function]\([URL]\):[boolean]>
 
-A glob pattern, regex pattern or predicate receiving [URL] to match while waiting for the navigation. Note that if
+A glob pattern, regex pattern, or predicate receiving [URL] to match while waiting for the navigation. Note that if
 the parameter is a string without wildcard characters, the method will wait for navigation to URL that is exactly
 equal to the string.
 
@@ -1147,6 +1156,11 @@ Logger sink for Playwright logging.
 Maximum time in milliseconds to wait for the browser instance to start. Defaults to `30000` (30 seconds). Pass `0` to
 disable timeout.
 
+## browser-option-artifactsdir
+- `artifactsDir` <[path]>
+
+If specified, artifacts (traces, videos, downloads, HAR files, etc.) are saved into this directory. The directory is not cleaned up when the browser closes. If not specified, a temporary directory is used and cleaned up when the browser closes.
+
 ## browser-option-tracesdir
 - `tracesDir` <[path]>
 
@@ -1159,6 +1173,7 @@ Slows down Playwright operations by the specified amount of milliseconds. Useful
 
 ## shared-browser-options-list-v1.8
 - %%-browser-option-args-%%
+- %%-browser-option-artifactsdir-%%
 - %%-browser-option-channel-%%
 - %%-browser-option-chromiumsandbox-%%
 - %%-browser-option-downloadspath-%%
@@ -1454,7 +1469,7 @@ Consider the following DOM structure.
 <button data-testid="directions">Itinéraire</button>
 ```
 
-You can locate the element by it's test id:
+You can locate the element by its test id:
 
 ```js
 await page.getByTestId('directions').click();
@@ -1726,7 +1741,7 @@ Consider the following DOM structure.
 <button>Submit</button>
 ```
 
-You can locate each element by it's implicit role:
+You can locate each element by its implicit role:
 
 ```js
 await expect(page.getByRole('heading', { name: 'Sign up' })).toBeVisible();

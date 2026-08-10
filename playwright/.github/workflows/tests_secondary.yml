@@ -9,6 +9,8 @@ on:
     paths-ignore:
       - 'browser_patches/**'
       - 'docs/**'
+      - 'packages/playwright-core/src/server/bidi/**'
+      - 'tests/bidi/**'
     types: [ labeled ]
     branches:
       - main
@@ -229,7 +231,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-13, windows-latest]
+        os: [ubuntu-22.04, macos-14-large, windows-latest]
         headed: ['--headed', '']
         exclude:
           # Tested in tests_primary.yml already

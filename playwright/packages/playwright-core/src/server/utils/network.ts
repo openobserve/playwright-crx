@@ -55,7 +55,6 @@ export function httpRequest(params: HTTPRequestParams, onResponse: (r: http.Inco
       url = parsedProxyURL;
     } else {
       options.agent = new HttpsProxyAgent(parsedProxyURL);
-      options.rejectUnauthorized = false;
     }
   }
 
@@ -240,7 +239,7 @@ async function httpStatusCode(url: URL, ignoreHTTPSErrors: boolean, onLog?: (dat
   });
 }
 
-function decorateServer(server: net.Server) {
+export function decorateServer(server: net.Server) {
   const sockets = new Set<net.Socket>();
   server.on('connection', socket => {
     sockets.add(socket);

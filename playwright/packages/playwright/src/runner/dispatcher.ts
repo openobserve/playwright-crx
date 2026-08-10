@@ -22,13 +22,11 @@ import { WorkerHost } from './workerHost';
 import { serializeConfig } from '../common/ipc';
 import { addLocationAndSnippetToError } from '../reporters/internalReporter';
 import { serializeError } from '../util';
-import { Storage } from './storage';
 
 import type { FailureTracker } from './failureTracker';
 import type { ProcessExitData } from './processHost';
 import type { TestGroup } from './testGroups';
 import type { TestError, TestResult, TestStep } from '../../types/testReporter';
-import type * as ipc from '../common/ipc';
 import type { FullConfigInternal } from '../common/config';
 import type { AttachmentPayload, DonePayload, RunPayload, SerializedConfig, StepBeginPayload, StepEndPayload, TeardownErrorsPayload, TestBeginPayload, TestEndPayload, TestOutputPayload, TestPausedPayload } from '../common/ipc';
 import type { Suite } from '../common/test';
@@ -40,7 +38,8 @@ import type { RegisteredListener } from 'playwright-core/lib/utils';
 export type EnvByProjectId = Map<string, Record<string, string | undefined>>;
 
 export class Dispatcher {
-  private _workerSlots: { busy: boolean, worker?: WorkerHost, jobDispatcher?: JobDispatcher }[] = [];
+  // Worker slot is claimed when it has jobDispatcher assigned.
+  private _workerSlots: { worker?: WorkerHost, jobDispatcher?: JobDispatcher }[] = [];
   private _queue: TestGroup[] = [];
   private _workerLimitPerProjectId = new Map<string, number>();
   private _queuedOrRunningHashCount = new Map<string, number>();
@@ -71,7 +70,7 @@ export class Dispatcher {
       const projectIdWorkerLimit = this._workerLimitPerProjectId.get(job.projectId);
       if (!projectIdWorkerLimit)
         return index;
-      const runningWorkersWithSameProjectId = this._workerSlots.filter(w => w.busy && w.worker && w.worker.projectId() === job.projectId).length;
+      const runningWorkersWithSameProjectId = this._workerSlots.filter(w => w.jobDispatcher?.job.projectId === job.projectId).length;
       if (runningWorkersWithSameProjectId < projectIdWorkerLimit)
         return index;
     }
@@ -92,9 +91,9 @@ export class Dispatcher {
     const job = this._queue[jobIndex];
 
     // 2. Find a worker with the same hash, or just some free worker.
-    let workerIndex = this._workerSlots.findIndex(w => !w.busy && w.worker && w.worker.hash() === job.workerHash && !w.worker.didSendStop());
+    let workerIndex = this._workerSlots.findIndex(w => !w.jobDispatcher && w.worker && w.worker.hash() === job.workerHash && !w.worker.didSendStop());
     if (workerIndex === -1)
-      workerIndex = this._workerSlots.findIndex(w => !w.busy);
+      workerIndex = this._workerSlots.findIndex(w => !w.jobDispatcher);
     if (workerIndex === -1) {
       // No workers available, bail out.
       return;
@@ -103,7 +102,6 @@ export class Dispatcher {
     // 3. Claim both the job and the worker slot.
     this._queue.splice(jobIndex, 1);
     const jobDispatcher = new JobDispatcher(job, this._config, this._reporter, this._failureTracker, () => this.stop().catch(() => {}));
-    this._workerSlots[workerIndex].busy = true;
     this._workerSlots[workerIndex].jobDispatcher = jobDispatcher;
 
     // 4. Run the job. This is the only async operation.
@@ -111,7 +109,6 @@ export class Dispatcher {
 
       // 5. Release the worker slot.
       this._workerSlots[workerIndex].jobDispatcher = undefined;
-      this._workerSlots[workerIndex].busy = false;
 
       // 6. Check whether we are done or should schedule another job.
       this._checkFinished();
@@ -178,7 +175,7 @@ export class Dispatcher {
       return;
 
     // Make sure all workers have finished the current job.
-    if (this._workerSlots.some(w => w.busy))
+    if (this._workerSlots.some(w => !!w.jobDispatcher))
       return;
 
     this._finished.resolve();
@@ -209,7 +206,7 @@ export class Dispatcher {
       void this.stop();
     // 1. Allocate workers.
     for (let i = 0; i < this._config.config.workers; i++)
-      this._workerSlots.push({ busy: false });
+      this._workerSlots.push({});
     // 2. Schedule enough jobs.
     for (let i = 0; i < this._workerSlots.length; i++)
       this._scheduleJob();
@@ -261,12 +258,6 @@ export class Dispatcher {
     worker.on('exit', () => {
       const producedEnv = this._producedEnvByProjectId.get(testGroup.projectId) || {};
       this._producedEnvByProjectId.set(testGroup.projectId, { ...producedEnv, ...worker.producedEnv() });
-    });
-    worker.onRequest('cloneStorage', async (params: ipc.CloneStoragePayload) => {
-      return await Storage.clone(params.storageFile, outputDir);
-    });
-    worker.onRequest('upstreamStorage', async (params: ipc.UpstreamStoragePayload) => {
-      await Storage.upstream(params.storageFile, params.storageOutFile);
     });
     return worker;
   }

@@ -16,15 +16,13 @@
  */
 
 import fs from 'fs';
-import path from 'path';
 
 import { createGuid } from './utils/crypto';
-import { debugMode } from './utils/debug';
+import { debugMode, isUnderTest } from './utils/debug';
 import { Clock } from './clock';
 import { Debugger } from './debugger';
 import { DialogManager } from './dialog';
 import { BrowserContextAPIRequestContext } from './fetch';
-import { mkdirIfNeeded } from './utils/fileUtils';
 import { rewriteErrorMessage } from '../utils/isomorphic/stackTrace';
 import { HarRecorder } from './har/harRecorder';
 import { helper } from './helper';
@@ -63,8 +61,9 @@ const BrowserContextEvent = {
   RequestFulfilled: 'requestfulfilled',
   RequestContinued: 'requestcontinued',
   BeforeClose: 'beforeclose',
-  VideoStarted: 'videostarted',
   RecorderEvent: 'recorderevent',
+  PageClosed: 'pageclosed',
+  InternalFrameNavigatedToNewDocument: 'internalframenavigatedtonewdocument',
 } as const;
 
 export type BrowserContextEventMap = {
@@ -80,8 +79,9 @@ export type BrowserContextEventMap = {
   [BrowserContextEvent.RequestFulfilled]: [request: network.Request];
   [BrowserContextEvent.RequestContinued]: [request: network.Request];
   [BrowserContextEvent.BeforeClose]: [];
-  [BrowserContextEvent.VideoStarted]: [artifact: Artifact];
   [BrowserContextEvent.RecorderEvent]: [event: { event: 'actionAdded' | 'actionUpdated' | 'signalAdded', data: any, page: Page, code: string }];
+  [BrowserContextEvent.PageClosed]: [page: Page];
+  [BrowserContextEvent.InternalFrameNavigatedToNewDocument]: [frame: frames.Frame, page: Page];
 };
 
 export abstract class BrowserContext<EM extends EventMap = EventMap> extends SdkObject<BrowserContextEventMap | EM> {
@@ -147,24 +147,27 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
     // Debugger will pause execution upon page.pause in headed mode.
     this._debugger = new Debugger(this);
 
-    // When PWDEBUG=1, show inspector for each context.
-    if (debugMode() === 'inspector')
-      await RecorderApp.show(this, { pauseOnNextStatement: true });
-
     // When paused, show inspector.
-    if (this._debugger.isPaused())
-      RecorderApp.showInspectorNoReply(this);
+    const shouldEnableDebugger = !this.attribution.playwright.options.isServer && (isUnderTest() || !!this._browser.options.headful);
+    if (shouldEnableDebugger) {
+      this._debugger.setPauseAt();
+      this._debugger.on(Debugger.Events.PausedStateChanged, () => {
+        if (this._debugger.isPaused())
+          RecorderApp.showInspectorNoReply(this);
+      });
+    }
 
-    this._debugger.on(Debugger.Events.PausedStateChanged, () => {
-      if (this._debugger.isPaused())
-        RecorderApp.showInspectorNoReply(this);
-    });
+    // When PWDEBUG=1, show inspector for each context.
+    if (debugMode() === 'inspector') {
+      this._debugger.setPauseAt({ next: true });
+      await RecorderApp.show(this, { pauseOnNextStatement: true });
+    }
 
     if (debugMode() === 'console')
       await this.exposeConsoleApi();
 
     if (this._options.serviceWorkers === 'block')
-      await this.addInitScript(undefined, `\nif (navigator.serviceWorker) navigator.serviceWorker.register = async () => { console.warn('Service Worker registration blocked by Playwright'); };\n`);
+      await this.addInitScript(`\nif (navigator.serviceWorker) navigator.serviceWorker.register = async () => { console.warn('Service Worker registration blocked by Playwright'); };\n`);
 
     if (this._options.permissions)
       await this.grantPermissions(this._options.permissions);
@@ -182,11 +185,6 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
       function installConsoleApi(injectedScript) { injectedScript.consoleApi.install(); }
       module.exports = { default: () => installConsoleApi };
     `);
-  }
-
-  async _ensureVideosPath() {
-    if (this._options.recordVideo)
-      await mkdirIfNeeded(path.join(this._options.recordVideo.dir, 'dummy'));
   }
 
   canResetForReuse(): boolean {
@@ -335,7 +333,7 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
     this._playwrightBindingExposed ??= (async () => {
       await this.doExposePlaywrightBinding();
 
-      this.bindingsInitScript = PageBinding.createInitScript();
+      this.bindingsInitScript = PageBinding.createInitScript(this);
       this.initScripts.push(this.bindingsInitScript);
       await this.doAddInitScript(this.bindingsInitScript);
       await this.safeNonStallingEvaluateInAllFrames(this.bindingsInitScript.source, 'main');
@@ -355,7 +353,7 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
         throw new Error(`Function "${name}" has been already registered in one of the pages`);
     }
     await progress.race(this.exposePlaywrightBindingIfNeeded());
-    const binding = new PageBinding(name, playwrightBinding, needsHandle);
+    const binding = new PageBinding(this, name, playwrightBinding, needsHandle);
     binding.forClient = forClient;
     this._pageBindings.set(name, binding);
     try {
@@ -368,12 +366,12 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
     }
   }
 
-  async removeExposedBindings(bindings: PageBinding[]) {
-    bindings = bindings.filter(binding => this._pageBindings.get(binding.name) === binding);
-    for (const binding of bindings)
-      this._pageBindings.delete(binding.name);
-    await this.doRemoveInitScripts(bindings.map(binding => binding.initScript));
-    const cleanup = bindings.map(binding => `{ ${binding.cleanupScript} };\n`).join('');
+  async removeExposedBinding(binding: PageBinding) {
+    if (this._pageBindings.get(binding.name) !== binding)
+      return;
+    this._pageBindings.delete(binding.name);
+    await this.doRemoveInitScripts([binding.initScript]);
+    const cleanup = `{ ${binding.cleanupScript} };`;
     await this.safeNonStallingEvaluateInAllFrames(cleanup, 'main');
   }
 
@@ -473,27 +471,22 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
       this._options.httpCredentials = { username, password: password || '' };
   }
 
-  async addInitScript(progress: Progress | undefined, source: string) {
-    const initScript = new InitScript(source);
+  async addInitScript(source: string) {
+    const initScript = new InitScript(this, source);
     this.initScripts.push(initScript);
     try {
-      const promise = this.doAddInitScript(initScript);
-      if (progress)
-        await progress.race(promise);
-      else
-        await promise;
+      await this.doAddInitScript(initScript);
       return initScript;
     } catch (error) {
       // Note: no await, init script will be removed in the background as soon as possible.
-      this.removeInitScripts([initScript]).catch(() => {});
+      initScript.dispose().catch(() => {});
       throw error;
     }
   }
 
-  async removeInitScripts(initScripts: InitScript[]) {
-    const set = new Set(initScripts);
-    this.initScripts = this.initScripts.filter(script => !set.has(script));
-    await this.doRemoveInitScripts(initScripts);
+  async removeInitScript(initScript: InitScript) {
+    this.initScripts = this.initScripts.filter(script => initScript !== script);
+    await this.doRemoveInitScripts([initScript]);
   }
 
   async addRequestInterceptor(progress: Progress, handler: network.RouteHandler): Promise<void> {
@@ -537,14 +530,7 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
       for (const harRecorder of this._harRecorders.values())
         await harRecorder.flush();
       await this.tracing.flush();
-
-      // Cleanup.
-      const promises: Promise<void>[] = [];
-      for (const { context, artifact } of this._browser._idToVideo.values()) {
-        // Wait for the videos to finish.
-        if (context === this)
-          promises.push(artifact.finishedPromise());
-      }
+      await Promise.all(this.pages().map(page => page.screencast.handlePageOrContextClose()));
 
       if (this._customCloseHandler) {
         await this._customCloseHandler();
@@ -555,6 +541,7 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
 
       // We delete downloads after context closure
       // so that browser does not write to the download file anymore.
+      const promises: Promise<void>[] = [];
       promises.push(this._deleteAllDownloads());
       promises.push(this._deleteAllTempDirs());
       await Promise.all(promises);
@@ -644,7 +631,7 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
     return this._creatingStorageStatePage;
   }
 
-  async setStorageState(progress: Progress, state: channels.BrowserNewContextParams['storageState'], mode: 'initial' | 'resetForReuse') {
+  async setStorageState(progress: Progress, state: channels.BrowserNewContextParams['storageState'], mode: 'initial' | 'resetForReuse' | 'api') {
     let page: Page | undefined;
     let interceptor: network.RouteHandler | undefined;
     try {
@@ -745,23 +732,6 @@ export function validateBrowserContextOptions(options: types.BrowserContextOptio
     options.acceptDownloads = 'internal-browser-default';
   if (!options.viewport && !options.noDefaultViewport)
     options.viewport = { width: 1280, height: 720 };
-  if (options.recordVideo) {
-    if (!options.recordVideo.size) {
-      if (options.noDefaultViewport) {
-        options.recordVideo.size = { width: 800, height: 600 };
-      } else {
-        const size = options.viewport!;
-        const scale = Math.min(1, 800 / Math.max(size.width, size.height));
-        options.recordVideo.size = {
-          width: Math.floor(size.width * scale),
-          height: Math.floor(size.height * scale)
-        };
-      }
-    }
-    // Make sure both dimensions are odd, this is required for vp8
-    options.recordVideo.size!.width &= ~1;
-    options.recordVideo.size!.height &= ~1;
-  }
   if (options.proxy)
     options.proxy = normalizeProxySettings(options.proxy);
   verifyGeolocation(options.geolocation);
@@ -818,6 +788,74 @@ export function normalizeProxySettings(proxy: types.ProxySettings): types.ProxyS
   if (bypass)
     bypass = bypass.split(',').map(t => t.trim()).join(',');
   return { ...proxy, server, bypass };
+}
+
+// Chromium reference: https://source.chromium.org/chromium/chromium/src/+/main:components/embedder_support/user_agent_utils.cc;l=434
+export function calculateUserAgentEmulation(options: types.BrowserContextOptions): {
+  navigatorPlatform: string | undefined;
+  userAgentMetadata: {
+    mobile: boolean;
+    model: string;
+    architecture: string;
+    platform: string;
+    platformVersion: string;
+  } | undefined;
+} {
+  const ua = options.userAgent;
+  if (!ua)
+    return { navigatorPlatform: undefined, userAgentMetadata: undefined };
+
+  const userAgentMetadata = {
+    mobile: !!options.isMobile,
+    model: '',
+    architecture: 'x86',
+    platform: 'Windows',
+    platformVersion: '',
+  };
+
+  const androidMatch = ua.match(/Android (\d+(\.\d+)?(\.\d+)?)/);
+  const iPhoneMatch = ua.match(/iPhone OS (\d+(_\d+)?)/);
+  const iPadMatch = ua.match(/iPad; CPU OS (\d+(_\d+)?)/);
+  const macOSMatch = ua.match(/Mac OS X (\d+(_\d+)?(_\d+)?)/);
+  const windowsMatch = ua.match(/Windows\D+(\d+(\.\d+)?(\.\d+)?)/);
+  if (androidMatch) {
+    userAgentMetadata.platform = 'Android';
+    userAgentMetadata.platformVersion = androidMatch[1];
+    userAgentMetadata.architecture = 'arm';
+  } else if (iPhoneMatch) {
+    userAgentMetadata.platform = 'iOS';
+    userAgentMetadata.platformVersion = iPhoneMatch[1].replace(/_/g, '.');
+    userAgentMetadata.architecture = 'arm';
+  } else if (iPadMatch) {
+    userAgentMetadata.platform = 'iOS';
+    userAgentMetadata.platformVersion = iPadMatch[1].replace(/_/g, '.');
+    userAgentMetadata.architecture = 'arm';
+  } else if (macOSMatch) {
+    userAgentMetadata.platform = 'macOS';
+    userAgentMetadata.platformVersion = macOSMatch[1].replace(/_/g, '.');
+    if (!ua.includes('Intel'))
+      userAgentMetadata.architecture = 'arm';
+  } else if (windowsMatch) {
+    userAgentMetadata.platform = 'Windows';
+    userAgentMetadata.platformVersion = windowsMatch[1];
+  } else if (ua.toLowerCase().includes('linux')) {
+    userAgentMetadata.platform = 'Linux';
+  }
+  if (ua.includes('ARM') || ua.includes('aarch64'))
+    userAgentMetadata.architecture = 'arm';
+
+  let navigatorPlatform: string | undefined;
+  if (!process.env.PLAYWRIGHT_NO_UA_PLATFORM) {
+    switch (userAgentMetadata.platform) {
+      case 'Android': navigatorPlatform = userAgentMetadata.architecture === 'arm' ? 'Linux armv8l' : 'Linux x86_64'; break;
+      case 'iOS': navigatorPlatform = ua.includes('iPad') ? 'iPad' : 'iPhone'; break;
+      case 'macOS': navigatorPlatform = 'MacIntel'; break;
+      case 'Linux': navigatorPlatform = userAgentMetadata.architecture === 'arm' ? 'Linux aarch64' : 'Linux x86_64'; break;
+      case 'Windows': navigatorPlatform = 'Win32'; break;
+    }
+  }
+
+  return { navigatorPlatform, userAgentMetadata };
 }
 
 const paramsThatAllowContextReuse: (keyof channels.BrowserNewContextForReuseParams)[] = [

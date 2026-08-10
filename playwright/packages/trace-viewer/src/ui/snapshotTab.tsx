@@ -25,6 +25,7 @@ import { clsx, useMeasure, useSetting } from '@web/uiUtils';
 import { InjectedScript } from '@injected/injectedScript';
 import { Recorder } from '@injected/recorder/recorder';
 import { asLocator } from '@isomorphic/locatorGenerators';
+import { blankSnapshotUrl } from '@isomorphic/trace/snapshotRenderer';
 import type { Language } from '@isomorphic/locatorGenerators';
 import { locatorOrSelectorAsSelector } from '@isomorphic/locatorParser';
 import { TabbedPaneTab } from '@web/components/tabbedPane';
@@ -32,6 +33,8 @@ import { BrowserFrame } from './browserFrame';
 import type { ElementInfo } from '@recorder/recorderTypes';
 import { parseAriaSnapshot } from '@isomorphic/ariaSnapshot';
 import yaml from 'yaml';
+import { PlaybackButtons } from './playbackControl';
+import type { PlaybackState } from './playbackControl';
 
 export type HighlightedElement = {
   locator?: string,
@@ -48,7 +51,8 @@ export const SnapshotTabsView: React.FunctionComponent<{
   setIsInspecting: (isInspecting: boolean) => void,
   highlightedElement: HighlightedElement,
   setHighlightedElement: (element: HighlightedElement) => void,
-}> = ({ action, model, sdkLanguage, testIdAttributeName, isInspecting, setIsInspecting, highlightedElement, setHighlightedElement }) => {
+  playback: PlaybackState
+}> = ({ action, model, sdkLanguage, testIdAttributeName, isInspecting, setIsInspecting, highlightedElement, setHighlightedElement, playback }) => {
   const [snapshotTab, setSnapshotTab] = React.useState<'action'|'before'|'after'>('action');
 
   const [shouldPopulateCanvasFromScreenshot] = useSetting('shouldPopulateCanvasFromScreenshot', false);
@@ -78,6 +82,7 @@ export const SnapshotTabsView: React.FunctionComponent<{
         })}
       </div>
       <div style={{ flex: 'auto' }}></div>
+      <PlaybackButtons playback={playback} />
       <ToolbarButton icon='link-external' title='Open snapshot in a new tab' disabled={!snapshotUrls?.popoutUrl} onClick={() => {
         const win = window.open(snapshotUrls?.popoutUrl || '', '_blank');
         win?.addEventListener('DOMContentLoaded', () => {
@@ -133,7 +138,7 @@ export const SnapshotView: React.FunctionComponent<{
           iframe.addEventListener('error', loadedCallback);
 
           // Try preventing history entry from being created.
-          const snapshotUrl = snapshotUrls?.snapshotUrl || kBlankSnapshotUrl;
+          const snapshotUrl = snapshotUrls?.snapshotUrl || blankSnapshotUrl;
           if (iframe.contentWindow)
             iframe.contentWindow.location.replace(snapshotUrl);
           else
@@ -324,10 +329,9 @@ export type Snapshot = {
   snapshotName: string;
   pageId: string;
   point?: { x: number, y: number };
-  hasInputTarget?: boolean;
 };
 
-const createSnapshot = (action: ActionTraceEvent, snapshotNameKey: 'beforeSnapshot' | 'afterSnapshot' | 'inputSnapshot', hasInputTarget: boolean = false): Snapshot | undefined => {
+const createSnapshot = (action: ActionTraceEvent, snapshotNameKey: 'beforeSnapshot' | 'afterSnapshot' | 'inputSnapshot'): Snapshot | undefined => {
   if (!action)
     return undefined;
 
@@ -347,7 +351,6 @@ const createSnapshot = (action: ActionTraceEvent, snapshotNameKey: 'beforeSnapsh
     snapshotName,
     pageId: action.pageId,
     point: action.point,
-    hasInputTarget,
   };
 };
 
@@ -408,7 +411,7 @@ export function collectSnapshots(action: ActionTraceEvent | undefined): Snapshot
       afterSnapshot = beforeSnapshot;
   }
 
-  const actionSnapshot = createSnapshot(action, 'inputSnapshot', true) ?? afterSnapshot;
+  const actionSnapshot = createSnapshot(action, 'inputSnapshot') ?? afterSnapshot;
   if (actionSnapshot)
     actionSnapshot.point = action.point;
   return { action: actionSnapshot, before: beforeSnapshot, after: afterSnapshot };
@@ -425,8 +428,6 @@ export function extendSnapshot(traceUri: string, snapshot: Snapshot, shouldPopul
   if (snapshot.point) {
     params.set('pointX', String(snapshot.point.x));
     params.set('pointY', String(snapshot.point.y));
-    if (snapshot.hasInputTarget)
-      params.set('hasInputTarget', '1');
   }
   if (shouldPopulateCanvasFromScreenshot)
     params.set('shouldPopulateCanvasFromScreenshot', '1');
@@ -457,4 +458,3 @@ export async function fetchSnapshotInfo(snapshotInfoUrl: string | undefined) {
 }
 
 export const kDefaultViewport = { width: 1280, height: 720 };
-const kBlankSnapshotUrl = 'data:text/html,<body style="background: #ddd"></body>';

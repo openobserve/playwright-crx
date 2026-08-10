@@ -23,13 +23,11 @@ import { generateAriaTree, getAllElementsMatchingExpectAriaTemplate, matchesExpe
 import { beginDOMCaches, enclosingShadowRootOrDocument, endDOMCaches, isElementVisible, isInsideScope, parentElementOrShadowHost, setGlobalOptions } from './domUtils';
 import { Highlight } from './highlight';
 import { kLayoutSelectorNames, layoutSelectorScore } from './layoutSelectorUtils';
-import { createReactEngine } from './reactSelectorEngine';
 import { createRoleEngine } from './roleSelectorEngine';
 import { beginAriaCaches, endAriaCaches, getAriaDisabled, getAriaRole, getCheckedAllowMixed, getCheckedWithoutMixed, getElementAccessibleDescription, getElementAccessibleErrorMessage, getElementAccessibleName, getReadonly } from './roleUtils';
 import { SelectorEvaluatorImpl, sortInDOMOrder } from './selectorEvaluator';
 import { generateSelector } from './selectorGenerator';
 import { elementMatchesText, elementText, getElementLabels } from './selectorUtils';
-import { createVueEngine } from './vueSelectorEngine';
 import { XPathEngine } from './xpathSelectorEngine';
 import { ConsoleAPI } from './consoleApi';
 import { UtilityScript } from './utilityScript';
@@ -204,8 +202,6 @@ export class InjectedScript {
     this._engines = new Map();
     this._engines.set('xpath', XPathEngine);
     this._engines.set('xpath:light', XPathEngine);
-    this._engines.set('_react', createReactEngine());
-    this._engines.set('_vue', createVueEngine());
     this._engines.set('role', createRoleEngine(false));
     this._engines.set('text', this._createTextEngine(true, false));
     this._engines.set('text:light', this._createTextEngine(false, false));
@@ -310,25 +306,25 @@ export class InjectedScript {
     return this.incrementalAriaSnapshot(node, options).full;
   }
 
-  incrementalAriaSnapshot(node: Node, options: AriaTreeOptions & { track?: string }): { full: string, incremental?: string, iframeRefs: string[] } {
+  incrementalAriaSnapshot(node: Node, options: AriaTreeOptions & { track?: string, depth?: number }): { full: string, incremental?: string, iframeRefs: string[], iframeDepths: Record<string, number> } {
     if (node.nodeType !== Node.ELEMENT_NODE)
       throw this.createStacklessError('Can only capture aria snapshot of Element nodes.');
     const ariaSnapshot = generateAriaTree(node as Element, options);
-    const full = renderAriaTree(ariaSnapshot, options);
+    const rendered = renderAriaTree(ariaSnapshot, options);
     let incremental: string | undefined;
     if (options.track) {
       const previousSnapshot = this._lastAriaSnapshotForTrack.get(options.track);
       if (previousSnapshot)
-        incremental = renderAriaTree(ariaSnapshot, options, previousSnapshot);
+        incremental = renderAriaTree(ariaSnapshot, options, previousSnapshot).text;
       this._lastAriaSnapshotForTrack.set(options.track, ariaSnapshot);
     }
     this._lastAriaSnapshotForQuery = ariaSnapshot;
-    return { full, incremental, iframeRefs: ariaSnapshot.iframeRefs };
+    return { full: rendered.text, incremental, iframeRefs: ariaSnapshot.iframeRefs, iframeDepths: rendered.iframeDepths };
   }
 
   ariaSnapshotForRecorder(): { ariaSnapshot: string, refs: Map<Element, string> } {
     const tree = generateAriaTree(this.document.body, { mode: 'ai' });
-    const ariaSnapshot = renderAriaTree(tree, { mode: 'ai' });
+    const { text: ariaSnapshot } = renderAriaTree(tree, { mode: 'ai' });
     return { ariaSnapshot, refs: tree.refs };
   }
 
@@ -879,6 +875,7 @@ export class InjectedScript {
       textarea.focus();
       return 'done';
     }
+    (element as HTMLElement | SVGElement).focus();
     const range = element.ownerDocument.createRange();
     range.selectNodeContents(element);
     const selection = element.ownerDocument.defaultView!.getSelection();
@@ -886,7 +883,6 @@ export class InjectedScript {
       selection.removeAllRanges();
       selection.addRange(range);
     }
-    (element as HTMLElement | SVGElement).focus();
     return 'done';
   }
 
@@ -1294,14 +1290,27 @@ export class InjectedScript {
   }
 
   maskSelectors(selectors: ParsedSelector[], color: string) {
+    const highlight = this._createHighlight();
+    const elements = [];
+    for (const selector of selectors)
+      elements.push(this.querySelectorAll(selector, this.document.documentElement));
+    highlight.maskElements(elements.flat(), color);
+  }
+
+  private _createHighlight() {
     if (this._highlight)
       this.hideHighlight();
     this._highlight = new Highlight(this);
     this._highlight.install();
-    const elements = [];
-    for (const selector of selectors)
-      elements.push(this.querySelectorAll(selector, this.document.documentElement));
-    this._highlight.maskElements(elements.flat(), color);
+    return this._highlight;
+  }
+
+  private _ensureHighlight() {
+    if (!this._highlight) {
+      this._highlight = new Highlight(this);
+      this._highlight.install();
+    }
+    return this._highlight;
   }
 
   highlight(selector: ParsedSelector) {
@@ -1310,6 +1319,50 @@ export class InjectedScript {
       this._highlight.install();
     }
     this._highlight.runHighlightOnRaf(selector);
+  }
+
+  setScreencastAnnotation(annotation: { point?: channels.Point, box?: channels.Rect, actionTitle?: string, duration?: number, position?: string, fontSize?: number } | null) {
+    const highlight = this._ensureHighlight();
+    if (!annotation) {
+      highlight.updateHighlight([]);
+      highlight.hideActionPoint();
+      highlight.hideActionTitle();
+      return;
+    }
+    const fadeDuration = annotation.duration ?? 500;
+
+    if (annotation.box) {
+      highlight.updateHighlight([{
+        box: annotation.box,
+        color: 'rgba(0, 128, 255, 0.15)',
+        borderColor: 'rgba(0, 128, 255, 0.6)',
+        fadeDuration,
+      }]);
+    }
+    if (annotation.point)
+      highlight.showActionPoint(annotation.point.x, annotation.point.y, fadeDuration);
+    if (annotation.actionTitle)
+      highlight.showActionTitle(annotation.actionTitle, fadeDuration, annotation.position, annotation.fontSize);
+  }
+
+  addUserOverlay(id: string, html: string) {
+    const highlight = this._ensureHighlight();
+    highlight.addUserOverlay(id, html);
+  }
+
+  getUserOverlay(id: string): HTMLElement | undefined {
+    const highlight = this._ensureHighlight();
+    return highlight.getUserOverlay(id);
+  }
+
+  removeUserOverlay(id: string) {
+    const highlight = this._ensureHighlight();
+    highlight.removeUserOverlay(id);
+  }
+
+  setUserOverlaysVisible(visible: boolean) {
+    const highlight = this._ensureHighlight();
+    highlight.setUserOverlaysVisible(visible);
   }
 
   hideHighlight() {

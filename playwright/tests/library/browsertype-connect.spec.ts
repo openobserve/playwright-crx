@@ -247,7 +247,9 @@ for (const kind of ['launchServer', 'run-server'] as const) {
       expect(request.headers['foo']).toBe('bar');
     });
 
-    test('should send default User-Agent and X-Playwright-Browser headers with connect request', async ({ connect, browserName, server }) => {
+    test('should send default User-Agent and X-Playwright-Browser headers with connect request', async ({ connect, browserName, server, isFrozenWebkit }) => {
+      test.skip(isFrozenWebkit);
+
       const [request] = await Promise.all([
         server.waitForWebSocketConnectionRequest(),
         connect(`ws://localhost:${server.PORT}/ws`, {
@@ -506,8 +508,44 @@ for (const kind of ['launchServer', 'run-server'] as const) {
       const savedAsPath = testInfo.outputPath('my-video.webm');
       await page.video().saveAs(savedAsPath);
       expect(fs.existsSync(savedAsPath)).toBeTruthy();
-      const error = await page.video().path().catch(e => e);
-      expect(error.message).toContain('Path is not available when connecting remotely. Use saveAs() to save a local copy.');
+    });
+
+    test('should save videos to artifactsDir', async ({ connect, startRemoteServer }, testInfo) => {
+      const artifactsDir = testInfo.outputPath('artifacts');
+      const remoteServer = await startRemoteServer(kind, { artifactsDir });
+      const browser = await connect(remoteServer.wsEndpoint());
+      const localDir = testInfo.outputPath('random-dir');
+      const context = await browser.newContext({
+        recordVideo: { dir: localDir, size: { width: 320, height: 240 } },
+      });
+      const page = await context.newPage();
+      await page.evaluate(() => document.body.style.backgroundColor = 'red');
+      await rafraf(page, 100);
+      await context.close();
+
+      const savedAsPath = testInfo.outputPath('my-video.webm');
+      await page.video().saveAs(savedAsPath);
+      expect(fs.existsSync(savedAsPath)).toBeTruthy();
+      expect(fs.existsSync(localDir)).toBeFalsy();
+
+      await browser.close();
+    });
+
+    test('should name video file after page guid when connecting to remote browser with artifactsDir', async ({ connect, startRemoteServer }, testInfo) => {
+      const artifactsDir = testInfo.outputPath('artifacts');
+      const remoteServer = await startRemoteServer(kind, { artifactsDir });
+      const browser = await connect(remoteServer.wsEndpoint());
+      const context = await browser.newContext({
+        recordVideo: { size: { width: 320, height: 240 } },
+      });
+      const page = await context.newPage();
+      await page.evaluate(() => document.body.style.backgroundColor = 'red');
+      await rafraf(page, 100);
+      await context.close();
+
+      expect(fs.existsSync(path.join(artifactsDir, (page as any)._guid + '.webm'))).toBeTruthy();
+
+      await browser.close();
     });
 
     test('should be able to connect 20 times to a single server without warnings', async ({ connect, startRemoteServer, platform }) => {
@@ -597,8 +635,7 @@ for (const kind of ['launchServer', 'run-server'] as const) {
 
     test('should be able to connect when the wsEndpoint is passed as an option', async ({ browserType, startRemoteServer }) => {
       const remoteServer = await startRemoteServer(kind);
-      const browser = await browserType.connect({
-        wsEndpoint: remoteServer.wsEndpoint(),
+      const browser = await browserType.connect(remoteServer.wsEndpoint(), {
         headers: {
           'x-playwright-launch-options': JSON.stringify((browserType as any)._playwright._defaultLaunchOptions || {}),
         },
@@ -733,6 +770,44 @@ for (const kind of ['launchServer', 'run-server'] as const) {
       await Promise.all([uploadFile, file1.filepath].map(fs.promises.unlink));
     });
 
+    test('should upload a folder', async ({ connect, startRemoteServer, server }, testInfo) => {
+      test.slow();
+      const remoteServer = await startRemoteServer(kind);
+      const browser = await connect(remoteServer.wsEndpoint());
+      const context = await browser.newContext();
+      const page = await context.newPage();
+
+      await page.goto(server.PREFIX + '/input/folderupload.html');
+      const input = await page.$('input');
+      const folderName = 'folder-upload-test';
+      const dir = testInfo.outputPath(folderName);
+      {
+        await fs.promises.mkdir(dir, { recursive: true });
+        await fs.promises.writeFile(path.join(dir, 'file1.txt'), 'file1 content');
+        await fs.promises.writeFile(path.join(dir, 'file2'), 'file2 content');
+        await fs.promises.mkdir(path.join(dir, 'sub-dir'));
+        await fs.promises.writeFile(path.join(dir, 'sub-dir', 'really.txt'), 'sub-dir file content');
+      }
+      await input.setInputFiles(dir);
+
+      const webkitRelativePaths = await page.evaluate(e => [...e.files].map(f => f.webkitRelativePath), input);
+      expect(new Set(webkitRelativePaths)).toEqual(new Set([
+        `${folderName}/file1.txt`,
+        `${folderName}/file2`,
+        `${folderName}/sub-dir/really.txt`,
+      ]));
+
+      for (let i = 0; i < webkitRelativePaths.length; i++) {
+        const content = await input.evaluate((e, i) => {
+          const reader = new FileReader();
+          const promise = new Promise(fulfill => reader.onload = fulfill);
+          reader.readAsText(e.files[i]);
+          return promise.then(() => reader.result);
+        }, i);
+        expect(content).toEqual(fs.readFileSync(path.join(dir, '..', webkitRelativePaths[i])).toString());
+      }
+    });
+
     test('setInputFiles should preserve lastModified timestamp', async ({ connect, startRemoteServer, asset }) => {
       test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/27452' });
       const remoteServer = await startRemoteServer(kind);
@@ -789,7 +864,7 @@ for (const kind of ['launchServer', 'run-server'] as const) {
         });
         const examplePort = 20_000 + testInfo.workerIndex * 3;
         const remoteServer = await startRemoteServer(kind);
-        const browser = await connect(remoteServer.wsEndpoint(), { _exposeNetwork: '*' } as any, dummyServerPort);
+        const browser = await connect(remoteServer.wsEndpoint(), { exposeNetwork: '*' } as any, dummyServerPort);
         const page = await browser.newPage();
         {
           await page.setContent('empty');
@@ -1045,7 +1120,7 @@ test.describe('launchServer only', () => {
 
 test('should refuse connecting when versions do not match', async ({ connect, childProcess }) => {
   const server = new RunServer();
-  await server.start(childProcess, 'default', { PW_VERSION_OVERRIDE: '1.2.3' });
+  await server.start(childProcess, { mode: 'default', env: { PW_VERSION_OVERRIDE: '1.2.3' } });
   const error = await connect(server.wsEndpoint()).catch(e => e);
   await server.close();
   expect(error.message).toContain('Playwright version mismatch');

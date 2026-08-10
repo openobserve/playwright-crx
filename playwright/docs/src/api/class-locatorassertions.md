@@ -70,7 +70,11 @@ public class ExampleTests : PageTest
 * langs: java, js, csharp
 - returns: <[LocatorAssertions]>
 
-Makes the assertion check for the opposite condition. For example, this code tests that the Locator doesn't contain text `"error"`:
+Makes the assertion check for the opposite condition.
+
+**Usage**
+
+For example, this code tests that the Locator doesn't contain text `"error"`:
 
 ```js
 await expect(locator).not.toContainText('error');
@@ -1100,7 +1104,7 @@ await expect(locator).toContainClass(['inactive', 'active', 'inactive']);
 ```
 
 ```java
-assertThat(page.locator(".list > .component")).containsClass(new String[] {"inactive", "active", "inactive"});
+assertThat(page.locator(".list > .component")).containsClass(Arrays.asList("inactive", "active", "inactive"));
 ```
 
 ```python async

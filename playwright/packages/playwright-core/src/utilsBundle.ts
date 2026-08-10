@@ -18,6 +18,7 @@ export const colors: typeof import('../bundles/utils/node_modules/colors/safe') 
 export const debug: typeof import('../bundles/utils/node_modules/@types/debug') = require('./utilsBundleImpl').debug;
 export const diff: typeof import('../bundles/utils/node_modules/@types/diff') = require('./utilsBundleImpl').diff;
 export const dotenv: typeof import('../bundles/utils/node_modules/dotenv') = require('./utilsBundleImpl').dotenv;
+export const ini: typeof import('../bundles/utils/node_modules/@types/ini') = require('./utilsBundleImpl').ini;
 export const getProxyForUrl: typeof import('../bundles/utils/node_modules/@types/proxy-from-env').getProxyForUrl = require('./utilsBundleImpl').getProxyForUrl;
 export const HttpsProxyAgent: typeof import('../bundles/utils/node_modules/https-proxy-agent').HttpsProxyAgent = require('./utilsBundleImpl').HttpsProxyAgent;
 export const jpegjs: typeof import('../bundles/utils/node_modules/jpeg-js') = require('./utilsBundleImpl').jpegjs;
@@ -38,29 +39,3 @@ export const yaml: typeof import('../bundles/utils/node_modules/yaml') = require
 export type { Range as YAMLRange, Scalar as YAMLScalar, YAMLError, YAMLMap, YAMLSeq } from '../bundles/utils/node_modules/yaml';
 export type { Command } from '../bundles/utils/node_modules/commander';
 export type { EventEmitter as WebSocketEventEmitter, RawData as WebSocketRawData, WebSocket, WebSocketServer } from '../bundles/utils/node_modules/@types/ws';
-
-export function ms(ms: number): string {
-  if (!isFinite(ms))
-    return '-';
-
-  if (ms === 0)
-    return '0ms';
-
-  if (ms < 1000)
-    return ms.toFixed(0) + 'ms';
-
-  const seconds = ms / 1000;
-  if (seconds < 60)
-    return seconds.toFixed(1) + 's';
-
-  const minutes = seconds / 60;
-  if (minutes < 60)
-    return minutes.toFixed(1) + 'm';
-
-  const hours = minutes / 60;
-  if (hours < 24)
-    return hours.toFixed(1) + 'h';
-
-  const days = hours / 24;
-  return days.toFixed(1) + 'd';
-}

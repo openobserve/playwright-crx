@@ -236,7 +236,7 @@ With the VS Code extension you can run your tests on different browsers by check
 
 To run tests on multiple projects(browsers), select each project by checking the checkboxes next to the project name.
 
-![Selecting projects to run tests on](https://github.com/microsoft/playwright/assets/13063165/6dc86ef4-6097-481c-9cab-b6e053ec7ea6)
+<img src="https://github.com/microsoft/playwright/assets/13063165/6dc86ef4-6097-481c-9cab-b6e053ec7ea6" alt="Selecting projects to run tests on" width="3978" height="2294" />
 
 ### Run tests on different browsers
 * langs: python
@@ -1028,7 +1028,7 @@ $Env:PLAYWRIGHT_BROWSERS_PATH="$Env:USERPROFILE\pw-browsers"
 pwsh bin/Debug/netX/playwright.ps1 install
 ```
 
-When running Playwright scripts, ask it to search for browsers in a shared location.
+When running Playwright scripts, ask Playwright to search for browsers in a shared location.
 
 ```bash tab=bash-bash lang=js
 PLAYWRIGHT_BROWSERS_PATH=$HOME/pw-browsers npx playwright test
@@ -1090,7 +1090,7 @@ dotnet test
 Playwright keeps track of packages that need those browsers and will garbage collect them as you update Playwright to the newer versions.
 
 :::note
-Developers can opt-in in this mode via exporting `PLAYWRIGHT_BROWSERS_PATH=$HOME/pw-browsers` in their `.bashrc`.
+Developers can opt into this mode by exporting `PLAYWRIGHT_BROWSERS_PATH=$HOME/pw-browsers` in their `.bashrc`.
 :::
 
 ### Hermetic install

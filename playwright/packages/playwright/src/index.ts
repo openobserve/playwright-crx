@@ -1,7 +1,7 @@
 /**
  * Copyright (c) Microsoft Corporation.
  *
- * Licensed under the Apache License, Version 2.0 (the 'License");
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -18,11 +18,11 @@ import fs from 'fs';
 import path from 'path';
 
 import * as playwrightLibrary from 'playwright-core';
-import { setBoxedStackPrefixes, createGuid, currentZone, debugMode, jsonStringifyForceASCII, asLocatorDescription, renderTitleForCall, getActionGroup } from 'playwright-core/lib/utils';
-
+import { setBoxedStackPrefixes, createGuid, currentZone, debugMode, jsonStringifyForceASCII, asLocatorDescription, renderTitleForCall, getActionGroup, escapeHTML } from 'playwright-core/lib/utils';
+import { buildErrorContext } from './errorContext';
 import { currentTestInfo } from './common/globals';
 import { rootTestType } from './common/testType';
-import { createCustomMessageHandler } from './mcp/test/browserBackend';
+import { createCustomMessageHandler, runDaemonForContext } from './mcp/test/browserBackend';
 
 import type { Fixtures, PlaywrightTestArgs, PlaywrightTestOptions, PlaywrightWorkerArgs, PlaywrightWorkerOptions, ScreenshotMode, TestInfo, TestType, VideoMode } from '../types/test';
 import type { ContextReuseMode } from './common/config';
@@ -58,9 +58,6 @@ type TestFixtures = PlaywrightTestArgs & PlaywrightTestOptions & {
   _setupContextOptions: void;
   _setupArtifacts: void;
   _contextFactory: (options?: BrowserContextOptions) => Promise<{ context: BrowserContext, close: () => Promise<void> }>;
-
-  agent: {};
-  agentOptions?: any;
 };
 
 type WorkerFixtures = PlaywrightWorkerArgs & PlaywrightWorkerOptions & {
@@ -92,6 +89,7 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
       handleSIGINT: false,
       ...launchOptions,
       tracesDir: tracing().tracesDir(),
+      artifactsDir: tracing().artifactsDir(),
     };
     if (headless !== undefined)
       options.headless = headless;
@@ -103,14 +101,14 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
     playwright._defaultLaunchOptions = undefined;
   }, { scope: 'worker', auto: true, box: true }],
 
-  browser: [async ({ playwright, browserName, _browserOptions, connectOptions }, use) => {
+  browser: [async ({ playwright, browserName, _browserOptions, connectOptions }, use, workerInfo) => {
     if (!['chromium', 'firefox', 'webkit'].includes(browserName))
       throw new Error(`Unexpected browserName "${browserName}", must be one of "chromium", "firefox" or "webkit"`);
 
     if (connectOptions) {
-      const browser = await playwright[browserName].connect({
+      const browser = await playwright[browserName].connect(connectOptions.wsEndpoint, {
         ...connectOptions,
-        exposeNetwork: connectOptions.exposeNetwork ?? (connectOptions as any)._exposeNetwork,
+        exposeNetwork: connectOptions.exposeNetwork,
         headers: {
           // HTTP headers are ASCII only (not UTF-8).
           'x-playwright-launch-options': jsonStringifyForceASCII(_browserOptions),
@@ -123,6 +121,8 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
     }
 
     const browser = await playwright[browserName].launch();
+    if (process.env.PLAYWRIGHT_DASHBOARD)
+      await browser.bind(`worker-${workerInfo.parallelIndex}`);
     await use(browser);
     await browser.close({ reason: 'Test ended.' });
   }, { scope: 'worker', timeout: 0 }],
@@ -155,8 +155,6 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
   }, { option: true, box: true }],
   serviceWorkers: [({ contextOptions }, use) => use(contextOptions.serviceWorkers ?? 'allow'), { option: true, box: true }],
   contextOptions: [{}, { option: true, box: true }],
-  agentOptions: [undefined, { option: true, box: true }],
-
   _combinedContextOptions: [async ({
     acceptDownloads,
     bypassCSP,
@@ -234,12 +232,14 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
     });
   }, { box: true }],
 
-  _setupContextOptions: [async ({ playwright, actionTimeout, navigationTimeout, testIdAttribute }, use, testInfo) => {
+  _setupContextOptions: [async ({ playwright, actionTimeout, navigationTimeout, testIdAttribute }, use, _testInfo) => {
+    const testInfo = _testInfo as TestInfoImpl;
     if (testIdAttribute)
       playwrightLibrary.selectors.setTestIdAttribute(testIdAttribute);
     testInfo.snapshotSuffix = process.platform;
+    testInfo._onCustomMessageCallback = () => Promise.reject(new Error('Only tests that use default Playwright context or page fixture support test_debug'));
     if (debugMode() === 'inspector')
-      (testInfo as TestInfoImpl)._setDebugMode();
+      (testInfo as TestInfoImpl)._setIgnoreTimeouts(true);
 
     playwright._defaultContextTimeout = actionTimeout || 0;
     playwright._defaultContextNavigationTimeout = navigationTimeout || 0;
@@ -258,6 +258,7 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
     await artifactsRecorder.willStartTest(testInfo as TestInfoImpl);
 
     const tracingGroupSteps: TestStepInternal[] = [];
+    const pausedContexts = new Set<BrowserContextImpl>();
     const csiListener: ClientInstrumentationListener = {
       onApiCallBegin: (data, channel) => {
         const testInfo = currentTestInfo();
@@ -306,7 +307,7 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
       },
       onWillPause: ({ keepTestTimeout }) => {
         if (!keepTestTimeout)
-          currentTestInfo()?._setDebugMode();
+          currentTestInfo()?._setIgnoreTimeouts(true);
       },
       runBeforeCreateBrowserContext: async (options: BrowserContextOptions) => {
         for (const [key, value] of Object.entries(_combinedContextOptions)) {
@@ -321,6 +322,17 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
         }
       },
       runAfterCreateBrowserContext: async (context: BrowserContextImpl) => {
+        context.debugger.on('pausedstatechanged', () => {
+          const paused = !!context.debugger.pausedDetails();
+          if (pausedContexts.has(context) && !paused) {
+            pausedContexts.delete(context);
+            (testInfo as TestInfoImpl)._setIgnoreTimeouts(false);
+          } else if (!pausedContexts.has(context) && paused) {
+            pausedContexts.add(context);
+            (testInfo as TestInfoImpl)._setIgnoreTimeouts(true);
+          }
+        });
+
         await artifactsRecorder.didCreateBrowserContext(context);
         const testInfo = currentTestInfo();
         if (testInfo)
@@ -362,10 +374,12 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
           `If you would like to configure your page before each test, do that in beforeEach hook instead.`,
         ].join('\n'));
       }
+      const show = typeof video === 'string' ? undefined : video.show;
       const videoOptions: BrowserContextOptions = captureVideo ? {
         recordVideo: {
           dir: tracing().artifactsDir(),
           size: typeof video === 'string' ? undefined : video.size,
+          showActions: show?.actions,
         }
       } : {};
       const context = await browser.newContext({ ...videoOptions, ...options }) as BrowserContextImpl;
@@ -427,19 +441,25 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
     await use(reuse);
   }, { scope: 'worker',  title: 'context', box: true }],
 
-  context: async ({ browser, _reuseContext, _contextFactory }, use, testInfo) => {
+  context: async ({ browser, video, _reuseContext, _contextFactory }, use, testInfoPublic) => {
     const browserImpl = browser as BrowserImpl;
+    const testInfo = testInfoPublic as TestInfoImpl;
+    const show = typeof video === 'string' ? undefined : video.show;
     attachConnectedHeaderIfNeeded(testInfo, browserImpl);
     if (!_reuseContext) {
       const { context, close } = await _contextFactory();
-      (testInfo as TestInfoImpl)._onCustomMessageCallback = createCustomMessageHandler(testInfo, context);
+      testInfo._onCustomMessageCallback = createCustomMessageHandler(testInfo, context);
+      await runDaemonForContext(testInfo, context);
+      await installScreencastTitleUpdater(testInfo, context, show?.test);
       await use(context);
       await close();
       return;
     }
 
     const context = await browserImpl._wrapApiCall(() => browserImpl._newContextForReuse(), { internal: true });
-    (testInfo as TestInfoImpl)._onCustomMessageCallback = createCustomMessageHandler(testInfo, context);
+    testInfo._onCustomMessageCallback = createCustomMessageHandler(testInfo, context);
+    await runDaemonForContext(testInfo, context);
+    await installScreencastTitleUpdater(testInfo, context, show?.test);
     await use(context);
     const closeReason = testInfo.status === 'timedOut' ? 'Test timeout of ' + testInfo.timeout + 'ms exceeded.' : 'Test ended.';
     await browserImpl._wrapApiCall(() => browserImpl._disconnectFromReusedContext(closeReason), { internal: true });
@@ -456,50 +476,6 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
     if (!page)
       page = await context.newPage();
     await use(page);
-  },
-
-  agent: async ({ page, agentOptions }, use, testInfo) => {
-    const testInfoImpl = testInfo as TestInfoImpl;
-    const cachePathTemplate = agentOptions?.cachePathTemplate ?? '{testDir}/{testFilePath}-cache.json';
-    const resolvedCacheFile = testInfoImpl._applyPathTemplate(cachePathTemplate, '', '.json');
-    // @ts-expect-error runAgents is hidden
-    const cacheFile = testInfoImpl.config.runAgents === 'all' ? undefined : await testInfoImpl._cloneStorage(resolvedCacheFile);
-    const cacheOutFile = path.join(testInfoImpl.artifactsDir(), 'agent-cache-' + createGuid() + '.json');
-
-    // @ts-expect-error runAgents is hidden
-    const provider = agentOptions?.provider && testInfo.config.runAgents !== 'none' ? agentOptions.provider : undefined;
-    if (provider)
-      testInfo.setTimeout(0);
-
-    const cache = {
-      cacheFile,
-      cacheOutFile,
-    };
-
-    // @ts-expect-error agent is hidden
-    const agent = await page.agent({
-      provider,
-      cache,
-      limits: agentOptions?.limits,
-      secrets: agentOptions?.secrets,
-      systemPrompt: agentOptions?.systemPrompt,
-      expect: {
-        timeout: testInfoImpl._projectInternal.expect?.timeout,
-      },
-    });
-
-    await use(agent);
-
-    const usage = await agent.usage();
-    if (usage.turns > 0)
-      await testInfoImpl.attach('agent-usage', { contentType: 'application/json', body: Buffer.from(JSON.stringify(usage, null, 2)) });
-
-    if (!resolvedCacheFile || !cacheOutFile)
-      return;
-    if (testInfo.status !== 'passed')
-      return;
-
-    await testInfoImpl._upstreamStorage(resolvedCacheFile, cacheOutFile);
   },
 
   request: async ({ playwright }, use) => {
@@ -706,7 +682,7 @@ class ArtifactsRecorder {
 
   async willStartTest(testInfo: TestInfoImpl) {
     this._testInfo = testInfo;
-    testInfo._onDidFinishTestFunctionCallback = () => this.didFinishTestFunction();
+    testInfo._onDidFinishTestFunctionCallbacks.add(() => this.didFinishTestFunction());
 
     this._screenshotRecorder.fixOrdinal();
 
@@ -740,7 +716,7 @@ class ArtifactsRecorder {
     try {
       // TODO: maybe capture snapshot when the error is created, so it's from the right page and right time
       await page._wrapApiCall(async () => {
-        this._pageSnapshot = (await page._snapshotForAI({ timeout: 5000 })).full;
+        this._pageSnapshot = await page.ariaSnapshot({ mode: 'ai', timeout: 5000 });
       }, { internal: true });
     } catch {}
   }
@@ -776,22 +752,22 @@ class ArtifactsRecorder {
     if (context)
       await this._takePageSnapshot(context);
 
-    if (this._pageSnapshot && this._testInfo.errors.length > 0 && !this._testInfo.attachments.some(a => a.name === 'error-context')) {
-      const lines = [
-        '# Page snapshot',
-        '',
-        '```yaml',
-        this._pageSnapshot,
-        '```',
-      ];
-      const filePath = this._testInfo.outputPath('error-context.md');
-      await fs.promises.writeFile(filePath, lines.join('\n'), 'utf8');
-
-      this._testInfo._attach({
-        name: 'error-context',
-        contentType: 'text/markdown',
-        path: filePath,
-      }, undefined);
+    if (this._testInfo.errors.length > 0) {
+      const errorContextContent = buildErrorContext({
+        titlePath: this._testInfo.titlePath,
+        location: { file: this._testInfo.file, line: this._testInfo.line, column: this._testInfo.column },
+        errors: this._testInfo.errors,
+        pageSnapshot: this._pageSnapshot,
+      });
+      if (errorContextContent) {
+        const filePath = this._testInfo.outputPath('error-context.md');
+        await fs.promises.writeFile(filePath, errorContextContent, 'utf8');
+        this._testInfo._attach({
+          name: 'error-context',
+          contentType: 'text/markdown',
+          path: filePath,
+        }, undefined);
+      }
     }
   }
 
@@ -825,6 +801,57 @@ class ArtifactsRecorder {
         await tracing.stopChunk({ path: this._testInfo._tracing.maybeGenerateNextTraceRecordingPath() });
     }, { internal: true });
   }
+}
+
+async function installScreencastTitleUpdater(testInfo: TestInfoImpl, context: BrowserContext, testAnnotate?: { level?: 'file' | 'title' | 'step', position?: string, fontSize?: number }) {
+  if (!testAnnotate)
+    return;
+
+  const testTitle = testAnnotate.level === 'file' ? [testInfo.titlePath[0]] : testInfo.titlePath;
+  const stepStack: string[] = [];
+  const overlays = new Map<Page, { dispose(): Promise<void> }>();
+  const position = testAnnotate.position ?? 'top-left';
+  const fontSize = testAnnotate.fontSize ?? 14;
+  const level = testAnnotate.level ?? 'step';
+
+  const updateOverlay = async () => {
+    const parts = level === 'step' ? [...testTitle, ...stepStack] : testTitle;
+    const html = createTestOverlay(parts, position, fontSize);
+    for (const page of context.pages()) {
+      await overlays.get(page)?.dispose();
+      overlays.delete(page);
+      const disposable = await page.screencast.showOverlay(html);
+      overlays.set(page, disposable);
+    }
+  };
+  testInfo._onUserStepBegin = async title => {
+    stepStack.push(title);
+    await updateOverlay();
+  };
+  testInfo._onUserStepEnd = async () => {
+    stepStack.pop();
+    await updateOverlay();
+  };
+
+  context.on('page', async () => {
+    void updateOverlay();
+  });
+  await updateOverlay();
+}
+
+function createTestOverlay(parts: string[], position: string, fontSize: number) {
+  const positionStyles: Record<string, string> = {
+    'top-left': 'top: 6px; left: 6px;',
+    'top': 'top: 6px; left: 50%; transform: translateX(-50%);',
+    'top-right': 'top: 6px; right: 6px;',
+    'bottom-left': 'bottom: 6px; left: 6px;',
+    'bottom': 'bottom: 6px; left: 50%; transform: translateX(-50%);',
+    'bottom-right': 'bottom: 6px; right: 6px;',
+  };
+  const posStyle = positionStyles[position] ?? positionStyles['top-left'];
+  return `<div style="white-space: nowrap; font-size: ${fontSize}px; padding: 3px 6px; background: rgba(0,0,0,0.5); color: white; border-radius: 4px; position: absolute; ${posStyle}">
+    ${parts.map(p => `<div>${escapeHTML(p)}</div>`).join('')}
+  </div>`;
 }
 
 function renderTitle(type: string, method: string, params: Record<string, string> | undefined, title?: string) {

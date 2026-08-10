@@ -169,7 +169,7 @@ class InspectTool implements RecorderTool {
 
   private _commit(selector: string, model: HighlightModel) {
     if (this._assertVisibility) {
-      this._recorder.recordAction({
+      void this._recorder.recordAction({
         name: 'assertVisible',
         selector,
         signals: [],
@@ -678,8 +678,19 @@ class RecordActionTool implements RecorderTool {
       consumeEvent(event);
   }
 
+  private _reportPerformedActionForTests() {
+    if (!this._recorder.injectedScript.isUnderTest)
+      return;
+    // Serialize all to string as we cannot attribute console message to isolated world
+    // in Firefox.
+    console.error('Action performed for test: ' + JSON.stringify({ // eslint-disable-line no-console
+      hovered: this._hoveredModel ? this._hoveredModel.selector : null,
+      active: this._activeModel ? this._activeModel.selector : null,
+    }));
+  }
+
   private _recordAction(action: actions.Action) {
-    this._recorder.recordAction(action);
+    void this._recorder.recordAction(action).then(() => this._reportPerformedActionForTests());
   }
 
   private _performAction(action: actions.PerformOnRecordAction) {
@@ -687,23 +698,11 @@ class RecordActionTool implements RecorderTool {
 
     this._performingActions.add(action);
 
-    const promise = this._recorder.performAction(action).then(() => {
+    void this._recorder.performAction(action).finally(() => {
       this._performingActions.delete(action);
       // If that was a keyboard action, it similarly requires new selectors for active model.
       this._onFocus(false);
-    });
-
-    if (!this._recorder.injectedScript.isUnderTest)
-      return;
-
-    void promise.then(() => {
-      // Serialize all to string as we cannot attribute console message to isolated world
-      // in Firefox.
-      console.error('Action performed for test: ' + JSON.stringify({ // eslint-disable-line no-console
-        hovered: this._hoveredModel ? (this._hoveredModel as any).selector : null,
-        active: this._activeModel ? (this._activeModel as any).selector : null,
-      }));
-    });
+    }).then(() => this._reportPerformedActionForTests());
   }
 
   private _shouldGenerateKeyPressFor(event: KeyboardEvent): boolean {
@@ -792,7 +791,7 @@ class JsonRecordActionTool implements RecorderTool {
     const { ariaSnapshot, selector, ref } = this._ariaSnapshot(element);
     if (checkbox && event.detail === 1) {
       // Interestingly, inputElement.checked is reversed inside this event handler.
-      this._recorder.recordAction({
+      void this._recorder.recordAction({
         name: checkbox.checked ? 'check' : 'uncheck',
         selector,
         ref,
@@ -802,7 +801,7 @@ class JsonRecordActionTool implements RecorderTool {
       return;
     }
 
-    this._recorder.recordAction({
+    void this._recorder.recordAction({
       name: 'click',
       selector,
       ref,
@@ -818,7 +817,7 @@ class JsonRecordActionTool implements RecorderTool {
   onContextMenu(event: MouseEvent): void {
     const element = this._recorder.deepEventTarget(event);
     const { ariaSnapshot, selector, ref } = this._ariaSnapshot(element);
-    this._recorder.recordAction({
+    void this._recorder.recordAction({
       name: 'click',
       selector,
       ref,
@@ -836,7 +835,7 @@ class JsonRecordActionTool implements RecorderTool {
 
     const { ariaSnapshot, selector, ref } = this._ariaSnapshot(element);
     if (isRangeInput(element)) {
-      this._recorder.recordAction({
+      void this._recorder.recordAction({
         name: 'fill',
         selector,
         ref,
@@ -853,7 +852,7 @@ class JsonRecordActionTool implements RecorderTool {
         return;
       }
 
-      this._recorder.recordAction({
+      void this._recorder.recordAction({
         name: 'fill',
         ref,
         selector,
@@ -866,7 +865,7 @@ class JsonRecordActionTool implements RecorderTool {
 
     if (element.nodeName === 'SELECT') {
       const selectElement = element as HTMLSelectElement;
-      this._recorder.recordAction({
+      void this._recorder.recordAction({
         name: 'select',
         selector,
         ref,
@@ -889,7 +888,7 @@ class JsonRecordActionTool implements RecorderTool {
     if (event.key === ' ') {
       const checkbox = asCheckbox(element);
       if (checkbox && event.detail === 0) {
-        this._recorder.recordAction({
+        void this._recorder.recordAction({
           name: checkbox.checked ? 'uncheck' : 'check',
           selector,
           ref,
@@ -900,7 +899,7 @@ class JsonRecordActionTool implements RecorderTool {
       }
     }
 
-    this._recorder.recordAction({
+    void this._recorder.recordAction({
       name: 'press',
       selector,
       ref,
@@ -1121,7 +1120,7 @@ class TextAssertionTool implements RecorderTool {
     if (!this._action || !this._dialog.isShowing())
       return;
     this._dialog.close();
-    this._recorder.recordAction(this._action);
+    void this._recorder.recordAction(this._action);
     this._recorder.setMode('recording');
   }
 
@@ -1132,7 +1131,7 @@ class TextAssertionTool implements RecorderTool {
     if (this._action?.name === 'assertText') {
       this._showTextDialog(this._action);
     } else if (this._action?.name === 'assertSnapshot') {
-      this._recorder.recordAction(this._action);
+      void this._recorder.recordAction(this._action);
       this._recorder.setMode('recording');
       this._recorder.overlay?.flashToolSucceeded('assertingSnapshot');
     }
@@ -1173,7 +1172,7 @@ class TextAssertionTool implements RecorderTool {
     const action = this._generateAction();
     if (!action)
       return;
-    this._recorder.recordAction(action);
+    void this._recorder.recordAction(action);
     this._recorder.setMode('recording');
     this._recorder.overlay?.flashToolSucceeded('assertingValue');
   }
@@ -1411,7 +1410,7 @@ export class Recorder {
   readonly document: Document;
   private _delegate: RecorderDelegate = {};
 
-  constructor(injectedScript: InjectedScript, options?: { recorderMode?: 'default' | 'api' }) {
+  constructor(injectedScript: InjectedScript, options?: { recorderMode?: 'default' | 'api', hideToolbar?: boolean }) {
     this.document = injectedScript.document;
     this.injectedScript = injectedScript;
     this.highlight = injectedScript.createHighlight();
@@ -1428,7 +1427,7 @@ export class Recorder {
     };
     this._currentTool = this._tools.none;
     this._currentTool.install?.();
-    if (injectedScript.window.top === injectedScript.window) {
+    if (injectedScript.window.top === injectedScript.window && !options?.hideToolbar) {
       this.overlay = new Overlay(this);
       this.overlay.setUIState(this.state);
     }
@@ -1745,9 +1744,9 @@ export class Recorder {
     await this._delegate.performAction?.(action).catch(() => {});
   }
 
-  recordAction(action: actions.Action) {
+  async recordAction(action: actions.Action) {
     this._lastActionAutoexpectSnapshot = this._captureAutoExpectSnapshot();
-    void this._delegate.recordAction?.(action);
+    await this._delegate.recordAction?.(action);
   }
 
   setOverlayState(state: { offsetX: number; }) {
@@ -1755,7 +1754,7 @@ export class Recorder {
   }
 
   elementPicked(selector: string, model: HighlightModel) {
-    const ariaSnapshot = this.injectedScript.ariaSnapshot(model.elements[0], { mode: 'expect' });
+    const ariaSnapshot = this.injectedScript.ariaSnapshot(model.elements[0], { mode: 'default' });
     void this._delegate.elementPicked?.({ selector, ariaSnapshot });
   }
 }

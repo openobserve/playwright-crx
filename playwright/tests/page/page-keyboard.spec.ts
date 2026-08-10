@@ -17,7 +17,6 @@
 
 import { test as it, expect } from './pageTest';
 import { attachFrame } from '../config/utils';
-import { hostPlatform } from '../../packages/playwright-core/src/server/utils/hostPlatform';
 
 it.skip(({ isAndroid }) => isAndroid);
 
@@ -294,6 +293,27 @@ it('should press Enter', async ({ page, server }) => {
     const value = await page.$eval('textarea', t => t.value);
     expect(value).toBe('\n'); // failed to create a newline
     await page.$eval('textarea', t => t.value = '');
+  }
+});
+
+it('should press audio and media control keys', async ({ page, browserName }) => {
+  await page.setContent('<input autofocus>');
+  await page.focus('input');
+  const lastEvent = await captureLastKeydown(page);
+  const mediaKeys = [
+    { key: 'AudioVolumeMute', code: browserName === 'firefox' ? 'VolumeMute' : 'AudioVolumeMute' },
+    { key: 'AudioVolumeDown', code: browserName === 'firefox' ? 'VolumeDown' : 'AudioVolumeDown' },
+    { key: 'AudioVolumeUp', code: browserName === 'firefox' ? 'VolumeUp' : 'AudioVolumeUp' },
+    { key: 'MediaTrackNext', code: 'MediaTrackNext' },
+    { key: 'MediaTrackPrevious', code: 'MediaTrackPrevious' },
+    { key: 'MediaPlayPause', code: 'MediaPlayPause' },
+  ];
+
+  for (const mediaKey of mediaKeys) {
+    await page.keyboard.press(mediaKey.key);
+    expect.soft(await lastEvent.evaluate(e => e.key)).toBe(mediaKey.key);
+    expect.soft(await lastEvent.evaluate(e => e.code)).toBe(mediaKey.code);
+    expect.soft(await lastEvent.evaluate(e => e.location)).toBe(0);
   }
 });
 
@@ -718,8 +738,9 @@ Keyup: Escape Escape STANDARD []
 
 it('should close dialog on Escape key press in contenteditable', {
   annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36727' }
-}, async ({ page, browserName }) => {
-  it.skip(browserName === 'webkit' && hostPlatform.startsWith('debian11'), 'Debian 11 is frozen');
+}, async ({ page, isFrozenWebkit }) => {
+  it.skip(isFrozenWebkit);
+
   await page.setContent(`
     <dialog>
       <div contenteditable>Edit Me</div>

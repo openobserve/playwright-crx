@@ -35,7 +35,7 @@ export type TreeViewProps<T> = {
   title?: (item: T) => string,
   icon?: (item: T) => string | undefined,
   isError?: (item: T) => boolean,
-  isVisible?: (item: T) => boolean,
+  isVisible?: (item: T) => boolean | 'if-needed',
   selectedItem?: T,
   onAccepted?: (item: T) => void,
   onSelected?: (item: T) => void,
@@ -73,7 +73,6 @@ export function TreeView<T extends TreeItem>({
 
   const itemListRef = React.useRef<HTMLDivElement>(null);
   const [highlightedItem, setHighlightedItem] = React.useState<any>();
-  const [isKeyboardNavigation, setIsKeyboardNavigation] = React.useState(false);
 
   React.useEffect(() => {
     onHighlighted?.(highlightedItem);
@@ -180,12 +179,9 @@ export function TreeView<T extends TreeItem>({
           }
         }
 
-        // scrollIntoViewIfNeeded(element || undefined);
         onHighlighted?.(undefined);
-        if (newSelectedItem) {
-          setIsKeyboardNavigation(true);
+        if (newSelectedItem)
           onSelected?.(newSelectedItem);
-        }
         setHighlightedItem(undefined);
       }}
       ref={itemListRef}
@@ -207,9 +203,7 @@ export function TreeView<T extends TreeItem>({
           setHighlightedItem={setHighlightedItem}
           render={render}
           icon={icon}
-          title={title}
-          isKeyboardNavigation={isKeyboardNavigation}
-          setIsKeyboardNavigation={setIsKeyboardNavigation} />;
+          title={title} />;
       })}
     </div>
   </div>;
@@ -229,8 +223,6 @@ type TreeItemHeaderProps<T> = {
   render: (item: T) => React.ReactNode,
   title?: (item: T) => string,
   icon?: (item: T) => string | undefined,
-  isKeyboardNavigation: boolean,
-  setIsKeyboardNavigation: (value: boolean) => void,
 };
 
 export function TreeItemHeader<T extends TreeItem>({
@@ -246,18 +238,14 @@ export function TreeItemHeader<T extends TreeItem>({
   toggleSubtree,
   render,
   title,
-  icon,
-  isKeyboardNavigation,
-  setIsKeyboardNavigation }: TreeItemHeaderProps<T>) {
+  icon }: TreeItemHeaderProps<T>) {
   const groupId = React.useId();
   const itemRef = React.useRef(null);
 
   React.useEffect(() => {
-    if (selectedItem === item && isKeyboardNavigation && itemRef.current) {
+    if (selectedItem?.id === item.id && itemRef.current)
       scrollIntoViewIfNeeded(itemRef.current);
-      setIsKeyboardNavigation(false);
-    }
-  }, [item, selectedItem, isKeyboardNavigation, setIsKeyboardNavigation]);
+  }, [item.id, selectedItem?.id]);
 
   const itemData = treeItems.get(item)!;
   const indentation = itemData.depth;
@@ -320,9 +308,7 @@ export function TreeItemHeader<T extends TreeItem>({
           setHighlightedItem={setHighlightedItem}
           render={render}
           title={title}
-          icon={icon}
-          isKeyboardNavigation={isKeyboardNavigation}
-          setIsKeyboardNavigation={setIsKeyboardNavigation} />;
+          icon={icon} />;
       })}
     </div>}
   </div>;
@@ -336,13 +322,27 @@ type TreeItemData = {
   prev: TreeItem | null;
 };
 
+function isEffectivelyVisible<T extends TreeItem>(
+  item: T,
+  isVisible: (item: T) => boolean | 'if-needed',
+  cache: Map<string, boolean>): boolean {
+  const cached = cache.get(item.id);
+  if (cached !== undefined)
+    return cached;
+  const v = isVisible(item);
+  const result = v === 'if-needed' ? item.children.some(child => isEffectivelyVisible(child as T, isVisible, cache)) : v;
+  cache.set(item.id, result);
+  return result;
+}
+
 function indexTree<T extends TreeItem>(
   rootItem: T,
   selectedItem: T | undefined,
   expandedItems: Map<string, boolean | undefined>,
   autoExpandDepth: number,
-  isVisible: (item: T) => boolean = () => true): Map<T, TreeItemData> {
-  if (!isVisible(rootItem))
+  isVisible: (item: T) => boolean | 'if-needed' = () => true): Map<T, TreeItemData> {
+  const visibilityCache = new Map<string, boolean>();
+  if (!isEffectivelyVisible(rootItem, isVisible, visibilityCache))
     return new Map();
 
   const result = new Map<T, TreeItemData>();
@@ -353,7 +353,7 @@ function indexTree<T extends TreeItem>(
 
   const appendChildren = (parent: T, depth: number) => {
     for (const item of parent.children as T[]) {
-      if (!isVisible(item))
+      if (!isEffectivelyVisible(item, isVisible, visibilityCache))
         continue;
       const expandState = temporaryExpanded.has(item.id) || expandedItems.get(item.id);
       const autoExpandMatches = autoExpandDepth > depth && result.size < 25 && expandState !== false;

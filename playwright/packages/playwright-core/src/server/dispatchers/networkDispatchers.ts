@@ -1,7 +1,7 @@
 /**
  * Copyright (c) Microsoft Corporation.
  *
- * Licensed under the Apache License, Version 2.0 (the 'License");
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -59,11 +59,11 @@ export class RequestDispatcher extends Dispatcher<Request, channels.RequestChann
       headers: request.headers(),
       isNavigationRequest: request.isNavigationRequest(),
       redirectedFrom: RequestDispatcher.fromNullable(scope, request.redirectedFrom()),
-      hasResponse: !!request._existingResponse(),
     });
     this._type_Request = true;
     this._browserContextDispatcher = scope;
-    this.addObjectListener(Request.Events.Response, () => this._dispatchEvent('response', {}));
+    // Push existing response to the client if it exists.
+    ResponseDispatcher.fromNullable(scope, request._existingResponse());
   }
 
   async rawRequestHeaders(params: channels.RequestRawRequestHeadersParams, progress: Progress): Promise<channels.RequestRawRequestHeadersResult> {
@@ -79,8 +79,8 @@ export class ResponseDispatcher extends Dispatcher<Response, channels.ResponseCh
   _type_Response = true;
 
   static from(scope: BrowserContextDispatcher, response: Response): ResponseDispatcher {
-    const result = scope.connection.existingDispatcher<ResponseDispatcher>(response);
     const requestDispatcher = RequestDispatcher.from(scope, response.request());
+    const result = scope.connection.existingDispatcher<ResponseDispatcher>(response);
     return result || new ResponseDispatcher(requestDispatcher, response);
   }
 
@@ -115,6 +115,10 @@ export class ResponseDispatcher extends Dispatcher<Response, channels.ResponseCh
 
   async rawResponseHeaders(params: channels.ResponseRawResponseHeadersParams, progress: Progress): Promise<channels.ResponseRawResponseHeadersResult> {
     return { headers: await progress.race(this._object.rawResponseHeaders()) };
+  }
+
+  async httpVersion(params: channels.ResponseHttpVersionParams, progress: Progress): Promise<channels.ResponseHttpVersionResult> {
+    return { value: await progress.race(this._object.httpVersion()) };
   }
 
   async sizes(params: channels.ResponseSizesParams, progress: Progress): Promise<channels.ResponseSizesResult> {

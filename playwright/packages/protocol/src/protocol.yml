@@ -59,6 +59,21 @@ Rect:
     width: float
     height: float
 
+ShowActionsOptions:
+  type: mixin
+  properties:
+    duration: float?
+    position:
+      type: enum?
+      literals:
+      - top-left
+      - top
+      - top-right
+      - bottom-left
+      - bottom
+      - bottom-right
+    fontSize: int?
+
 
 SerializedValue:
   type: object
@@ -161,6 +176,17 @@ SelectorEngine:
     source: string
     contentScript: boolean?
 
+URLPattern:
+  type: object
+  properties:
+    hash: string
+    hostname: string
+    password: string
+    pathname: string
+    port: string
+    protocol: string
+    search: string
+    username: string
 
 SetNetworkCookie:
   type: object
@@ -376,6 +402,7 @@ APIRequestContext:
 
     storageState:
       title: Get storage state
+      group: configuration
       parameters:
         indexedDB: boolean?
       returns:
@@ -416,6 +443,12 @@ LifecycleEvent:
   - domcontentloaded
   - networkidle
   - commit
+
+ConsoleMessagesFilter:
+  type: enum
+  literals:
+  - all
+  - since-navigation
 
 CommonScreenshotOptions:
   type: mixin
@@ -476,6 +509,7 @@ LaunchOptions:
         password: string?
     downloadsPath: string?
     tracesDir: string?
+    artifactsDir: string?
     chromiumSandbox: boolean?
     firefoxUserPrefs: json?
     cdpPort: int?
@@ -573,12 +607,16 @@ ContextOptions:
     recordVideo:
       type: object?
       properties:
-        dir: string
+        dir: string?
         size:
           type: object?
           properties:
             width: int
             height: int
+        showActions:
+          type: object?
+          properties:
+            $mixin: ShowActionsOptions
     strictSelectors: boolean?
     serviceWorkers:
       type: enum?
@@ -640,6 +678,9 @@ LocalUtils:
             - write
             - append
         includeSources: boolean
+        additionalSources:
+          type: array?
+          items: string
 
     harOpen:
       internal: true
@@ -690,7 +731,7 @@ LocalUtils:
     connect:
       internal: true
       parameters:
-        wsEndpoint: string
+        endpoint: string
         headers: json?
         exposeNetwork: string?
         slowMo: float?
@@ -994,21 +1035,49 @@ BrowserType:
         browser: Browser
         defaultContext: BrowserContext?
 
+    connectOverCDPTransport:
+      title: Connect over CDP transport
+      parameters:
+        transport: binary
+      returns:
+        browser: Browser
+        defaultContext: BrowserContext?
+
 Browser:
   type: interface
 
   initializer:
     version: string
     name: string
+    browserName:
+      type: enum
+      literals:
+        - chromium
+        - firefox
+        - webkit
 
   commands:
+
+    startServer:
+      title: Start server
+      parameters:
+        title: string
+        workspaceDir: string?
+        metadata: json?
+        host: string?
+        port: int?
+      returns:
+        endpoint: string
+
+    stopServer:
+      title: Stop server
 
     close:
       title: Close browser
       parameters:
         reason: string?
       flags:
-        pausesBeforeAction: true
+        pause: true
 
     killForTests:
       internal: true
@@ -1113,6 +1182,7 @@ ConsoleMessage:
         url: string
         lineNumber: int
         columnNumber: int
+    timestamp: float
 
 
 EventTarget:
@@ -1144,7 +1214,7 @@ BrowserContext:
   extends: EventTarget
 
   initializer:
-    isChromium: boolean
+    debugger: Debugger
     requestContext: APIRequestContext
     tracing: Tracing
     options:
@@ -1167,6 +1237,8 @@ BrowserContext:
       group: configuration
       parameters:
         source: string
+      returns:
+        disposable: Disposable
 
     clearCookies:
       title: Clear cookies
@@ -1191,7 +1263,7 @@ BrowserContext:
       parameters:
         reason: string?
       flags:
-        pausesBeforeAction: true
+        pause: true
 
     cookies:
       title: Get cookies
@@ -1211,6 +1283,8 @@ BrowserContext:
       parameters:
         name: string
         needsHandle: boolean?
+      returns:
+        disposable: Disposable
 
     grantPermissions:
       title: Grant permissions
@@ -1278,6 +1352,7 @@ BrowserContext:
               glob: string?
               regexSource: string?
               regexFlags: string?
+              urlPattern: URLPattern?
 
     setWebSocketInterceptionPatterns:
       title: Route WebSockets
@@ -1291,6 +1366,7 @@ BrowserContext:
               glob: string?
               regexSource: string?
               regexFlags: string?
+              urlPattern: URLPattern?
 
     setOffline:
       title: Set offline mode
@@ -1299,6 +1375,7 @@ BrowserContext:
 
     storageState:
       title: Get storage state
+      group: configuration
       parameters:
         indexedDB: boolean?
       returns:
@@ -1308,6 +1385,20 @@ BrowserContext:
         origins:
           type: array
           items: OriginStorage
+
+    setStorageState:
+      title: Set storage state
+      group: configuration
+      parameters:
+        storageState:
+          type: object?
+          properties:
+            cookies:
+              type: array?
+              items: SetNetworkCookie
+            origins:
+              type: array?
+              items: SetOriginStorage
 
     pause:
       title: Pause
@@ -1471,10 +1562,6 @@ BrowserContext:
       parameters:
         webSocketRoute: WebSocketRoute
 
-    video:
-      parameters:
-        artifact: Artifact
-
     serviceWorker:
       parameters:
         worker: Worker
@@ -1529,6 +1616,7 @@ Page:
         height: int
     isClosed: boolean
     opener: Page?
+    video: Artifact?
 
   commands:
 
@@ -1537,6 +1625,8 @@ Page:
       group: configuration
       parameters:
         source: string
+      returns:
+        disposable: Disposable
 
     close:
       title: Close page
@@ -1544,11 +1634,16 @@ Page:
         runBeforeUnload: boolean?
         reason: string?
       flags:
-        pausesBeforeAction: true
+        pause: true
+
+    clearConsoleMessages:
+      title: Clear console messages
 
     consoleMessages:
       title: Get console messages
       group: getter
+      parameters:
+        filter: ConsoleMessagesFilter?
       returns:
         messages:
           type: array
@@ -1593,7 +1688,7 @@ Page:
           - no-override
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     exposeBinding:
       title: Expose binding
@@ -1601,6 +1696,8 @@ Page:
       parameters:
         name: string
         needsHandle: boolean?
+      returns:
+        disposable: Disposable
 
     goBack:
       title: Go back
@@ -1612,7 +1709,7 @@ Page:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     goForward:
       title: Go forward
@@ -1624,7 +1721,7 @@ Page:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     requestGC:
       title: Request garbage collection
@@ -1659,7 +1756,7 @@ Page:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     expectScreenshot:
       title: Expect screenshot
@@ -1690,7 +1787,7 @@ Page:
           items: string
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     screenshot:
       title: Screenshot
@@ -1709,7 +1806,7 @@ Page:
         binary: binary
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     setExtraHTTPHeaders:
       title: Set extra HTTP headers
@@ -1731,6 +1828,7 @@ Page:
               glob: string?
               regexSource: string?
               regexFlags: string?
+              urlPattern: URLPattern?
 
     setWebSocketInterceptionPatterns:
       title: Route WebSockets
@@ -1744,6 +1842,7 @@ Page:
               glob: string?
               regexSource: string?
               regexFlags: string?
+              urlPattern: URLPattern?
 
     setViewportSize:
       title: Set viewport size
@@ -1755,7 +1854,7 @@ Page:
             height: int
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     keyboardDown:
       title: Key down "{key}"
@@ -1764,7 +1863,8 @@ Page:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
+        input: true
 
     keyboardUp:
       title: Key up "{key}"
@@ -1773,7 +1873,8 @@ Page:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
+        input: true
 
     keyboardInsertText:
       title: Insert "{text}"
@@ -1782,7 +1883,8 @@ Page:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
+        input: true
 
     keyboardType:
       title: Type "{text}"
@@ -1792,7 +1894,8 @@ Page:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
+        input: true
 
     keyboardPress:
       title: Press "{key}"
@@ -1802,7 +1905,8 @@ Page:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
+        input: true
 
     mouseMove:
       title: Mouse move
@@ -1813,7 +1917,8 @@ Page:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
+        input: true
 
     mouseDown:
       title: Mouse down
@@ -1828,7 +1933,8 @@ Page:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
+        input: true
 
     mouseUp:
       title: Mouse up
@@ -1843,7 +1949,8 @@ Page:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
+        input: true
 
     mouseClick:
       title: Click
@@ -1861,7 +1968,8 @@ Page:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
+        input: true
 
     mouseWheel:
       title: Mouse wheel
@@ -1871,7 +1979,8 @@ Page:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
+        input: true
 
     touchscreenTap:
       title: Tap
@@ -1881,11 +1990,17 @@ Page:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
+        input: true
+
+    clearPageErrors:
+      title: Clear page errors
 
     pageErrors:
       title: Get page errors
       group: getter
+      parameters:
+        filter: ConsoleMessagesFilter?
       returns:
         errors:
           type: array
@@ -1924,16 +2039,6 @@ Page:
         requests:
           type: array
           items: Request
-
-    snapshotForAI:
-      internal: true
-      parameters:
-        # When track is present, an incremental snapshot is returned when possible.
-        track: string?
-        timeout: float
-      returns:
-        full: string
-        incremental: string?
 
     startJSCoverage:
       title: Start JS coverage
@@ -1998,6 +2103,74 @@ Page:
     bringToFront:
       title: Bring to front
 
+    pickLocator:
+      title: Pick locator
+      group: configuration
+      returns:
+        selector: string
+
+    cancelPickLocator:
+      title: Cancel pick locator
+      group: configuration
+
+    screencastShowOverlay:
+      title: Show overlay
+      group: configuration
+      parameters:
+        html: string
+        duration: float?
+      returns:
+        id: string
+
+    screencastRemoveOverlay:
+      title: Remove overlay
+      group: configuration
+      parameters:
+        id: string
+
+    screencastChapter:
+      title: Show chapter overlay
+      group: configuration
+      parameters:
+        title: string
+        description: string?
+        duration: float?
+
+    screencastSetOverlayVisible:
+      title: Set overlay visibility
+      group: configuration
+      parameters:
+        visible: boolean
+
+    screencastShowActions:
+      title: Show actions
+      group: configuration
+      parameters:
+        $mixin: ShowActionsOptions
+
+    screencastHideActions:
+      title: Remove actions
+      group: configuration
+
+    screencastStart:
+      title: Start screencast
+      group: configuration
+      parameters:
+        size:
+          type: object?
+          properties:
+            width: int
+            height: int
+        quality: int?
+        sendFrames: boolean?
+        record: boolean?
+      returns:
+        artifact: Artifact?
+
+    screencastStop:
+      title: Stop screencast
+      group: configuration
+
     updateSubscription:
       internal: true
       parameters:
@@ -2013,27 +2186,10 @@ Page:
           - requestFailed
         enabled: boolean
 
-    agent:
+    setDockTile:
       internal: true
       parameters:
-        api: string?
-        apiKey: string?
-        apiEndpoint: string?
-        apiTimeout: int?
-        apiCacheFile: string?
-        cacheFile: string?
-        cacheOutFile: string?
-        doNotRenderActive: boolean?
-        maxActions: int?
-        maxActionRetries: int?
-        maxTokens: int?
-        model: string?
-        secrets:
-          type: array?
-          items: NameValue
-        systemPrompt: string?
-      returns:
-        agent: PageAgent
+        image: binary
 
   events:
 
@@ -2080,13 +2236,13 @@ Page:
       parameters:
         route: Route
 
+    screencastFrame:
+      parameters:
+        data: binary
+
     webSocketRoute:
       parameters:
         webSocketRoute: WebSocketRoute
-
-    video:
-      parameters:
-        artifact: Artifact
 
     webSocket:
       parameters:
@@ -2123,7 +2279,7 @@ Frame:
         value: SerializedValue
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     evalOnSelectorAll:
       title: Evaluate
@@ -2136,7 +2292,7 @@ Frame:
         value: SerializedValue
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     addScriptTag:
       title: Add script tag
@@ -2148,7 +2304,7 @@ Frame:
         element: ElementHandle
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     addStyleTag:
       title: Add style tag
@@ -2159,18 +2315,24 @@ Frame:
         element: ElementHandle
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     ariaSnapshot:
       title: Aria snapshot
+      group: getter
       parameters:
-        selector: string
+        mode:
+          type: enum?
+          literals:
+            - ai
+            - default
+        # When track is present, an incremental snapshot is returned when possible.
+        track: string?
+        selector: string?
+        depth: int?
         timeout: float
       returns:
         snapshot: string
-      flags:
-        snapshot: true
-        pausesBeforeAction: true
 
     blur:
       title: Blur
@@ -2181,7 +2343,7 @@ Frame:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     check:
       title: Check
@@ -2195,7 +2357,9 @@ Frame:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     click:
       title: Click
@@ -2229,7 +2393,9 @@ Frame:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     content:
       title: Get content
@@ -2237,7 +2403,7 @@ Frame:
         value: string
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     dragAndDrop:
       title: Drag and drop
@@ -2254,7 +2420,9 @@ Frame:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     dblclick:
       title: Double click
@@ -2286,7 +2454,9 @@ Frame:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     dispatchEvent:
       title: Dispatch "{type}"
@@ -2299,7 +2469,7 @@ Frame:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     evaluateExpression:
       title: Evaluate
@@ -2311,7 +2481,7 @@ Frame:
         value: SerializedValue
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     evaluateExpressionHandle:
       title: Evaluate
@@ -2323,7 +2493,7 @@ Frame:
         handle: JSHandle
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     fill:
       title: Fill "{value}"
@@ -2336,7 +2506,9 @@ Frame:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     focus:
       title: Focus
@@ -2347,7 +2519,7 @@ Frame:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     frameElement:
       title: Get frame element
@@ -2380,7 +2552,7 @@ Frame:
         value: string?
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     goto:
       title: Navigate to "{url}"
@@ -2394,7 +2566,7 @@ Frame:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     hover:
       title: Hover
@@ -2418,7 +2590,9 @@ Frame:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     innerHTML:
       title: Get HTML
@@ -2431,7 +2605,7 @@ Frame:
         value: string
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     innerText:
       title: Get inner text
@@ -2444,7 +2618,7 @@ Frame:
         value: string
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     inputValue:
       title: Get input value
@@ -2457,7 +2631,7 @@ Frame:
         value: string
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     isChecked:
       title: Is checked
@@ -2470,7 +2644,7 @@ Frame:
         value: boolean
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     isDisabled:
       title: Is disabled
@@ -2483,7 +2657,7 @@ Frame:
         value: boolean
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     isEnabled:
       title: Is enabled
@@ -2496,7 +2670,7 @@ Frame:
         value: boolean
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     isHidden:
       title: Is hidden
@@ -2509,7 +2683,7 @@ Frame:
         value: boolean
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     isVisible:
       title: Is visible
@@ -2522,7 +2696,7 @@ Frame:
         value: boolean
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     isEditable:
       title: Is editable
@@ -2535,7 +2709,7 @@ Frame:
         value: boolean
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     press:
       title: Press "{key}"
@@ -2549,7 +2723,9 @@ Frame:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     querySelector:
       title: Query selector
@@ -2580,7 +2756,7 @@ Frame:
         value: int
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     selectOption:
       title: Select option
@@ -2608,7 +2784,9 @@ Frame:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     setContent:
       title: Set content
@@ -2618,7 +2796,7 @@ Frame:
         waitUntil: LifecycleEvent?
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     setInputFiles:
       title: Set input files
@@ -2646,7 +2824,9 @@ Frame:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     tap:
       title: Tap
@@ -2670,7 +2850,9 @@ Frame:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     textContent:
       title: Get text content
@@ -2683,7 +2865,7 @@ Frame:
         value: string?
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     title:
       title: Get page title
@@ -2702,7 +2884,9 @@ Frame:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     uncheck:
       title: Uncheck
@@ -2716,7 +2900,9 @@ Frame:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     waitForTimeout:
       title: Wait for timeout
@@ -2738,7 +2924,7 @@ Frame:
         handle: JSHandle
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     waitForSelector:
       title: Wait for selector
@@ -2783,7 +2969,7 @@ Frame:
           items: string
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
   events:
 
@@ -2846,6 +3032,15 @@ Worker:
     close:
 
 
+Disposable:
+  type: interface
+
+  commands:
+
+    dispose:
+      internal: true
+
+
 JSHandle:
   type: interface
 
@@ -2867,7 +3062,7 @@ JSHandle:
         value: SerializedValue
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     evaluateExpressionHandle:
       title: Evaluate
@@ -2879,7 +3074,7 @@ JSHandle:
         handle: JSHandle
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     getPropertyList:
       title: Get property list
@@ -2934,7 +3129,7 @@ ElementHandle:
         value: SerializedValue
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     evalOnSelectorAll:
       title: Evaluate
@@ -2947,7 +3142,7 @@ ElementHandle:
         value: SerializedValue
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     boundingBox:
       title: Get bounding box
@@ -2955,7 +3150,7 @@ ElementHandle:
         value: Rect?
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     check:
       title: Check
@@ -2967,7 +3162,9 @@ ElementHandle:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     click:
       title: Click
@@ -2999,7 +3196,9 @@ ElementHandle:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     contentFrame:
       title: Get content frame
@@ -3035,7 +3234,9 @@ ElementHandle:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     dispatchEvent:
       title: Dispatch event
@@ -3045,7 +3246,7 @@ ElementHandle:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     fill:
       title: Fill "{value}"
@@ -3056,14 +3257,16 @@ ElementHandle:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     focus:
       title: Focus
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     getAttribute:
       title: Get attribute
@@ -3074,7 +3277,7 @@ ElementHandle:
         value: string?
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     hover:
       title: Hover
@@ -3096,7 +3299,9 @@ ElementHandle:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     innerHTML:
       title: Get HTML
@@ -3105,7 +3310,7 @@ ElementHandle:
         value: string
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     innerText:
       title: Get inner text
@@ -3114,7 +3319,7 @@ ElementHandle:
         value: string
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     inputValue:
       title: Get input value
@@ -3123,7 +3328,7 @@ ElementHandle:
         value: string
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     isChecked:
       title: Is checked
@@ -3132,7 +3337,7 @@ ElementHandle:
         value: boolean
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     isDisabled:
       title: Is disabled
@@ -3141,7 +3346,7 @@ ElementHandle:
         value: boolean
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     isEditable:
       title: Is editable
@@ -3150,7 +3355,7 @@ ElementHandle:
         value: boolean
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     isEnabled:
       title: Is enabled
@@ -3159,7 +3364,7 @@ ElementHandle:
         value: boolean
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     isHidden:
       title: Is hidden
@@ -3168,7 +3373,7 @@ ElementHandle:
         value: boolean
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     isVisible:
       title: Is visible
@@ -3177,7 +3382,7 @@ ElementHandle:
         value: boolean
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     ownerFrame:
       title: Get owner frame
@@ -3195,7 +3400,9 @@ ElementHandle:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     querySelector:
       title: Query selector
@@ -3233,7 +3440,7 @@ ElementHandle:
         binary: binary
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     scrollIntoViewIfNeeded:
       title: Scroll into view
@@ -3242,7 +3449,7 @@ ElementHandle:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     selectOption:
       title: Select option
@@ -3268,7 +3475,9 @@ ElementHandle:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     selectText:
       title: Select text
@@ -3278,7 +3487,7 @@ ElementHandle:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     setInputFiles:
       title: Set input files
@@ -3304,7 +3513,9 @@ ElementHandle:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     tap:
       title: Tap
@@ -3326,7 +3537,9 @@ ElementHandle:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     textContent:
       title: Get text content
@@ -3335,7 +3548,7 @@ ElementHandle:
         value: string?
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     type:
       title: Type
@@ -3346,7 +3559,9 @@ ElementHandle:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     uncheck:
       title: Uncheck
@@ -3358,7 +3573,9 @@ ElementHandle:
       flags:
         slowMo: true
         snapshot: true
-        pausesBeforeInput: true
+        pause: true
+        input: true
+        isAutoWaiting: true
 
     waitForElementState:
       title: Wait for state
@@ -3375,7 +3592,7 @@ ElementHandle:
         timeout: float
       flags:
         snapshot: true
-        pausesBeforeAction: true
+        pause: true
 
     waitForSelector:
       title: Wait for selector
@@ -3411,7 +3628,6 @@ Request:
       items: NameValue
     isNavigationRequest: boolean
     redirectedFrom: Request?
-    hasResponse: boolean
 
   commands:
 
@@ -3426,9 +3642,6 @@ Request:
         headers:
           type: array
           items: NameValue
-
-  events:
-    response:
 
 Route:
   type: interface
@@ -3595,6 +3808,11 @@ Response:
           type: array
           items: NameValue
 
+    httpVersion:
+      internal: true
+      returns:
+        value: string
+
     sizes:
       internal: true
       returns:
@@ -3677,6 +3895,53 @@ BindingCall:
       parameters:
         result: SerializedArgument
 
+
+
+Debugger:
+  type: interface
+
+  extends: EventTarget
+
+  commands:
+
+    requestPause:
+      title: Pause on next call
+      group: configuration
+
+    resume:
+      title: Resume
+      group: configuration
+
+    next:
+      title: Step to next call
+      group: configuration
+
+    runTo:
+      title: Run to location
+      group: configuration
+      parameters:
+        location:
+          type: object
+          properties:
+            file: string
+            line: int?
+            column: int?
+
+  events:
+
+    pausedStateChanged:
+      parameters:
+        pausedDetails:
+          type: object?
+          properties:
+            location:
+              type: object
+              properties:
+                file: string
+                line: int?
+                column: int?
+            title: string
+            stack: string?
 
 
 Dialog:
@@ -3856,6 +4121,8 @@ CDPSession:
         method: string
         params: json?
 
+    close:
+
 
 Electron:
   type: interface
@@ -3869,6 +4136,7 @@ Electron:
         args:
           type: array?
           items: string
+        chromiumSandbox: boolean?
         cwd: string?
         env:
           type: array?
@@ -3909,15 +4177,20 @@ Electron:
         recordVideo:
           type: object?
           properties:
-            dir: string
+            dir: string?
             size:
               type: object?
               properties:
                 width: int
                 height: int
+            showActions:
+              type: object?
+              properties:
+                $mixin: ShowActionsOptions
         strictSelectors: boolean?
         timezoneId: string?
         tracesDir: string?
+        artifactsDir: string?
         selectorEngines:
           type: array?
           items: SelectorEngine
@@ -4315,77 +4588,3 @@ JsonPipe:
         reason: string?
 
 
-PageAgent:
-  type: interface
-  extends: EventTarget
-
-  initializer:
-    page: Page
-
-  commands:
-    perform:
-      title: 'Perform "{task}"'
-      parameters:
-        task: string
-        $mixin: PageAgentOptions
-
-      returns:
-        usage: AgentUsage
-
-    expect:
-      title: 'Expect "{expectation}"'
-      parameters:
-        expectation: string
-        $mixin: PageAgentOptions
-
-      returns:
-        usage: AgentUsage
-
-    extract:
-      title: 'Extract "{query}"'
-      parameters:
-        query: string
-        schema: json
-        $mixin: PageAgentOptions
-
-      returns:
-        result: json
-        usage: AgentUsage
-
-    dispose:
-      internal: true
-
-    usage:
-      title: 'Get agent usage'
-      group: configuration
-      returns:
-        usage: AgentUsage
-
-  events:
-
-    turn:
-      parameters:
-        role: string
-        message: string
-        usage:
-          type: object?
-          properties:
-            inputTokens: int
-            outputTokens: int
-
-
-PageAgentOptions:
-  type: mixin
-  properties:
-    maxActions: int?
-    maxActionRetries: int?
-    maxTokens: int?
-    cacheKey: string?
-    timeout: int?
-
-AgentUsage:
-  type: object
-  properties:
-    turns: int
-    inputTokens: int
-    outputTokens: int

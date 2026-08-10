@@ -297,14 +297,7 @@ function reactPackageSection(packageName) {
       `packages/web/src/**/*.ts`,
       `packages/web/src/**/*.tsx`,
     ],
-    languageOptions: {
-      parser: tsParser,
-      ecmaVersion: 9,
-      sourceType: "module",
-      parserOptions: {
-        project: path.join(__dirname, "packages", packageName, "tsconfig.json"),
-      },
-    },
+    languageOptions: languageOptionsWithTsConfig,
     rules: {
       ...baseRules,
       "no-console": 2,
@@ -360,6 +353,27 @@ export default [
     files: ["packages/playwright/**/*.ts"],
     rules: {
       ...noFloatingPromisesRules,
+    },
+  },
+  {
+    files: ["packages/playwright-core/src/tools/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [{
+            group: ["**/client", "**/client/**"],
+            message: "tools/ must not import from client/",
+          }],
+        },
+      ],
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "TSAsExpression > TSAnyKeyword",
+          message: "Avoid 'as any' — risk of accidentally casting to client interfaces. Use a precise type or add an eslint-disable with justification.",
+        },
+      ],
     },
   },
   {

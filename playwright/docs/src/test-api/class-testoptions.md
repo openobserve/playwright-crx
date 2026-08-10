@@ -46,24 +46,6 @@ export default defineConfig({
 });
 ```
 
-## property: TestOptions.agentOptions
-* since: v1.58
-* hidden
-- type: <[Object]>
-  - `provider` <[Object]>
-    - `api` <[PageAgentAPI]<"openai"|"openai-compatible"|"anthropic"|"google">> API to use.
-    - `apiEndpoint` ?<[string]> Endpoint to use if different from default.
-    - `apiKey` <[string]> API key for the LLM provider.
-    - `apiTimeout` ?<[int]> Amount of time to wait for the provider to respond to each request.
-    - `model` <[string]> Model identifier within the provider. Required in non-cache mode.
-  - `cachePathTemplate` ?<[string]> Cache file template to use/generate code for performed actions into.
-  - `limits` <[Object]>
-    - `maxTokens` ?<[int]> Maximum number of tokens to consume. The agentic loop will stop after input + output tokens exceed this value. Defaults to unlimited.
-    - `maxActions` ?<[int]> Maximum number of agentic actions to generate, defaults to 10.
-    - `maxActionRetries` ?<[int]> Maximum number retries per action, defaults to 3.
-  - `secrets` ?<[Object]<[string], [string]>> Secrets to hide from the LLM.
-  - `systemPrompt` <[string]> System prompt for the agent's loop.
-
 ## property: TestOptions.baseURL = %%-context-option-baseURL-%%
 * since: v1.10
 
@@ -589,8 +571,8 @@ export default defineConfig({
 
 ## property: TestOptions.trace
 * since: v1.10
-- type: <[Object]|[TraceMode]<"off"|"on"|"retain-on-failure"|"on-first-retry"|"retain-on-first-failure">>
-  - `mode` <[TraceMode]<"off"|"on"|"retain-on-failure"|"on-first-retry"|"on-all-retries"|"retain-on-first-failure">> Trace recording mode.
+- type: <[Object]|[TraceMode]<"off"|"on"|"retain-on-failure"|"on-first-retry"|"retain-on-first-failure"|"retain-on-failure-and-retries">>
+  - `mode` <[TraceMode]<"off"|"on"|"retain-on-failure"|"on-first-retry"|"on-all-retries"|"retain-on-first-failure"|"retain-on-failure-and-retries">> Trace recording mode.
   - `attachments` ?<[boolean]> Whether to include test attachments. Defaults to true. Optional.
   - `screenshots` ?<[boolean]> Whether to capture screenshots during tracing. Screenshots are used to build a timeline preview. Defaults to true. Optional.
   - `snapshots` ?<[boolean]> Whether to capture DOM snapshot on every action. Defaults to true. Optional.
@@ -603,6 +585,7 @@ Whether to record trace for each test. Defaults to `'off'`.
 * `'on-all-retries'`: Record trace only when retrying a test.
 * `'retain-on-failure'`: Record trace for each test. When test run passes, remove the recorded trace.
 * `'retain-on-first-failure'`: Record trace for the first run of each test, but not for retries. When test run passes, remove the recorded trace.
+* `'retain-on-failure-and-retries'`: Record trace for each test run. Retains all traces when an attempt fails.
 
 For more control, pass an object that specifies `mode` and trace features to enable.
 
@@ -642,6 +625,15 @@ export default defineConfig({
   - `size` ?<[Object]> Size of the recorded video. Optional.
     - `width` <[int]>
     - `height` <[int]>
+  - `show` ?<[Object]> If specified, visually annotates the video with test information and action highlights.
+    - `actions` ?<[Object]> Controls visual annotations on interacted elements.
+      - `duration` ?<[float]> How long each annotation is displayed in milliseconds. Defaults to `500`.
+      - `position` ?<[AnnotatePosition]<"top-left"|"top"|"top-right"|"bottom-left"|"bottom"|"bottom-right">> Position of the action title overlay. Defaults to `"top-right"`.
+      - `fontSize` ?<[int]> Font size of the action title in pixels. Defaults to `24`.
+    - `test` ?<[Object]> Controls test information displayed as a status overlay in the video.
+      - `level` ?<[TestAnnotationLevel]<"file"|"test"|"step">> Level of the detail to include about the current test.
+      - `position` ?<[AnnotatePosition]<"top-left"|"top"|"top-right"|"bottom-left"|"bottom"|"bottom-right">> Position of the test information overlay. Defaults to `"top-left"`.
+      - `fontSize` ?<[int]> Font size of the test information in pixels. Defaults to `14`.
 
 Whether to record video for each test. Defaults to `'off'`.
 * `'off'`: Do not record video.
@@ -650,6 +642,8 @@ Whether to record video for each test. Defaults to `'off'`.
 * `'on-first-retry'`: Record video only when retrying a test for the first time.
 
 To control video size, pass an object with `mode` and `size` properties. If video size is not specified, it will be equal to [`property: TestOptions.viewport`] scaled down to fit into 800x800. If `viewport` is not configured explicitly the video size defaults to 800x450. Actual picture of each page will be scaled down if necessary to fit the specified size.
+
+To annotate actions in the video, pass `show` with `action` and/or `test` sub-options. The `action` option controls visual highlights on interacted elements with an optional `delay` in milliseconds (defaults to `500`). The `test` option controls which test information is displayed as a status overlay.
 
 **Usage**
 

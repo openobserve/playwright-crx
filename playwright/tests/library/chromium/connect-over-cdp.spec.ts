@@ -19,6 +19,7 @@ import { playwrightTest as test, expect } from '../../config/browserTest';
 import http from 'http';
 import fs from 'fs';
 import { getUserAgent } from '../../../packages/playwright-core/lib/server/utils/userAgent';
+import { WebSocketTransport } from '../../../packages/playwright-core/lib/server/transport';
 import { suppressCertificateWarning } from '../../config/utils';
 import type { Frame } from '../../../packages/playwright-core/lib/server/frames';
 
@@ -602,6 +603,72 @@ test('should not reuse utility worlds between two clients', async ({ browserType
     await browser2.close();
 
     expect(result).toBeUndefined();
+  } finally {
+    await browserServer.close();
+  }
+});
+
+test('should get title and URL of existing page', async ({ browserType, mode, server }, testInfo) => {
+  const port = 9339 + testInfo.workerIndex;
+  const browserServer = await browserType.launch({
+    args: ['--remote-debugging-port=' + port]
+  });
+  const browsers = [];
+  try {
+    {
+      const cdpBrowser = await browserType.connectOverCDP({
+        endpointURL: `http://127.0.0.1:${port}/`,
+      });
+      browsers.push(cdpBrowser);
+      const [context] = cdpBrowser.contexts();
+      const page = await context.newPage();
+      await page.goto(server.EMPTY_PAGE);
+      await page.evaluate(() => document.title = 'my title');
+    }
+
+    {
+      const cdpBrowser = await browserType.connectOverCDP({
+        endpointURL: `http://127.0.0.1:${port}/`,
+      });
+      browsers.push(cdpBrowser);
+
+      const [context] = cdpBrowser.contexts();
+      const [page] = context.pages();
+      expect(page.url()).toBe(server.EMPTY_PAGE);
+      expect(await page.title()).toBe('my title');
+    }
+
+  } finally {
+    for (const browser of browsers)
+      await browser.close();
+    await browserServer.close();
+  }
+});
+
+test('should connect over CDP using a ConnectionTransport', async ({ browserType, mode, server }, testInfo) => {
+  test.skip(mode !== 'default', '_connectOverCDPTransport is only available in-process');
+
+  const port = 9339 + testInfo.workerIndex;
+  const browserServer = await browserType.launch({
+    args: ['--remote-debugging-port=' + port]
+  });
+  try {
+    const json = await new Promise<string>((resolve, reject) => {
+      http.get(`http://127.0.0.1:${port}/json/version/`, resp => {
+        let data = '';
+        resp.on('data', chunk => data += chunk);
+        resp.on('end', () => resolve(data));
+      }).on('error', reject);
+    });
+    const wsEndpoint = JSON.parse(json).webSocketDebuggerUrl;
+    const transport = await WebSocketTransport.connect(undefined, wsEndpoint);
+    const cdpBrowser = await (browserType as any)._connectOverCDPTransport(transport);
+    const contexts = cdpBrowser.contexts();
+    expect(contexts.length).toBe(1);
+    const page = await contexts[0].newPage();
+    await page.goto(server.EMPTY_PAGE);
+    expect(page.url()).toBe(server.EMPTY_PAGE);
+    await cdpBrowser.close();
   } finally {
     await browserServer.close();
   }

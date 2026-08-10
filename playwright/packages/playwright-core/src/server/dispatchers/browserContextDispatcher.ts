@@ -1,7 +1,7 @@
 /**
  * Copyright (c) Microsoft Corporation.
  *
- * Licensed under the Apache License, Version 2.0 (the 'License");
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -20,6 +20,7 @@ import path from 'path';
 import { BrowserContext } from '../browserContext';
 import { ArtifactDispatcher } from './artifactDispatcher';
 import { CDPSessionDispatcher } from './cdpSessionDispatcher';
+import { DebuggerDispatcher } from './debuggerDispatcher';
 import { DialogDispatcher } from './dialogDispatcher';
 import { Dispatcher } from './dispatcher';
 import { FrameDispatcher } from './frameDispatcher';
@@ -27,24 +28,27 @@ import { APIRequestContextDispatcher, RequestDispatcher, ResponseDispatcher, Rou
 import { BindingCallDispatcher, PageDispatcher, WorkerDispatcher } from './pageDispatcher';
 import { CRBrowser, CRBrowserContext } from '../chromium/crBrowser';
 import { serializeError } from '../errors';
+import { DisposableDispatcher } from './disposableDispatcher';
 import { TracingDispatcher } from './tracingDispatcher';
 import { WebSocketRouteDispatcher } from './webSocketRouteDispatcher';
 import { WritableStreamDispatcher } from './writableStreamDispatcher';
 import { createGuid } from '../utils/crypto';
-import { urlMatches } from '../../utils/isomorphic/urlMatch';
+import { deserializeURLMatch, urlMatches } from '../../utils/isomorphic/urlMatch';
 import { Recorder } from '../recorder';
 import { RecorderApp } from '../recorder/recorderApp';
 import { ElementHandleDispatcher } from './elementHandlerDispatcher';
 import { JSHandleDispatcher } from './jsHandleDispatcher';
+import { disposeAll } from '../disposable';
 
-import type { Artifact } from '../artifact';
 import type { ConsoleMessage } from '../console';
 import type { Dialog } from '../dialog';
 import type { Request, Response, RouteHandler } from '../network';
-import type { InitScript, Page, PageBinding } from '../page';
+import type { InitScript, Page } from '../page';
+import type { Disposable } from '../disposable';
 import type { DispatcherScope } from './dispatcher';
 import type * as channels from '@protocol/channels';
 import type { Progress } from '@protocol/progress';
+import type { URLMatch } from '../../utils/isomorphic/urlMatch';
 
 export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channels.BrowserContextChannel, DispatcherScope> implements channels.BrowserContextChannel {
   _type_EventTarget = true;
@@ -52,12 +56,11 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
   private _context: BrowserContext;
   private _subscriptions = new Set<channels.BrowserContextUpdateSubscriptionParams['event']>();
   _webSocketInterceptionPatterns: channels.BrowserContextSetWebSocketInterceptionPatternsParams['patterns'] = [];
-  private _bindings: PageBinding[] = [];
-  private _initScripts: InitScript[] = [];
+  private _disposables: Disposable[] = [];
   private _dialogHandler: (dialog: Dialog) => boolean;
   private _clockPaused = false;
   private _requestInterceptor: RouteHandler;
-  private _interceptionUrlMatchers: (string | RegExp)[] = [];
+  private _interceptionUrlMatchers: URLMatch[] = [];
   private _routeWebSocketInitScript: InitScript | undefined;
 
   static from(parentScope: DispatcherScope, context: BrowserContext): BrowserContextDispatcher {
@@ -67,16 +70,18 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
 
   private constructor(parentScope: DispatcherScope, context: BrowserContext) {
     // We will reparent these to the context below.
+    const debugger_ = DebuggerDispatcher.from(parentScope as BrowserContextDispatcher, context.debugger());
     const requestContext = APIRequestContextDispatcher.from(parentScope as BrowserContextDispatcher, context.fetchRequest);
     const tracing = TracingDispatcher.from(parentScope as BrowserContextDispatcher, context.tracing);
 
     super(parentScope, context, 'BrowserContext', {
-      isChromium: context._browser.options.isChromium,
+      debugger: debugger_,
       requestContext,
       tracing,
       options: context._options,
     });
 
+    this.adopt(debugger_);
     this.adopt(requestContext);
     this.adopt(tracing);
 
@@ -95,18 +100,6 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
     this._context = context;
     // Note: when launching persistent context, or connecting to an existing browser,
     // dispatcher is created very late, so we can already have pages, videos and everything else.
-
-    const onVideo = (artifact: Artifact) => {
-      // Note: Video must outlive Page and BrowserContext, so that client can saveAs it
-      // after closing the context. We use |scope| for it.
-      const artifactDispatcher = ArtifactDispatcher.from(parentScope, artifact);
-      this._dispatchEvent('video', { artifact: artifactDispatcher });
-    };
-    this.addObjectListener(BrowserContext.Events.VideoStarted, onVideo);
-    for (const video of context._browser._idToVideo.values()) {
-      if (video.context === context)
-        onVideo(video.artifact);
-    }
 
     for (const page of context.pages())
       this._dispatchEvent('page', { page: PageDispatcher.from(this, page) });
@@ -219,6 +212,7 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
         return JSHandleDispatcher.fromJSHandle(jsScope, a);
       }),
       location: message.location(),
+      timestamp: message.timestamp(),
     };
   }
 
@@ -238,7 +232,7 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
     };
   }
 
-  async exposeBinding(params: channels.BrowserContextExposeBindingParams, progress: Progress): Promise<void> {
+  async exposeBinding(params: channels.BrowserContextExposeBindingParams, progress: Progress): Promise<channels.BrowserContextExposeBindingResult> {
     const binding = await this._context.exposeBinding(progress, params.name, !!params.needsHandle, (source, ...args) => {
       // When reusing the context, we might have some bindings called late enough,
       // after context and page dispatchers have been disposed.
@@ -249,7 +243,8 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
       this._dispatchEvent('bindingCall', { binding });
       return binding.promise();
     });
-    this._bindings.push(binding);
+    this._disposables.push(binding);
+    return { disposable: new DisposableDispatcher(this, binding) };
   }
 
   async newPage(params: channels.BrowserContextNewPageParams, progress: Progress): Promise<channels.BrowserContextNewPageResult> {
@@ -305,8 +300,10 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
     await progress.race(this._context.setHTTPCredentials(params.httpCredentials));
   }
 
-  async addInitScript(params: channels.BrowserContextAddInitScriptParams, progress: Progress): Promise<void> {
-    this._initScripts.push(await this._context.addInitScript(progress, params.source));
+  async addInitScript(params: channels.BrowserContextAddInitScriptParams, progress: Progress): Promise<channels.BrowserContextAddInitScriptResult> {
+    const initScript = await this._context.addInitScript(params.source);
+    this._disposables.push(initScript);
+    return { disposable: new DisposableDispatcher(this, initScript) };
   }
 
   async setNetworkInterceptionPatterns(params: channels.BrowserContextSetNetworkInterceptionPatternsParams, progress: Progress): Promise<void> {
@@ -318,7 +315,7 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
         await this._context.removeRequestInterceptor(this._requestInterceptor);
       this._interceptionUrlMatchers = [];
     } else {
-      this._interceptionUrlMatchers = params.patterns.map(pattern => pattern.regexSource ? new RegExp(pattern.regexSource, pattern.regexFlags!) : pattern.glob!);
+      this._interceptionUrlMatchers = params.patterns.map(deserializeURLMatch);
       if (!hadMatchers)
         await this._context.addRequestInterceptor(progress, this._requestInterceptor);
     }
@@ -334,6 +331,10 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
     return await progress.race(this._context.storageState(progress, params.indexedDB));
   }
 
+  async setStorageState(params: channels.BrowserContextSetStorageStateParams, progress: Progress): Promise<void> {
+    await this._context.setStorageState(progress, params.storageState, 'api');
+  }
+
   async close(params: channels.BrowserContextCloseParams, progress: Progress): Promise<void> {
     progress.metadata.potentiallyClosesScope = true;
     await this._context.close(params);
@@ -345,8 +346,7 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
 
   async disableRecorder(params: channels.BrowserContextDisableRecorderParams, progress: Progress): Promise<void> {
     const recorder = await Recorder.existingForContext(this._context);
-    if (recorder)
-      recorder.setMode('none');
+    await recorder?.setMode('none');
   }
 
   async exposeConsoleApi(params: channels.BrowserContextExposeConsoleApiParams, progress: Progress): Promise<void> {
@@ -358,7 +358,7 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
   }
 
   async newCDPSession(params: channels.BrowserContextNewCDPSessionParams, progress: Progress): Promise<channels.BrowserContextNewCDPSessionResult> {
-    if (!this._object._browser.options.isChromium)
+    if (this._object._browser.options.browserType !== 'chromium')
       throw new Error(`CDP session is only available in Chromium`);
     if (!params.page && !params.frame || params.page && params.frame)
       throw new Error(`CDP session must be initiated with either Page or Frame, not none or both`);
@@ -379,15 +379,15 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
   }
 
   async clockFastForward(params: channels.BrowserContextClockFastForwardParams, progress: Progress): Promise<channels.BrowserContextClockFastForwardResult> {
-    await this._context.clock.fastForward(progress, params.ticksString ?? params.ticksNumber ?? 0);
+    await this._context.clock.fastForward(params.ticksString ?? params.ticksNumber ?? 0);
   }
 
   async clockInstall(params: channels.BrowserContextClockInstallParams, progress: Progress): Promise<channels.BrowserContextClockInstallResult> {
-    await this._context.clock.install(progress, params.timeString ?? params.timeNumber ?? undefined);
+    await this._context.clock.install(params.timeString ?? params.timeNumber ?? undefined);
   }
 
   async clockPauseAt(params: channels.BrowserContextClockPauseAtParams, progress: Progress): Promise<channels.BrowserContextClockPauseAtResult> {
-    await this._context.clock.pauseAt(progress, params.timeString ?? params.timeNumber ?? 0);
+    await this._context.clock.pauseAt(params.timeString ?? params.timeNumber ?? 0);
     this._clockPaused = true;
   }
 
@@ -397,15 +397,15 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
   }
 
   async clockRunFor(params: channels.BrowserContextClockRunForParams, progress: Progress): Promise<channels.BrowserContextClockRunForResult> {
-    await this._context.clock.runFor(progress, params.ticksString ?? params.ticksNumber ?? 0);
+    await this._context.clock.runFor(params.ticksString ?? params.ticksNumber ?? 0);
   }
 
   async clockSetFixedTime(params: channels.BrowserContextClockSetFixedTimeParams, progress: Progress): Promise<channels.BrowserContextClockSetFixedTimeResult> {
-    await this._context.clock.setFixedTime(progress, params.timeString ?? params.timeNumber ?? 0);
+    await this._context.clock.setFixedTime(params.timeString ?? params.timeNumber ?? 0);
   }
 
   async clockSetSystemTime(params: channels.BrowserContextClockSetSystemTimeParams, progress: Progress): Promise<channels.BrowserContextClockSetSystemTimeResult> {
-    await this._context.clock.setSystemTime(progress, params.timeString ?? params.timeNumber ?? 0);
+    await this._context.clock.setSystemTime(params.timeString ?? params.timeNumber ?? 0);
   }
 
   async updateSubscription(params: channels.BrowserContextUpdateSubscriptionParams, progress: Progress): Promise<void> {
@@ -432,10 +432,7 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
     this._context.dialogManager.removeDialogHandler(this._dialogHandler);
     this._interceptionUrlMatchers = [];
     this._context.removeRequestInterceptor(this._requestInterceptor).catch(() => {});
-    this._context.removeExposedBindings(this._bindings).catch(() => {});
-    this._bindings = [];
-    this._context.removeInitScripts(this._initScripts).catch(() => {});
-    this._initScripts = [];
+    disposeAll(this._disposables).catch(() => {});
     if (this._routeWebSocketInitScript)
       WebSocketRouteDispatcher.uninstall(this.connection, this._context, this._routeWebSocketInitScript).catch(() => {});
     this._routeWebSocketInitScript = undefined;

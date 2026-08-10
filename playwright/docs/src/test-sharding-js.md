@@ -161,12 +161,12 @@ jobs:
 
 You can now see the reports have been merged and a combined HTML report is available in the GitHub Actions Artifacts tab.
 
-<img width="875" alt="image" src="https://github.com/microsoft/playwright/assets/9798949/b69dac59-fc19-4b98-8f49-814b1c29ca02" />
+<img height="1610" width="1750" alt="image" src="https://github.com/microsoft/playwright/assets/9798949/b69dac59-fc19-4b98-8f49-814b1c29ca02" />
 
 
 ## Merging reports from multiple environments
 
-If you want to run the same tests in multiple environments, as opposed to shard your tests onto multiple machines, you need to differentiate these enviroments.
+If you want to run the same tests in multiple environments, as opposed to shard your tests onto multiple machines, you need to differentiate these environments.
 
 In this case, it is useful to specify the [`property: TestConfig.tag`] property, to tag all tests with the environment name. This tag will be automatically picked up by the blob report and later on by the merge tool.
 

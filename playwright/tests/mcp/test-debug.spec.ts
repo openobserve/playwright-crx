@@ -119,7 +119,7 @@ test('test_debug (browser_snapshot/network/console)', async ({ startClient, serv
   expect(await client.callTool({
     name: 'browser_snapshot',
   })).toHaveResponse({
-    snapshot: expect.stringContaining(`generic [active] [ref=e1]: Hello, world!`),
+    inlineSnapshot: expect.stringContaining(`generic [active] [ref=e1]: Hello, world!`),
   });
 });
 
@@ -201,7 +201,7 @@ Try recovering from the error prior to continuing`);
   expect(await client.callTool({
     name: 'browser_snapshot',
   })).toHaveResponse({
-    snapshot: expect.stringContaining(`- button \"Submit\" [ref=e2]`),
+    inlineSnapshot: expect.stringContaining(`- button \"Submit\" [ref=e2]`),
   });
 
   expect(await client.callTool({
@@ -437,4 +437,19 @@ Error: expect(locator).toBeVisible() failed`));
   })).toHaveResponse({
     page: expect.stringContaining(`- Page URL: ${server.HELLO_WORLD}\n- Page Title: Title2`),
   });
+});
+
+test('test_debug (no default page fixture)', async ({ startClient }) => {
+  const { client, id } = await prepareDebugTest(startClient, `
+      import { test, expect } from '@playwright/test';
+      test('fail', async ({}) => {
+        throw new Error('failure');
+      });
+  `);
+  expect(await client.callTool({
+    name: 'test_debug',
+    arguments: {
+      test: { id, title: 'fail' },
+    },
+  })).toHaveTextResponse(expect.stringContaining(`Only tests that use default Playwright context or page fixture support test_debug`));
 });

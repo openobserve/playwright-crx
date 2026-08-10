@@ -23,6 +23,7 @@ import { kBrowserCloseMessageId } from './bidiConnection';
 import { chromiumSwitches } from '../chromium/chromiumSwitches';
 import { RecentLogsCollector } from '../utils/debugLogger';
 import { waitForReadyState } from '../chromium/chromium';
+import { shouldProxyLoopback } from '../chromium/crBrowser';
 
 import type { BrowserOptions } from '../browser';
 import type { SdkObject } from '../instrumentation';
@@ -142,17 +143,31 @@ export class BidiChromium extends BrowserType {
       chromeArguments.push(`--proxy-server=${proxy.server}`);
       const proxyBypassRules = [];
       // https://source.chromium.org/chromium/chromium/src/+/master:net/docs/proxy.md;l=548;drc=71698e610121078e0d1a811054dcf9fd89b49578
-      if (options.socksProxyPort)
-        proxyBypassRules.push('<-loopback>');
       if (proxy.bypass)
         proxyBypassRules.push(...proxy.bypass.split(',').map(t => t.trim()).map(t => t.startsWith('.') ? '*' + t : t));
-      if (!process.env.PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK && !proxyBypassRules.includes('<-loopback>'))
+      if (options.socksProxyPort || shouldProxyLoopback(proxy.bypass))
         proxyBypassRules.push('<-loopback>');
       if (proxyBypassRules.length > 0)
         chromeArguments.push(`--proxy-bypass-list=${proxyBypassRules.join(';')}`);
     }
     chromeArguments.push(...args);
     return chromeArguments;
+  }
+
+  override getExecutableName(options: types.LaunchOptions): string {
+    switch (options.channel) {
+      case 'bidi-chromium':
+        return 'chromium';
+      case 'bidi-chrome':
+        return 'chrome';
+      case 'bidi-chrome-beta':
+        return 'chrome-beta';
+      case 'bidi-chrome-dev':
+        return 'chrome-dev';
+      case 'bidi-chrome-canary':
+        return 'chrome-canary';
+    }
+    throw new Error(`Unsupported Bidi Chromium channel: ${options.channel}`);
   }
 }
 
