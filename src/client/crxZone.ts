@@ -375,12 +375,14 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
     waitForFunction: true,
     pause: true,
     pdf: true,
-    // Added to Page in 1.56. Wrapped like every other async Page API so their api-name
-    // attribution stays inside the crx zone; the type here is exhaustive, so a new
-    // method that is not listed fails the build rather than silently escaping the zone.
+    // Added to Page in 1.56 (requests/consoleMessages/pageErrors) and 1.58 (agent).
+    // Wrapped like every other async Page API so their api-name attribution stays inside
+    // the crx zone; the type here is exhaustive, so a new method that is not listed fails
+    // the build rather than silently escaping it.
     requests: true,
     consoleMessages: true,
     pageErrors: true,
+    agent: true,
   }],
   selectors: [Selectors.prototype, { register: true }],
   tracing: [Tracing.prototype, { group: true, groupEnd: true, start: true, startChunk: true, stop: true, stopChunk: true }],

@@ -33,6 +33,10 @@ export default defineConfig({
       // for bundles, we use relative paths because different utilsBundleImpl exists in both playwright-core and playwright
       './utilsBundleImpl': '../bundles/utils/src/utilsBundleImpl',
       './zipBundleImpl': '../bundles/zip/src/zipBundleImpl',
+      // 1.58 moved the MCP bundle into playwright-core and made `nodePlatform` — which
+      // src/index.ts imports — depend on its zod. Unlike the 1.56 case there is no single
+      // edge to cut any more, so the bundle is built in.
+      './mcpBundleImpl': '../bundles/mcp/src/mcpBundleImpl',
       './babelBundleImpl': '../../bundles/babel/src/babelBundleImpl',
       './expectBundleImpl': '../../bundles/expect/src/expectBundleImpl',
 
@@ -76,6 +80,16 @@ export default defineConfig({
 
       'fs/promises': path.resolve(__dirname, './src/shims/fs/promises'),
 
+      // The MCP SDK imports its node built-ins with the `node:` prefix, which the
+      // unprefixed aliases above do not match. Same targets, so a module reached both
+      // ways resolves to one shim rather than two copies of it.
+      'node:child_process': path.resolve(__dirname, './src/shims/child_process'),
+      'node:crypto': path.resolve(__dirname, './node_modules/crypto-browserify'),
+      'node:fs': path.resolve(__dirname, './src/shims/fs'),
+      'node:path': path.resolve(__dirname, './node_modules/path'),
+      'node:process': path.resolve(__dirname, './node_modules/process'),
+      'node:tls': path.resolve(__dirname, './src/shims/tls'),
+      'node:url': path.resolve(__dirname, './src/shims/url'),
       'node:events': path.resolve(__dirname, './node_modules/events'),
       'node:module': path.resolve(__dirname, './src/shims/module'),
       'node:stream': path.resolve(__dirname, './node_modules/readable-stream'),

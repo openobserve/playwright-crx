@@ -455,7 +455,9 @@ export class CrxApplication extends SdkObject {
       this._recorderApp?.uninstall(pageOrError),
       pageOrError.hideHighlight(),
     ]);
-    const closed = new Promise(x => pageOrError.once(Page.Events.Close, x));
+    // 1.58 typed the event listeners, so the resolve function can no longer be passed
+    // straight through — it takes an argument the listener signature does not offer.
+    const closed = new Promise<void>(resolve => pageOrError.once(Page.Events.Close, () => resolve()));
     await this._transport.detach(targetId);
     await closed;
   }

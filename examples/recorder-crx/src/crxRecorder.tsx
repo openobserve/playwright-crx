@@ -19,7 +19,7 @@ import { Toolbar } from '@web/components/toolbar';
 import { ToolbarButton, ToolbarSeparator } from '@web/components/toolbarButton';
 import { Dialog } from './dialog';
 import { PreferencesForm } from './preferencesForm';
-import type { CallLog, ElementInfo, Mode, Source } from '@recorder/recorderTypes';
+import type { Source } from '@recorder/recorderTypes';
 import { Recorder } from '@recorder/recorder';
 import type { CrxSettings } from './settings';
 import { addSettingsChangedListener, defaultSettings, loadSettings, removeSettingsChangedListener } from './settings';
@@ -27,10 +27,6 @@ import ModalContainer, { create as createModal } from 'react-modal-promise';
 import { SaveCodeForm } from './saveCodeForm';
 import './crxRecorder.css';
 import './form.css';
-
-function setElementPicked(elementInfo: ElementInfo, userGesture?: boolean) {
-  window.playwrightElementPicked(elementInfo, userGesture);
-}
 
 function download(filename: string, text: string) {
   const blob = new Blob([text], { type: 'text/plain' });
@@ -68,69 +64,71 @@ const codegenFilenames: Record<string, string> = {
 export const CrxRecorder: React.FC = ({
 }) => {
   const [settings, setSettings] = React.useState<CrxSettings>(defaultSettings);
+  // The vendored Recorder owns `sources` since 1.58. This popup keeps its own copy only
+  // for the Save feature, which needs the selected source's text and a filename for it.
   const [sources, setSources] = React.useState<Source[]>([]);
-  const [paused, setPaused] = React.useState(false);
-  const [log, setLog] = React.useState(new Map<string, CallLog>());
-  const [mode, setMode] = React.useState<Mode>('none');
   const [selectedFileId, setSelectedFileId] = React.useState<string>(defaultSettings.targetLanguage);
 
-  // `window.dispatch` has to exist before the *children* mount, not merely before this
-  // component's own effect runs. 1.55 gave the vendored Recorder a mount effect that
-  // dispatches `setAutoExpect`, and React runs child effects before the parent's — so
-  // assigning dispatch inside the effect below left that call hitting `undefined`, and a
-  // TypeError thrown from an effect unmounts the whole tree. The popup came up blank and
-  // every recorder and player test died on a closed page.
-  //
-  // So it is assigned during render (as the vendored UI does for its own window hooks)
-  // and buffers anything sent before the port is connected.
+  // 1.58 reversed the direction of `window.dispatch`. It used to be how the UI sent events
+  // out; it is now how the app pushes state IN, installed by the vendored Recorder, and
+  // outgoing calls go through `window.sendCommand`. Both are assigned during render rather
+  // than in an effect: React runs child effects before the parent's, and the Recorder
+  // dispatches `setAutoExpect` from a mount effect — assigning in our effect left that
+  // call hitting `undefined`, and a TypeError thrown from an effect unmounts the tree,
+  // which is how the popup came up blank at 1.55.
   const portRef = React.useRef<chrome.runtime.Port>();
-  const pendingRef = React.useRef<any[]>([]);
-  window.dispatch = async (data: any) => {
+  const pendingRef = React.useRef<{ method: string, params?: any }[]>([]);
+  window.sendCommand = async (data: { method: string, params?: any }) => {
     if (portRef.current)
-      portRef.current.postMessage({ type: 'recorderEvent', ...data });
+      portRef.current.postMessage({ type: 'recorderEvent', event: data.method, params: data.params });
     else
       pendingRef.current.push(data);
-    if (data.event === 'fileChanged')
+    if (data.method === 'fileChanged')
       setSelectedFileId(data.params.fileId);
   };
 
   React.useEffect(() => {
     const port = chrome.runtime.connect({ name: 'recorder' });
+    // Anything arriving before the Recorder's layout effect has installed `dispatch` would
+    // be dropped, so it waits. In practice the first message is the initial setSources.
+    const inbound: { method: string, params?: any }[] = [];
+    const flush = () => {
+      if (!window.dispatch)
+        return;
+      for (const data of inbound.splice(0))
+        window.dispatch(data);
+    };
+    const toFrontend = (data: { method: string, params?: any }) => {
+      inbound.push(data);
+      flush();
+    };
+
     const onMessage = (msg: any) => {
       if (!('type' in msg) || msg.type !== 'recorder')
         return;
 
       switch (msg.method) {
-        case 'setPaused': setPaused(msg.paused); break;
-        case 'setMode': setMode(msg.mode); break;
-        case 'setSources': setSources(msg.sources); break;
-        case 'resetCallLogs': setLog(new Map()); break;
-        case 'updateCallLogs': setLog(log => {
-          const newLog = new Map<string, CallLog>(log);
-          for (const callLog of msg.callLogs) {
-            callLog.reveal = !log.has(callLog.id);
-            newLog.set(callLog.id, callLog);
-          }
-          return newLog;
-        }); break;
+        case 'setPaused': toFrontend({ method: 'pauseStateChanged', params: { paused: msg.paused } }); break;
+        case 'setMode': toFrontend({ method: 'modeChanged', params: { mode: msg.mode } }); break;
+        case 'setSources':
+          setSources(msg.sources);
+          toFrontend({ method: 'sourcesUpdated', params: { sources: msg.sources } });
+          break;
+        case 'resetCallLogs': toFrontend({ method: 'callLogsReplaced', params: { callLogs: [] } }); break;
+        case 'updateCallLogs': toFrontend({ method: 'callLogsUpdated', params: { callLogs: msg.callLogs } }); break;
         // Replaces the whole log atomically. Replay rebuilds its entries on every step,
-        // so merging (as updateCallLogs does) would accumulate stale ones.
-        case 'setCallLogs': setLog(() => {
-          const newLog = new Map<string, CallLog>();
-          for (const callLog of msg.callLogs) {
-            callLog.reveal = true;
-            newLog.set(callLog.id, callLog);
-          }
-          return newLog;
-        }); break;
-        case 'elementPicked': setElementPicked(msg.elementInfo, msg.userGesture); break;
+        // so merging (as callLogsUpdated does) would accumulate stale ones.
+        case 'setCallLogs': toFrontend({ method: 'callLogsReplaced', params: { callLogs: msg.callLogs } }); break;
+        case 'elementPicked':
+          toFrontend({ method: 'elementPicked', params: { elementInfo: msg.elementInfo, userGesture: msg.userGesture } });
+          break;
       }
     };
     port.onMessage.addListener(onMessage);
 
     portRef.current = port;
     for (const data of pendingRef.current.splice(0))
-      port.postMessage({ type: 'recorderEvent', ...data });
+      port.postMessage({ type: 'recorderEvent', event: data.method, params: data.params });
 
     loadSettings().then(settings => {
       setSettings(settings);
@@ -147,14 +145,13 @@ export const CrxRecorder: React.FC = ({
   }, []);
 
   // 1.55 removed `isPrimary`/`timestamp` from Source, and with them the Recorder
-  // component's fallback for choosing a file to display. It now renders exactly the
-  // source last named by `window.playwrightSelectSource` — and an empty editor before
-  // any such call. This popup has always owned the selection (it comes from the saved
-  // target language), so it now has to push it down; without this the code panel stays
-  // blank until the user picks a language by hand.
+  // component's fallback for choosing a file to display. It renders exactly the source
+  // last revealed to it — and an empty editor before that. This popup owns the selection
+  // (it comes from the saved target language), so it has to push it down; without this the
+  // code panel stays blank until the user picks a language by hand.
   React.useEffect(() => {
-    if (sources.some(s => s.id === selectedFileId))
-      window.playwrightSelectSource?.(selectedFileId);
+    if (window.dispatch && sources.some(s => s.id === selectedFileId))
+      window.dispatch({ method: 'sourceRevealRequested', params: { sourceId: selectedFileId } });
   }, [sources, selectedFileId]);
 
   const source = React.useMemo(() => sources.find(s => s.id === selectedFileId), [sources, selectedFileId]);
@@ -216,11 +213,11 @@ export const CrxRecorder: React.FC = ({
   }, [selectedFileId, settings, saveCode]);
 
   const dispatchEditedCode = React.useCallback((code: string) => {
-    window.dispatch({ event: 'codeChanged', params: { code } });
+    window.sendCommand({ method: 'codeChanged', params: { code } });
   }, []);
 
   const dispatchCursorActivity = React.useCallback((position: { line: number }) => {
-    window.dispatch({ event: 'cursorActivity', params: { position } });
+    window.sendCommand({ method: 'cursorActivity', params: { position } });
   }, []);
 
   return <>
@@ -241,7 +238,7 @@ export const CrxRecorder: React.FC = ({
           <ToolbarButton icon='settings-gear' title='Preferences' onClick={showPreferences}></ToolbarButton>
         </Toolbar>
       </>}
-      <Recorder sources={sources} paused={paused} log={log} mode={mode} onEditedCode={dispatchEditedCode} onCursorActivity={dispatchCursorActivity} />
+      <Recorder onEditedCode={dispatchEditedCode} onCursorActivity={dispatchCursorActivity} />
     </div>
   </>;
 };
