@@ -14,15 +14,15 @@
  * limitations under the License.
  */
 
-import { getActionGroup, renderTitleForCall } from '@isomorphic/protocolFormatter';
+import { getActionGroup, renderTitleForCall } from '../protocolFormatter';
 
-import type { Language } from '@isomorphic/locatorGenerators';
+import type { Language } from '../locatorGenerators';
 import type { ResourceSnapshot } from '@trace/snapshot';
 import type * as trace from '@trace/trace';
 import type { ActionTraceEvent } from '@trace/trace';
-import type { ActionEntry, ContextEntry, PageEntry } from '@isomorphic/trace/entries';
+import type { ActionEntry, ContextEntry, PageEntry } from '../trace/entries';
 import type { StackFrame } from '@protocol/channels';
-import type { ActionGroup } from '@isomorphic/protocolFormatter';
+import type { ActionGroup } from '../protocolFormatter';
 
 const contextSymbol = Symbol('context');
 const nextInContextSymbol = Symbol('nextInContext');
@@ -41,6 +41,8 @@ export type SourceModel = {
   errors: { line: number, message: string }[];
   content: string | undefined;
 };
+
+export type ResourceEntry = ResourceSnapshot & { id: string };
 
 export type ActionTraceEventInContext = ActionEntry & {
   context: ContextEntry;
@@ -84,9 +86,10 @@ export class TraceModel {
   readonly sdkLanguage: Language | undefined;
   readonly testIdAttributeName: string | undefined;
   readonly sources: Map<string, SourceModel>;
-  resources: ResourceSnapshot[];
+  resources: ResourceEntry[];
   readonly actionCounters: Map<string, number>;
   readonly traceUri: string;
+  readonly testTimeout?: number;
 
 
   constructor(traceUri: string, contexts: ContextEntry[]) {
@@ -102,6 +105,7 @@ export class TraceModel {
     this.playwrightVersion = contexts.find(c => c.playwrightVersion)?.playwrightVersion;
     this.title = libraryContext?.title || '';
     this.options = libraryContext?.options || {};
+    this.testTimeout = contexts.find(c => c.origin === 'testRunner')?.testTimeout;
     // Next call updates all timestamps for all events in library contexts, so it must be done first.
     this.actions = mergeActionsAndUpdateTiming(contexts);
     this.pages = ([] as PageEntry[]).concat(...contexts.map(c => c.pages));
@@ -113,7 +117,7 @@ export class TraceModel {
     this.errors = ([] as trace.ErrorTraceEvent[]).concat(...contexts.map(c => c.errors));
     this.hasSource = contexts.some(c => c.hasSource);
     this.hasStepData = contexts.some(context => context.origin === 'testRunner');
-    this.resources = [...contexts.map(c => c.resources)].flat();
+    this.resources = [...contexts.map(c => c.resources)].flat().map(entry => ({ ...entry, id: `${entry.pageref}-${entry.time}-${entry.request.url}` }));
     this.attachments = this.actions.flatMap(action => action.attachments?.map(attachment => ({ ...attachment, callId: action.callId, traceUri })) ?? []);
     this.visibleAttachments = this.attachments.filter(attachment => !attachment.name.startsWith('_'));
 

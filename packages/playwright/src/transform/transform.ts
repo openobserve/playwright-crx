@@ -22,13 +22,12 @@ import url from 'url';
 import crypto from 'crypto';
 
 import { loadTsConfig } from '../third_party/tsconfig-loader';
-import { createFileMatcher, fileIsModule, resolveImportSpecifierAfterMapping } from '../util';
+import { createFileMatcher, debugTest, fileIsModule, resolveImportSpecifierAfterMapping } from '../util';
 import { sourceMapSupport } from '../utilsBundle';
 import { belongsToNodeModules, currentFileDepsCollector, getFromCompilationCache, installSourceMapSupport } from './compilationCache';
 import { addHook } from '../third_party/pirates';
-import { transformMDToTS } from './md';
 
-import type { BabelPlugin, BabelTransformFunction, EncodedSourceMap } from './babelBundle';
+import type { BabelPlugin, BabelTransformFunction } from './babelBundle';
 import type { Location } from '../../types/testReporter';
 import type { LoadedTsConfig } from '../third_party/tsconfig-loader';
 import type { Matcher } from '../util';
@@ -221,15 +220,6 @@ export function setTransformData(pluginName: string, value: any) {
 }
 
 export function transformHook(originalCode: string, filename: string, moduleUrl?: string): { code: string, serializedCache?: any } {
-  // TODO: ideally, we would not transform before checking the cache. However, the source
-  // currently depends on the seed.md, so "originalCode" is not enough to produce a cache key.
-  let inputSourceMap: EncodedSourceMap | undefined;
-  if (filename.endsWith('.md') && false) {
-    const transformed = transformMDToTS(originalCode, filename);
-    originalCode = transformed.code;
-    inputSourceMap = transformed.map;
-  }
-
   const hasPreprocessor =
     process.env.PW_TEST_SOURCE_TRANSFORM &&
     process.env.PW_TEST_SOURCE_TRANSFORM_SCOPE &&
@@ -247,7 +237,7 @@ export function transformHook(originalCode: string, filename: string, moduleUrl?
 
   const { babelTransform }: { babelTransform: BabelTransformFunction } = require('./babelBundle');
   transformData = new Map<string, any>();
-  const babelResult = babelTransform(originalCode, filename, !!moduleUrl, pluginsPrologue, pluginsEpilogue, inputSourceMap);
+  const babelResult = babelTransform(originalCode, filename, !!moduleUrl, pluginsPrologue, pluginsEpilogue);
   if (!babelResult?.code)
     return { code: originalCode, serializedCache };
   const { code, map } = babelResult;
@@ -276,7 +266,9 @@ export async function requireOrImport(file: string) {
 
     // For ESM imports, issue a preflight to populate the compilation cache with the
     // source maps. This allows inline test() calls to resolve wrapFunctionWithLocation.
-    await eval(`import(${JSON.stringify(fileName + '.esm.preflight')})`).finally(nextTask);
+    await eval(`import(${JSON.stringify(fileName + '.esm.preflight')})`)
+        .catch((error: any) => debugTest('Failed to load preflight for ' + file + ', source maps may be missing for errors thrown during loading.', error))
+        .finally(nextTask);
 
     // Compilation cache, which includes source maps, is populated in a post task.
     // When importing a module results in an error, the very next access to `error.stack`
@@ -318,7 +310,7 @@ function installTransformIfNeeded() {
   // Hopefully, one day we can migrate to synchronous loader hooks instead, similar to our esmLoader...
   addHook((code, filename) => {
     return transformHook(code, filename).code;
-  }, shouldTransform, ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.mts', '.cjs', '.cts', '.md']);
+  }, shouldTransform, ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.mts', '.cjs', '.cts']);
 }
 
 const collectCJSDependencies = (module: Module, dependencies: Set<string>) => {

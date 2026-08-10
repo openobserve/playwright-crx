@@ -46,13 +46,14 @@ export class BidiPage implements PageDelegate {
   readonly _page: Page;
   readonly _session: BidiSession;
   readonly _opener: BidiPage | null;
-  readonly _realmToContext: Map<string, dom.FrameExecutionContext>;
+  readonly _contextIdToContext: Map<string, dom.FrameExecutionContext>;
   private _realmToWorkerContext = new Map<string, js.ExecutionContext>();
   private _sessionListeners: RegisteredListener[] = [];
   readonly _browserContext: BidiBrowserContext;
   readonly _networkManager: BidiNetworkManager;
   private readonly _pdf: BidiPDF;
   private _initScriptIds = new Map<InitScript, string>();
+  private readonly _fragmentNavigations = new Set<string>();
 
   constructor(browserContext: BidiBrowserContext, bidiSession: BidiSession, opener: BidiPage | null) {
     this._session = bidiSession;
@@ -60,7 +61,7 @@ export class BidiPage implements PageDelegate {
     this.rawKeyboard = new RawKeyboardImpl(bidiSession);
     this.rawMouse = new RawMouseImpl(bidiSession);
     this.rawTouchscreen = new RawTouchscreenImpl(bidiSession);
-    this._realmToContext = new Map();
+    this._contextIdToContext = new Map();
     this._page = new Page(this, browserContext);
     this._browserContext = browserContext;
     this._networkManager = new BidiNetworkManager(this._session, this._page);
@@ -113,9 +114,9 @@ export class BidiPage implements PageDelegate {
   }
 
   private _removeContextsForFrame(frame: frames.Frame, notifyFrame: boolean) {
-    for (const [contextId, context] of this._realmToContext) {
+    for (const [contextId, context] of this._contextIdToContext) {
       if (context.frame === frame) {
-        this._realmToContext.delete(contextId);
+        this._contextIdToContext.delete(contextId);
         if (notifyFrame)
           frame._contextDestroyed(context);
       }
@@ -131,7 +132,7 @@ export class BidiPage implements PageDelegate {
       this._page.addWorker(realmInfo.realm, worker);
       return;
     }
-    if (this._realmToContext.has(realmInfo.realm))
+    if (this._contextIdToContext.has(realmInfo.realm))
       return;
     if (realmInfo.type !== 'window')
       return;
@@ -151,7 +152,7 @@ export class BidiPage implements PageDelegate {
     const delegate = new BidiExecutionContext(this._session, realmInfo);
     const context = new dom.FrameExecutionContext(delegate, frame, worldName);
     frame._contextCreated(worldName, context);
-    this._realmToContext.set(realmInfo.realm, context);
+    this._contextIdToContext.set(realmInfo.realm, context);
   }
 
   private async _touchUtilityWorld(context: bidi.BrowsingContext.BrowsingContext) {
@@ -171,9 +172,9 @@ export class BidiPage implements PageDelegate {
   }
 
   _onRealmDestroyed(params: bidi.Script.RealmDestroyedParameters): boolean {
-    const context = this._realmToContext.get(params.realm);
+    const context = this._contextIdToContext.get(params.realm);
     if (context) {
-      this._realmToContext.delete(params.realm);
+      this._contextIdToContext.delete(params.realm);
       context.frame._contextDestroyed(context);
       return true;
     }
@@ -220,6 +221,8 @@ export class BidiPage implements PageDelegate {
   }
 
   private _onFragmentNavigated(params: bidi.BrowsingContext.NavigationInfo) {
+    if (params.navigation)
+      this._fragmentNavigations.add(params.navigation);
     this._page.frameManager.frameCommittedSameDocumentNavigation(params.context, params.url);
   }
 
@@ -251,7 +254,7 @@ export class BidiPage implements PageDelegate {
     if (!originPage)
       return;
 
-    this._browserContext._browser._downloadCreated(originPage, event.navigation, event.url, event.suggestedFilename);
+    this._browserContext._browser._downloadCreated(originPage, event.navigation, event.url, event.suggestedFilename, event.suggestedFilename);
   }
 
   private _onDownloadEnded(event: bidi.BrowsingContext.DownloadEndParams) {
@@ -283,13 +286,14 @@ export class BidiPage implements PageDelegate {
     if (params.type !== 'console')
       return;
     const entry: bidi.Log.ConsoleLogEntry = params as bidi.Log.ConsoleLogEntry;
-    const context = this._realmToContext.get(params.source.realm) ?? this._realmToWorkerContext.get(params.source.realm);
+    const context = this._contextIdToContext.get(params.source.realm) ?? this._realmToWorkerContext.get(params.source.realm);
     if (!context)
       return;
 
     const callFrame = params.stackTrace?.callFrames[0];
     const location = callFrame ?? { url: '', lineNumber: 1, columnNumber: 1 };
-    this._page.addConsoleMessage(null, entry.method, entry.args.map(arg => createHandle(context, arg)), location);
+    const type = entry.method === 'warn' ? 'warning' : entry.method;
+    this._page.addConsoleMessage(null, type, entry.args.map(arg => createHandle(context, arg)), location, undefined, params.timestamp);
   }
 
   private async _onFileDialogOpened(params: bidi.Input.FileDialogInfo) {
@@ -310,6 +314,10 @@ export class BidiPage implements PageDelegate {
       context: frame._id,
       url,
     });
+    if (navigation && this._fragmentNavigations.has(navigation)) {
+      this._fragmentNavigations.delete(navigation);
+      return {};
+    }
     return { newDocumentId: navigation || undefined };
   }
 
@@ -403,7 +411,13 @@ export class BidiPage implements PageDelegate {
   }
 
   async requestGC(): Promise<void> {
-    throw new Error('Method not implemented.');
+    const result = await this._session.send('script.evaluate', {
+      expression: 'TestUtils.gc()',
+      target: { context: this._session.sessionId },
+      awaitPromise: true,
+    });
+    if (result.type === 'exception')
+      throw new Error('Method not implemented.');
   }
 
   private async _onScriptMessage(event: bidi.Script.MessageParameters) {
@@ -412,7 +426,7 @@ export class BidiPage implements PageDelegate {
     const pageOrError = await this._page.waitForInitializedOrError();
     if (pageOrError instanceof Error)
       return;
-    const context = this._realmToContext.get(event.source.realm);
+    const context = this._contextIdToContext.get(event.source.realm);
     if (!context)
       return;
     if (event.data.type !== 'string')
@@ -466,7 +480,7 @@ export class BidiPage implements PageDelegate {
       context: this._session.sessionId,
       format: {
         type: `image/${format === 'png' ? 'png' : 'jpeg'}`,
-        quality: quality ? quality / 100 : 0.8,
+        quality: quality !== undefined ? quality / 100 : undefined,
       },
       origin: documentRect ? 'document' : 'viewport',
       clip: {
@@ -547,10 +561,10 @@ export class BidiPage implements PageDelegate {
     });
   }
 
-  async startScreencast(options: { width: number, height: number, quality: number }): Promise<void> {
+  startScreencast(options: { width: number, height: number, quality: number }) {
   }
 
-  async stopScreencast(): Promise<void> {
+  stopScreencast() {
   }
 
   rafCountForStablePosition(): number {
@@ -636,6 +650,9 @@ export class BidiPage implements PageDelegate {
 
   shouldToggleStyleSheetToSyncAnimations(): boolean {
     return true;
+  }
+
+  async setDockTile(image: Buffer): Promise<void> {
   }
 }
 

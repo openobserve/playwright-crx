@@ -21,6 +21,7 @@ import path from 'path';
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  base: '',
   plugins: [
     react(),
     bundle()
@@ -28,10 +29,11 @@ export default defineConfig({
   resolve: {
     alias: {
       '@web': path.resolve(__dirname, '../web/src'),
+      '@isomorphic': path.resolve(__dirname, '../playwright-core/src/utils/isomorphic'),
     },
   },
   build: {
-    outDir: path.resolve(__dirname, 'dist'),
+    outDir: path.resolve(__dirname, '../playwright-core/lib/vite/htmlReport'),
     emptyOutDir: true,
     assetsInlineLimit: 100000000,
     chunkSizeWarningLimit: 100000000,
@@ -40,6 +42,8 @@ export default defineConfig({
       output: {
         manualChunks: undefined,
         inlineDynamicImports: true,
+        entryFileNames: 'report.js',
+        assetFileNames: (assetInfo) => assetInfo.names.some(n => n.endsWith('.css')) ? 'report.css' : '[name][extname]',
       },
     },
   },

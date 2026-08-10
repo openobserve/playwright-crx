@@ -186,6 +186,7 @@ export class TeleReporterEmitter implements ReporterV2 {
       maxFailures: config.maxFailures,
       metadata: config.metadata,
       rootDir: config.rootDir,
+      shard: config.shard,
       version: config.version,
       workers: config.workers,
       globalSetup: config.globalSetup,
@@ -215,6 +216,7 @@ export class TeleReporterEmitter implements ReporterV2 {
       dependencies: project.dependencies,
       snapshotDir: this._relativePath(project.snapshotDir),
       teardown: project.teardown,
+      ignoreSnapshots: project.ignoreSnapshots ? true : undefined,
       use: this._serializeProjectUseOptions(project.use),
     };
     return report;

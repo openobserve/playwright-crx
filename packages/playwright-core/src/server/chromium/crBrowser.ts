@@ -50,6 +50,7 @@ export class CRBrowser extends Browser {
   _devtools?: CRDevTools;
   private _version = '';
   private _majorVersion = 0;
+  _revision = '';
 
   private _tracingRecording = false;
   private _tracingClient: CRSession | undefined;
@@ -68,6 +69,7 @@ export class CRBrowser extends Browser {
       await (options as any).__testHookOnConnectToBrowser();
 
     const version = await session.send('Browser.getVersion');
+    browser._revision = version.revision;
     browser._version = version.product.substring(version.product.indexOf('/') + 1);
     try {
       browser._majorVersion = +browser._version.split('.')[0];
@@ -110,10 +112,10 @@ export class CRBrowser extends Browser {
     const proxy = options.proxyOverride || options.proxy;
     let proxyBypassList = undefined;
     if (proxy) {
-      if (process.env.PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK)
-        proxyBypassList = proxy.bypass;
-      else
+      if (shouldProxyLoopback(proxy.bypass))
         proxyBypassList = '<-loopback>' + (proxy.bypass ? `,${proxy.bypass}` : '');
+      else
+        proxyBypassList = proxy.bypass;
     }
 
     const { browserContextId } = await this._session.send('Target.createBrowserContext', {
@@ -451,14 +453,27 @@ export class CRBrowserContext extends BrowserContext<CREventsMap> {
       ['storage-access', 'storageAccess'],
       ['local-fonts', 'localFonts'],
       ['local-network-access', ['localNetworkAccess', 'localNetwork', 'loopbackNetwork']],
+      ['screen-wake-lock', 'wakeLockScreen'],
     ]);
-    const filtered = permissions.flatMap(permission => {
-      const protocolPermission = webPermissionToProtocol.get(permission);
-      if (!protocolPermission)
-        throw new Error('Unknown permission: ' + permission);
-      return typeof protocolPermission === 'string' ? [protocolPermission] : protocolPermission;
-    });
-    await this._browser._session.send('Browser.grantPermissions', { origin: origin === '*' ? undefined : origin, browserContextId: this._browserContextId, permissions: filtered });
+
+    const grantPermissions = async (mapping: Map<string, Protocol.Browser.PermissionType | Protocol.Browser.PermissionType[]>) => {
+      const filtered = permissions.flatMap(permission => {
+        const protocolPermission = mapping.get(permission);
+        if (!protocolPermission)
+          throw new Error('Unknown permission: ' + permission);
+        return typeof protocolPermission === 'string' ? [protocolPermission] : protocolPermission;
+      });
+      await this._browser._session.send('Browser.grantPermissions', { origin: origin === '*' ? undefined : origin, browserContextId: this._browserContextId, permissions: filtered });
+    };
+
+    try {
+      await grantPermissions(webPermissionToProtocol);
+    } catch (e) {
+      // Old stable browsers dislike the new permission name, so we use the fallback mapping.
+      const fallbackMapping = new Map(webPermissionToProtocol);
+      fallbackMapping.set('local-network-access', ['localNetworkAccess']);
+      await grantPermissions(fallbackMapping);
+    }
   }
 
   async doClearPermissions() {
@@ -539,7 +554,6 @@ export class CRBrowserContext extends BrowserContext<CREventsMap> {
     await this.dialogManager.closeBeforeUnloadDialogs();
 
     if (!this._browserContextId) {
-      await this.stopVideoRecording();
       // Closing persistent context should close the browser.
       await this._browser.close({ reason });
       return;
@@ -557,10 +571,6 @@ export class CRBrowserContext extends BrowserContext<CREventsMap> {
       serviceWorker.didClose();
       this._browser._serviceWorkers.delete(targetId);
     }
-  }
-
-  async stopVideoRecording() {
-    await Promise.all(this._crPages().map(crPage => crPage._page.screencast.stopVideoRecording()));
   }
 
   onClosePersistent() {
@@ -601,4 +611,12 @@ export class CRBrowserContext extends BrowserContext<CREventsMap> {
     const rootSession = await this._browser._clientRootSession();
     return rootSession.attachToTarget(targetId);
   }
+}
+
+export function shouldProxyLoopback(bypass: string | undefined) {
+  if (process.env.PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK)
+    return false;
+  const hosts = (bypass || '').split(',').map(s => s.trim());
+  const shouldBypassSomeLoopback = ['localhost', '127.0.0.1', '::1', '[::]', '[::1]', '<loopback>', '<-loopback>'].some(host => hosts.includes(host));
+  return !shouldBypassSomeLoopback;
 }

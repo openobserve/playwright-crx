@@ -69,6 +69,8 @@ const copyFiles = [];
 const watchMode = process.argv.slice(2).includes('--watch');
 const withSourceMaps = watchMode;
 const disableInstall = process.argv.slice(2).includes('--disable-install');
+const bundleFilterIndex = process.argv.indexOf('--bundle');
+const bundleFilter = bundleFilterIndex !== -1 ? process.argv[bundleFilterIndex + 1] : undefined;
 const ROOT = path.join(__dirname, '..', '..');
 
 /**
@@ -200,6 +202,19 @@ async function runWatch() {
     runOnChange(onChange);
 }
 
+/**
+ * @param {string} filter 
+ */
+async function runBundleOnly(filter) {
+  const matching = bundleSteps.filter((_, i) => bundles[i].modulePath.includes(filter));
+  if (!matching.length) {
+    console.error(`No bundles matching "${filter}". Available: ${bundles.map(b => b.modulePath).join(', ')}`);
+    process.exit(1);
+  }
+  for (const step of matching)
+    await step.run();
+}
+
 async function runBuild() {
   for (const { files, from, to, ignored } of copyFiles) {
     const watcher = chokidar.watch([filePath(files)], {
@@ -277,12 +292,18 @@ bundles.push({
 
 bundles.push({
   modulePath: 'packages/playwright-core/bundles/mcp',
-  outfile: 'packages/playwright-core/lib/mcpBundleImpl/index.js',
+  outfile: 'packages/playwright-core/lib/mcpBundleImpl.js',
   entryPoints: ['src/mcpBundleImpl.ts'],
   external: ['express', '@anthropic-ai/sdk'],
   alias: {
     'raw-body': 'raw-body.ts',
   },
+});
+
+bundles.push({
+  modulePath: 'packages/playwright-core/bundles/zod',
+  outfile: 'packages/playwright-core/lib/zodBundleImpl.js',
+  entryPoints: ['src/zodBundleImpl.ts'],
 });
 
 // @playwright/client
@@ -432,6 +453,27 @@ class CustomCallbackStep extends Step {
   }
 }
 
+// Plugin to convert dynamic import() of relative paths to require().
+// esbuild preserves dynamic import() even in CJS format, but we want
+// all local imports to use require() for consistency.
+const dynamicImportToRequirePlugin = {
+  name: 'dynamic-import-to-require',
+  setup(build) {
+    build.onLoad({ filter: /\.ts$/ }, async (args) => {
+      const contents = await fs.promises.readFile(args.path, 'utf8');
+      if (!contents.includes('await import('))
+        return undefined;
+      return {
+        contents: contents.replace(
+            /\bawait import\((['"]\..*?['"])\)/g,
+            (_, specifier) => `require(${specifier})`
+        ),
+        loader: 'ts',
+      };
+    });
+  }
+};
+
 // Run esbuild.
 for (const pkg of workspace.packages()) {
   if (!fs.existsSync(path.join(pkg.path, 'src')))
@@ -446,6 +488,7 @@ for (const pkg of workspace.packages()) {
     sourcemap: withSourceMaps ? 'linked' : false,
     platform: 'node',
     format: 'cjs',
+    plugins: [dynamicImportToRequirePlugin],
   }));
 }
 
@@ -496,9 +539,12 @@ const pkgSizePlugin = {
 };
 
 // Build/watch bundles.
-for (const bundle of bundles) {
-  /** @type {import('esbuild').BuildOptions} */
-  const options = {
+/**
+ * @param {BundleOptions} bundle
+ * @returns {import('esbuild').BuildOptions}
+ */
+function bundleToEsbuildOptions(bundle) {
+  return {
     bundle: true,
     format: 'cjs',
     platform: 'node',
@@ -515,8 +561,12 @@ for (const bundle of bundles) {
     metafile: true,
     plugins: [pkgSizePlugin],
   };
-  steps.push(new EsbuildStep(options));
 }
+
+/** @type {EsbuildStep[]} */
+const bundleSteps = bundles.map(b => new EsbuildStep(bundleToEsbuildOptions(b)));
+for (const step of bundleSteps)
+  steps.push(step);
 
 // Build/watch trace viewer service worker.
 steps.push(new ProgramStep({
@@ -535,7 +585,7 @@ steps.push(new ProgramStep({
 }));
 
 // Build/watch web packages.
-for (const webPackage of ['html-reporter', 'recorder', 'trace-viewer']) {
+for (const webPackage of ['html-reporter', 'recorder', 'trace-viewer', 'dashboard']) {
   steps.push(new ProgramStep({
     command: 'npx',
     args: [
@@ -550,6 +600,16 @@ for (const webPackage of ['html-reporter', 'recorder', 'trace-viewer']) {
     concurrent: true,
   }));
 }
+
+// Generate CLI help.
+onChanges.push({
+  inputs: [
+    'packages/playwright-core/src/tools/cli-daemon/commands.ts',
+    'packages/playwright-core/src/tools/cli-daemon/helpGenerator.ts',
+    'utils/generate_cli_help.js',
+  ],
+  script: 'utils/generate_cli_help.js',
+});
 
 // Generate injected.
 onChanges.push({
@@ -624,6 +684,7 @@ copyFiles.push({
   to: 'packages/playwright-core/lib',
 });
 
+
 copyFiles.push({
   files: 'packages/playwright/src/agents/*.md',
   from: 'packages/playwright/src',
@@ -637,27 +698,31 @@ copyFiles.push({
 });
 
 copyFiles.push({
-  files: 'packages/playwright/src/mcp/terminal/*.json',
-  from: 'packages/playwright/src',
-  to: 'packages/playwright/lib',
+  files: 'packages/playwright-core/src/tools/cli-client/skill/**/*.md',
+  from: 'packages/playwright-core/src',
+  to: 'packages/playwright-core/lib',
+});
+
+copyFiles.push({
+  files: 'packages/playwright-core/src/tools/trace/SKILL.md',
+  from: 'packages/playwright-core/src',
+  to: 'packages/playwright-core/lib',
+});
+
+copyFiles.push({
+  files: 'packages/playwright-core/src/tools/dashboard/*.{png,ico}',
+  from: 'packages/playwright-core/src',
+  to: 'packages/playwright-core/lib',
 });
 
 if (watchMode) {
   // Run TypeScript for type checking.
   steps.push(new ProgramStep({
     command: 'npx',
-    args: ['tsc', ...(watchMode ? ['-w'] : []), '--preserveWatchOutput', '-p', quotePath(filePath('.'))],
+    args: ['tsc', '-w', '--preserveWatchOutput', '-p', quotePath(filePath('.'))],
     shell: true,
     concurrent: true,
   }));
-  for (const webPackage of ['html-reporter', 'recorder', 'trace-viewer']) {
-    steps.push(new ProgramStep({
-      command: 'npx',
-      args: ['tsc', ...(watchMode ? ['-w'] : []), '--preserveWatchOutput', '-p', quotePath(filePath(`packages/${webPackage}`))],
-      shell: true,
-      concurrent: true,
-    }));
-  }
 }
 
 let cleanupCalled = false;
@@ -680,4 +745,4 @@ process.on('SIGINT', () => {
 });
 
 
-watchMode ? runWatch() : runBuild();
+bundleFilter ? runBundleOnly(bundleFilter) : watchMode ? runWatch() : runBuild();

@@ -123,6 +123,26 @@ it.describe('should proxy local network requests', () => {
   }
 });
 
+for (const host of ['localhost', '127.0.0.1']) {
+  it(`should allow bypassing ${host} requests`, async ({  browserType, server, proxyServer }) => {
+    server.setRoute(`/proxied/target.html`, async (req, res) => {
+      res.end('<html><title>Served by the server</title></html>');
+    });
+    server.setRoute(`/target.html`, async (req, res) => {
+      res.end('<html><title>Served by the proxy</title></html>');
+    });
+    proxyServer.forwardTo(server.PORT, { removePrefix: '/proxied' });
+
+    const browser = await browserType.launch({
+      proxy: { server: `localhost:${proxyServer.PORT}`, bypass: host }
+    });
+    const page = await browser.newPage();
+    await page.goto(`http://${host}:${server.PORT}/proxied/target.html`);
+    expect(await page.title()).toBe('Served by the server');
+    await browser.close();
+  });
+}
+
 it('should authenticate', async ({ browserType, server }) => {
   server.setRoute('/target.html', async (req, res) => {
     const auth = req.headers['proxy-authorization'];
@@ -227,6 +247,25 @@ it('should exclude patterns', async ({ browserType, server, channel }) => {
 
   await browser.close();
 });
+
+for (const host of ['localhost', '127.0.0.1']) {
+  it(`should bypass proxy for ${host} when ${host} is in bypass list`, async ({ browserType, server, proxyServer }) => {
+    proxyServer.forwardTo(server.PORT, { removePrefix: '/proxied' });
+    server.setRoute(`/proxied/target.html`, async (req, res) => {
+      res.end('<html><title>Served by the server</title></html>');
+    });
+    server.setRoute('/target.html', async (req, res) => {
+      res.end('<html><title>Served by the proxy</title></html>');
+    });
+    const browser = await browserType.launch({
+      proxy: { server: `localhost:${proxyServer.PORT}`, bypass: host }
+    });
+    const page = await browser.newPage();
+    await page.goto(`http://${host}:${server.PORT}/proxied/target.html`);
+    expect(await page.title()).toBe('Served by the server');
+    await browser.close();
+  });
+}
 
 it('should use socks proxy', async ({ browserType, socksPort }) => {
   const browser = await browserType.launch({

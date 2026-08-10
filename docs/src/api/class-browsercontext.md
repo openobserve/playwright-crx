@@ -74,6 +74,12 @@ This event is not emitted.
 
 Playwright has ability to mock clock and passage of time.
 
+## property: BrowserContext.debugger
+* since: v1.59
+- type: <[Debugger]>
+
+Debugger allows to pause and resume the execution.
+
 ## event: BrowserContext.close
 * since: v1.8
 - argument: <[BrowserContext]>
@@ -338,6 +344,7 @@ await context.AddCookiesAsync(new[] { cookie1, cookie2 });
 
 ## async method: BrowserContext.addInitScript
 * since: v1.8
+- returns: <[Disposable]>
 
 Adds a script which would be evaluated in one of the following scenarios:
 * Whenever a page is created in the browser context or is navigated.
@@ -562,7 +569,7 @@ The default browser context cannot be closed.
 
 ## async method: BrowserContext.cookies
 * since: v1.8
-- returns: <[Array]<[Object]>>
+- returns: <[Array]<[Object=BrowserContextCookiesResult]>>
   - `name` <[string]>
   - `value` <[string]>
   - `domain` <[string]>
@@ -584,6 +591,7 @@ Optional list of URLs.
 
 ## async method: BrowserContext.exposeBinding
 * since: v1.8
+- returns: <[Disposable]>
 
 The method adds a function called [`param: name`] on the `window` object of every frame in every page in the context.
 When called, the function executes [`param: callback`] and returns a [Promise] which resolves to the return value of
@@ -735,6 +743,7 @@ supported. When passing by value, multiple arguments are supported.
 
 ## async method: BrowserContext.exposeFunction
 * since: v1.8
+- returns: <[Disposable]>
 
 The method adds a function called [`param: name`] on the `window` object of every frame in every page in the context.
 When called, the function executes [`param: callback`] and returns a [Promise] which resolves to the return value of
@@ -957,12 +966,19 @@ Here are some permissions that may be supported by some browsers:
 * `'notifications'`
 * `'payment-handler'`
 * `'storage-access'`
+* `'screen-wake-lock'`
 
 ### option: BrowserContext.grantPermissions.origin
 * since: v1.8
 - `origin` <[string]>
 
 The [origin] to grant permissions to, e.g. "https://example.com".
+
+## method: BrowserContext.isClosed
+* since: v1.59
+- returns: <[boolean]>
+
+Indicates that the browser context is in the process of closing or has already been closed.
 
 ## async method: BrowserContext.newCDPSession
 * since: v1.11
@@ -1017,6 +1033,7 @@ API testing helper associated with this context. Requests made with this API wil
 
 ## async method: BrowserContext.route
 * since: v1.8
+- returns: <[Disposable]>
 
 Routing provides the capability to modify network requests that are made by any page in the browser context. Once route
 is enabled, every request matching the url pattern will stall unless it's continued, fulfilled or aborted.
@@ -1173,6 +1190,14 @@ Enabling routing disables http cache.
 
 ### param: BrowserContext.route.url
 * since: v1.8
+* langs: js
+- `url` <[string]|[RegExp]|[URLPattern]|[function]\([URL]\):[boolean]>
+
+A glob pattern, regex pattern, URL pattern, or predicate that receives a [URL] to match during routing. If [`option: Browser.newContext.baseURL`] is set in the context options and the provided URL is a string that does not start with `*`, it is resolved using the [`new URL()`](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) constructor.
+
+### param: BrowserContext.route.url
+* since: v1.8
+* langs: python, csharp, java
 - `url` <[string]|[RegExp]|[function]\([URL]\):[boolean]>
 
 A glob pattern, regex pattern, or predicate that receives a [URL] to match during routing. If [`option: Browser.newContext.baseURL`] is set in the context options and the provided URL is a string that does not start with `*`, it is resolved using the [`new URL()`](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) constructor.
@@ -1500,6 +1525,46 @@ Returns storage state for this browser context, contains current cookies, local 
 Set to `true` to include [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) in the storage state snapshot.
 If your application uses IndexedDB to store authentication tokens, like Firebase Authentication, enable this.
 
+## async method: BrowserContext.setStorageState
+* since: v1.59
+
+Clears the existing cookies, local storage and IndexedDB entries for all origins and sets the new storage state.
+
+**Usage**
+
+```js
+// Load storage state from a file and apply it to the context.
+await context.setStorageState('state.json');
+```
+
+```java
+// Load storage state from a file and apply it to the context.
+context.setStorageState(Paths.get("state.json"));
+```
+
+```python async
+# Load storage state from a file and apply it to the context.
+await context.set_storage_state("state.json")
+```
+
+```python sync
+# Load storage state from a file and apply it to the context.
+context.set_storage_state("state.json")
+```
+
+```csharp
+// Load storage state from a file and apply it to the context.
+await context.SetStorageStateAsync("state.json");
+```
+
+### param: BrowserContext.setStorageState.storageState = %%-js-python-context-option-storage-state-%%
+* since: v1.59
+* langs: js, python
+
+### param: BrowserContext.setStorageState.storageState = %%-csharp-java-context-option-storage-state-path-%%
+* since: v1.59
+* langs: csharp, java
+
 ## property: BrowserContext.tracing
 * since: v1.12
 - type: <[Tracing]>
@@ -1520,9 +1585,18 @@ routes for the [`param: url`].
 
 ### param: BrowserContext.unroute.url
 * since: v1.8
+* langs: js
+- `url` <[string]|[RegExp]|[URLPattern]|[function]\([URL]\):[boolean]>
+
+A glob pattern, regex pattern, URL pattern, or predicate receiving [URL] used to register a routing with
+[`method: BrowserContext.route`].
+
+### param: BrowserContext.unroute.url
+* since: v1.8
+* langs: python, csharp, java
 - `url` <[string]|[RegExp]|[function]\([URL]\):[boolean]>
 
-A glob pattern, regex pattern or predicate receiving [URL] used to register a routing with
+A glob pattern, regex pattern, or predicate receiving [URL] used to register a routing with
 [`method: BrowserContext.route`].
 
 ### param: BrowserContext.unroute.handler

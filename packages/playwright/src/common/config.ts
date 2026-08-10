@@ -22,7 +22,7 @@ import { getPackageJsonPath, mergeObjects } from '../util';
 
 import type { Config, Fixtures, Metadata, Project, ReporterDescription } from '../../types/test';
 import type { TestRunnerPluginRegistration } from '../plugins';
-import type { TestCaseFilter } from '../util';
+import type { Matcher, TestCaseFilter } from '../util';
 import type { ConfigCLIOverrides } from './ipc';
 import type { Location } from '../../types/testReporter';
 import type { FullConfig, FullProject } from '../../types/testReporter';
@@ -59,6 +59,7 @@ export class FullConfigInternal {
   cliLastFailed?: boolean;
   cliTestList?: string;
   cliTestListInvert?: string;
+  loadFileFilters: Matcher[] = [];
   preOnlyTestFilters: TestCaseFilter[] = [];
   postShardTestFilters: TestCaseFilter[] = [];
   defineConfigWasUsed = false;
@@ -112,8 +113,6 @@ export class FullConfigInternal {
       quiet: takeFirst(configCLIOverrides.quiet, userConfig.quiet, false),
       reporter: takeFirst(configCLIOverrides.reporter, resolveReporters(userConfig.reporter, configDir), [[defaultReporter]]),
       reportSlowTests: takeFirst(userConfig.reportSlowTests, { max: 5, threshold: 300_000 /* 5 minutes */ }),
-      // @ts-expect-error runAgents is hidden
-      runAgents: takeFirst(configCLIOverrides.runAgents, 'none'),
       shard: takeFirst(configCLIOverrides.shard, userConfig.shard, null),
       tags: globalTags,
       updateSnapshots: takeFirst(configCLIOverrides.updateSnapshots, userConfig.updateSnapshots, 'missing'),
@@ -173,7 +172,6 @@ export class FullProjectInternal {
   readonly expect: Project['expect'];
   readonly respectGitIgnore: boolean;
   readonly snapshotPathTemplate: string | undefined;
-  readonly ignoreSnapshots: boolean;
   readonly workers: number | undefined;
   id = '';
   deps: FullProjectInternal[] = [];
@@ -198,10 +196,11 @@ export class FullProjectInternal {
       snapshotDir: takeFirst(pathResolve(configDir, projectConfig.snapshotDir), pathResolve(configDir, config.snapshotDir), testDir),
       testIgnore: takeFirst(projectConfig.testIgnore, config.testIgnore, []),
       testMatch: takeFirst(projectConfig.testMatch, config.testMatch, '**/*.@(spec|test).?(c|m)[jt]s?(x)'),
-      timeout: takeFirst(configCLIOverrides.debug ? 0 : undefined, configCLIOverrides.timeout, projectConfig.timeout, config.timeout, defaultTimeout),
+      timeout: takeFirst(configCLIOverrides.debug === 'inspector' ? 0 : undefined, configCLIOverrides.timeout, projectConfig.timeout, config.timeout, defaultTimeout),
       use: mergeObjects(config.use, projectConfig.use, configCLIOverrides.use),
       dependencies: projectConfig.dependencies || [],
       teardown: projectConfig.teardown,
+      ignoreSnapshots: takeFirst(configCLIOverrides.ignoreSnapshots,  projectConfig.ignoreSnapshots, config.ignoreSnapshots, false),
     };
     this.fullyParallel = takeFirst(configCLIOverrides.fullyParallel, projectConfig.fullyParallel, config.fullyParallel, undefined);
     this.expect = takeFirst(projectConfig.expect, config.expect, {});
@@ -210,7 +209,6 @@ export class FullProjectInternal {
       this.expect.toHaveScreenshot.stylePath = stylePaths.map(stylePath => path.resolve(configDir, stylePath));
     }
     this.respectGitIgnore = takeFirst(projectConfig.respectGitIgnore, config.respectGitIgnore, !projectConfig.testDir && !config.testDir);
-    this.ignoreSnapshots = takeFirst(configCLIOverrides.ignoreSnapshots,  projectConfig.ignoreSnapshots, config.ignoreSnapshots, false);
     this.workers = projectConfig.workers ? resolveWorkers(projectConfig.workers) : undefined;
     if (configCLIOverrides.debug && this.workers)
       this.workers = 1;

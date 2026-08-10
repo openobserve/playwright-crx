@@ -23,7 +23,7 @@ import type { ReporterDescription, TestInfoError, TestStatus } from '../../types
 import type { SerializedCompilationCache  } from '../transform/compilationCache';
 
 export type ConfigCLIOverrides = {
-  debug?: boolean;
+  debug?: 'inspector' | 'cli';
   failOnFlakyTests?: boolean;
   forbidOnly?: boolean;
   fullyParallel?: boolean;
@@ -44,7 +44,6 @@ export type ConfigCLIOverrides = {
   ignoreSnapshots?: boolean;
   updateSnapshots?: 'all' | 'changed' | 'missing' | 'none';
   updateSourceMethod?: 'overwrite' | 'patch' | '3way';
-  runAgents?: 'all' | 'missing' | 'none';
   workers?: number | string;
   projects?: { name: string, use?: any }[],
   use?: any;
@@ -96,15 +95,6 @@ export type TestPausedPayload = {
 };
 
 export type ResumePayload = {};
-
-export type CloneStoragePayload = {
-  storageFile: string;
-};
-
-export type UpstreamStoragePayload = {
-  storageFile: string;
-  storageOutFile: string;
-};
 
 export type CustomMessageRequestPayload = {
   testId: string;

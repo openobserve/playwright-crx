@@ -323,10 +323,6 @@ export class HarTracer {
       }));
     }
 
-    const httpVersion = response.httpVersion();
-    harEntry.request.httpVersion = httpVersion;
-    harEntry.response.httpVersion = httpVersion;
-
     const compressionCalculationBarrier = this._options.omitSizes ? undefined : {
       _encodedBodySize: -1,
       _decodedBodySize: -1,
@@ -365,6 +361,11 @@ export class HarTracer {
         this._delegate.onEntryFinished(harEntry);
     });
     this._addBarrier(page || request.serviceWorker(), promise);
+
+    this._addBarrier(page || request.serviceWorker(), response.httpVersion().then(httpVersion => {
+      harEntry.request.httpVersion = httpVersion;
+      harEntry.response.httpVersion = httpVersion;
+    }));
 
     // Response end timing is only available after the response event was received.
     const timing = response.timing();
@@ -452,7 +453,7 @@ export class HarTracer {
     harEntry.response = {
       status: response.status(),
       statusText: response.statusText(),
-      httpVersion: response.httpVersion(),
+      httpVersion: FALLBACK_HTTP_VERSION,
       // These are bad values that will be overwritten below.
       cookies: [],
       headers: [],

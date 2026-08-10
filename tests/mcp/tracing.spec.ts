@@ -18,24 +18,6 @@ import fs from 'fs';
 import path from 'path';
 import { test, expect } from './fixtures';
 
-test('check that trace is saved with --save-trace', async ({ startClient, server }, testInfo) => {
-  const outputDir = testInfo.outputPath('output');
-
-  const { client } = await startClient({
-    args: ['--save-trace', `--output-dir=${outputDir}`],
-  });
-
-  expect(await client.callTool({
-    name: 'browser_navigate',
-    arguments: { url: server.HELLO_WORLD },
-  })).toHaveResponse({
-    code: expect.stringContaining(`page.goto('http://localhost`),
-  });
-
-  const [file] = await fs.promises.readdir(outputDir);
-  expect(file).toContain('traces');
-});
-
 test('check that trace is saved with browser_start_tracing', async ({ startClient, server }, testInfo) => {
   const outputDir = testInfo.outputPath('output');
 
@@ -44,7 +26,7 @@ test('check that trace is saved with browser_start_tracing', async ({ startClien
   expect(await client.callTool({
     name: 'browser_start_tracing',
   })).toHaveResponse({
-    result: expect.stringContaining(`Tracing started, saving to ${outputDir}`),
+    result: expect.stringContaining(`Trace recording started`),
   });
 
   expect(await client.callTool({
@@ -74,11 +56,10 @@ test('check that trace is saved with browser_start_tracing (no output dir)', asy
     args: ['--caps=tracing'],
   });
 
-  const tmpDir = testInfo.outputPath('tmp');
   expect(await client.callTool({
     name: 'browser_start_tracing',
   })).toHaveResponse({
-    result: expect.stringContaining(`Tracing started, saving to ${tmpDir}`),
+    result: expect.stringContaining(`Trace recording started`),
   });
 
   expect(await client.callTool({
@@ -94,10 +75,7 @@ test('check that trace is saved with browser_start_tracing (no output dir)', asy
     result: expect.stringMatching(/trace-\d+.trace/)
   });
 
-  const folders = await fs.promises.readdir(path.join(tmpDir, 'playwright-mcp-output'));
-  expect(folders.length).toBe(1);
-  expect(folders[0]).toMatch(/\d+/);
-  const files = await fs.promises.readdir(path.join(tmpDir, 'playwright-mcp-output', folders[0], 'traces'));
+  const files = await fs.promises.readdir(testInfo.outputPath('.playwright-mcp', 'traces'));
   expect(files).toEqual([
     'resources',
     expect.stringMatching(/trace-\d+\.network/),

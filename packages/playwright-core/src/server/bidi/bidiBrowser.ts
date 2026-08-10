@@ -41,6 +41,7 @@ export class BidiBrowser extends Browser {
   readonly _contexts = new Map<string, BidiBrowserContext>();
   readonly _bidiPages = new Map<bidi.BrowsingContext.BrowsingContext, BidiPage>();
   private readonly _eventListeners: RegisteredListener[];
+  private _cacheBehavior: bidi.Network.SetCacheBehaviorParameters['cacheBehavior'] = 'default';
 
   static async connect(parent: SdkObject, transport: ConnectionTransport, options: BrowserOptions): Promise<BidiBrowser> {
     const browser = new BidiBrowser(parent, transport, options);
@@ -73,6 +74,8 @@ export class BidiBrowser extends Browser {
         'input',
       ],
     });
+
+    await browser._browserSession.send('network.addIntercept', { phases: [bidi.Network.InterceptPhase.AuthRequired] });
 
     await browser._browserSession.send('network.addDataCollector', {
       dataTypes: [bidi.Network.DataType.Response],
@@ -132,6 +135,14 @@ export class BidiBrowser extends Browser {
     return !this._connection.isClosed();
   }
 
+  async updateCacheBehavior() {
+    const cacheBehavior = [...this._contexts.values()].some(context => context.requestInterceptors.length > 0) ? 'bypass' : 'default';
+    if (this._cacheBehavior !== cacheBehavior) {
+      await this._browserSession.send('network.setCacheBehavior', { cacheBehavior });
+      this._cacheBehavior = cacheBehavior;
+    }
+  }
+
   private _onBrowsingContextCreated(event: bidi.BrowsingContext.Info) {
     if (event.parent) {
       const parentFrameId = event.parent;
@@ -143,7 +154,7 @@ export class BidiBrowser extends Browser {
         page._getFrameNode(frame).then(node => {
           const attributes = node?.value?.attributes;
           frame._name = attributes?.name ?? attributes?.id ?? '';
-        });
+        }, () => {});
         return;
       }
       return;
@@ -215,6 +226,13 @@ export class BidiBrowserContext extends BrowserContext {
     const promises: Promise<any>[] = [
       super._initialize(),
     ];
+    const downloadBehavior: bidi.Browser.DownloadBehavior = this._options.acceptDownloads === 'accept' ?
+      { type: 'allowed', destinationFolder: this._browser.options.downloadsPath } :
+      { type: 'denied' };
+    promises.push(this._browser._browserSession.send('browser.setDownloadBehavior', {
+      downloadBehavior,
+      userContexts: [this._userContextId()],
+    }));
     promises.push(this.doUpdateDefaultViewport());
     if (this._options.geolocation)
       promises.push(this.setGeolocation(this._options.geolocation));
@@ -240,6 +258,8 @@ export class BidiBrowserContext extends BrowserContext {
       promises.push(this.doUpdateExtraHTTPHeaders());
     if (this._options.permissions)
       promises.push(this.doGrantPermissions('*', this._options.permissions));
+    if (this._options.offline)
+      promises.push(this.doUpdateOffline());
     await Promise.all(promises);
   }
 
@@ -287,7 +307,7 @@ export class BidiBrowserContext extends BrowserContext {
         expiry: (c.expires === -1 || c.expires === undefined) ? undefined : Math.round(c.expires),
       };
       return this._browser._browserSession.send('storage.setCookie',
-          { cookie, partition: { type: 'storageKey', userContext: this._browserContextId } });
+          { cookie, partition: { type: 'storageKey', userContext: this._browserContextId, sourceOrigin: c.partitionKey } });
     });
     await Promise.all(promises);
   }
@@ -373,6 +393,10 @@ export class BidiBrowserContext extends BrowserContext {
   }
 
   async doUpdateOffline(): Promise<void> {
+    await this._browser._browserSession.send('emulation.setNetworkConditions', {
+      networkConditions: this._options.offline ? { type: 'offline' } : null,
+      userContexts: [this._userContextId()],
+    });
   }
 
   async doSetHTTPCredentials(httpCredentials?: types.Credentials): Promise<void> {
@@ -402,18 +426,18 @@ export class BidiBrowserContext extends BrowserContext {
   }
 
   async doUpdateRequestInterception(): Promise<void> {
+    let interceptPromise = Promise.resolve<any>(undefined);
     if (this.requestInterceptors.length > 0 && !this._interceptId) {
-      const { intercept } = await this._browser._browserSession.send('network.addIntercept', {
+      interceptPromise = this._browser._browserSession.send('network.addIntercept', {
         phases: [bidi.Network.InterceptPhase.BeforeRequestSent],
-        urlPatterns: [{ type: 'pattern' }],
-      });
-      this._interceptId = intercept;
+      }).then(({ intercept }) => this._interceptId = intercept);
     }
     if (this.requestInterceptors.length === 0 && this._interceptId) {
       const intercept = this._interceptId;
       this._interceptId = undefined;
-      await this._browser._browserSession.send('network.removeIntercept', { intercept });
+      interceptPromise = this._browser._browserSession.send('network.removeIntercept', { intercept });
     }
+    await Promise.all([this._browser.updateCacheBehavior(), interceptPromise]);
   }
 
   override async doUpdateDefaultViewport() {
@@ -464,7 +488,7 @@ export class BidiBrowserContext extends BrowserContext {
       userContexts: [this._userContextId()],
     }));
     promises.push(...this._bidiPages().map(page => {
-      const realms = [...page._realmToContext].filter(([realm, context]) => context.world === 'main').map(([realm, context]) => realm);
+      const realms = [...page._contextIdToContext].filter(([realm, context]) => context.world === 'main').map(([realm, context]) => realm);
       return Promise.all(realms.map(realm => {
         return page._session.send('script.callFunction', {
           functionDeclaration,
@@ -492,6 +516,7 @@ export class BidiBrowserContext extends BrowserContext {
     await this._browser._browserSession.send('browser.removeUserContext', {
       userContext: this._browserContextId
     });
+    await Promise.all(this._bidiPages().map(bidiPage => bidiPage._page.closedPromise));
     this._browser._contexts.delete(this._browserContextId);
   }
 

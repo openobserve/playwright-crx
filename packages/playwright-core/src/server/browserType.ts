@@ -56,7 +56,7 @@ export abstract class BrowserType extends SdkObject {
   }
 
   executablePath(): string {
-    return registry.findExecutable(this._name).executablePath(this.attribution.playwright.options.sdkLanguage) || '';
+    return registry.findExecutable(this._name).executablePath() || '';
   }
 
   name(): string {
@@ -114,7 +114,7 @@ export abstract class BrowserType extends SdkObject {
         await progress.race((options as any).__testHookBeforeCreateBrowser());
       const browserOptions: BrowserOptions = {
         name: this._name,
-        isChromium: this._name === 'chromium',
+        browserType: this._name,
         channel: options.channel,
         slowMo: options.slowMo,
         persistent,
@@ -129,6 +129,7 @@ export abstract class BrowserType extends SdkObject {
         browserLogsCollector,
         wsEndpoint: transport instanceof WebSocketTransport ? transport.wsEndpoint : undefined,
         originalLaunchOptions: options,
+        userDataDir: persistent ? userDataDir : undefined,
       };
       if (persistent)
         validateBrowserContextOptions(persistent, browserOptions);
@@ -152,11 +153,14 @@ export abstract class BrowserType extends SdkObject {
       args = [],
       executablePath = null,
     } = options;
-    await this._createArtifactDirs(options);
-
     const tempDirectories: string[] = [];
-    const artifactsDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'playwright-artifacts-'));
-    tempDirectories.push(artifactsDir);
+    let artifactsDir: string;
+    if (options.artifactsDir) {
+      artifactsDir = options.artifactsDir;
+    } else {
+      artifactsDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'playwright-artifacts-'));
+      tempDirectories.push(artifactsDir);
+    }
 
     if (userDataDir) {
       assert(path.isAbsolute(userDataDir), 'userDataDir must be an absolute path');
@@ -281,14 +285,11 @@ export abstract class BrowserType extends SdkObject {
     }
   }
 
-  async _createArtifactDirs(options: types.LaunchOptions): Promise<void> {
-    if (options.downloadsPath)
-      await fs.promises.mkdir(options.downloadsPath, { recursive: true });
-    if (options.tracesDir)
-      await fs.promises.mkdir(options.tracesDir, { recursive: true });
+  async connectOverCDP(progress: Progress, endpointURL: string, options: { slowMo?: number, timeout?: number, headers?: types.HeadersArray, isLocal?: boolean }): Promise<Browser> {
+    throw new Error('CDP connections are only supported by Chromium');
   }
 
-  async connectOverCDP(progress: Progress, endpointURL: string, options: { slowMo?: number, timeout?: number, headers?: types.HeadersArray, isLocal?: boolean }): Promise<Browser> {
+  async connectOverCDPTransport(progress: Progress, transport: ConnectionTransport): Promise<Browser> {
     throw new Error('CDP connections are only supported by Chromium');
   }
 

@@ -151,3 +151,42 @@ test('should disable recorder', async ({ context }) => {
   await page.getByRole('button', { name: 'Submit' }).click();
   expect(log.action('click')).toHaveLength(2);
 });
+
+test('page.pickLocator should return locator for picked element', async ({ page }) => {
+  await page.setContent(`<button>Submit</button>`);
+
+  const scriptReady = page.waitForEvent('console', msg => msg.text() === 'Recorder script ready for test');
+  const pickPromise = page.pickLocator();
+  await scriptReady;
+
+  const box = await page.getByRole('button', { name: 'Submit' }).boundingBox();
+  await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
+
+  const locator = await pickPromise;
+  await expect(locator).toHaveText('Submit');
+});
+
+test('page.cancelPickLocator should cancel ongoing pickLocator', async ({ page }) => {
+  const pickPromise = page.pickLocator();
+  await Promise.all([
+    page.cancelPickLocator(),
+    expect(pickPromise).rejects.toThrow('Locator picking was cancelled')
+  ]);
+});
+
+test('closing page should cancel ongoing pickLocator', async ({ page }) => {
+  await page.setContent(`<button>Click me</button>`);
+  const pickPromise = page.pickLocator().catch(e => e.message);
+  await page.close();
+  expect(await pickPromise).toContain('Target page, context or browser has been closed');
+});
+
+test('page2.pickLocator() should cancel page1.pickLocator()', async ({ page, context, browserName, headless, isMac, macVersion }) => {
+  test.fixme(browserName === 'chromium' && !headless && isMac && macVersion === 14, 'times out on chromium headed on macOS 14');
+  const pick1Promise = page.pickLocator().catch(e => e.message);
+
+  const page2 = await context.newPage();
+  page2.pickLocator().catch(() => {});
+
+  expect(await pick1Promise).toContain('Locator picking was cancelled');
+});

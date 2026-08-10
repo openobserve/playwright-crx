@@ -219,11 +219,7 @@ test('browser_take_screenshot (filename is empty string)', async ({ startClient,
 });
 
 
-test('browser_take_screenshot (filename: "output.png")', async ({ startClient, server }, testInfo) => {
-  const outputDir = testInfo.outputPath('output');
-  const { client } = await startClient({
-    config: { outputDir },
-  });
+test('browser_take_screenshot (filename: "output.png")', async ({ client, server }, testInfo) => {
   expect(await client.callTool({
     name: 'browser_navigate',
     arguments: { url: server.HELLO_WORLD },
@@ -250,9 +246,7 @@ test('browser_take_screenshot (filename: "output.png")', async ({ startClient, s
     ],
   });
 
-  const files = [...fs.readdirSync(outputDir)].filter(f => f.endsWith('.png'));
-
-  expect(fs.existsSync(outputDir)).toBeTruthy();
+  const files = [...fs.readdirSync(testInfo.outputPath())].filter(f => f.endsWith('.png'));
   expect(files).toHaveLength(1);
   expect(files[0]).toMatch(/^output\.png$/);
 });
@@ -326,7 +320,7 @@ test('browser_take_screenshot size cap', async ({ startClient, server, mcpBrowse
   });
 
   const expectations = [
-    { title: '2000x500', pageWidth: 2000, pageHeight: 500, expectedWidth: 1568, expectedHeight: 500 * 1568 / 2000 | 0 },
+    { title: '2000x500', pageWidth: 2000, pageHeight: 500, expectedWidth: 1568, expectedHeight: 720 * 1568 / 2000 | 0 },
     { title: '2000x2000', pageWidth: 2000, pageHeight: 2000, expectedWidth: 1098, expectedHeight: 1098 },
     { title: '1280x800', pageWidth: 1280, pageHeight: 800, expectedWidth: 1280, expectedHeight: 800 },
   ];

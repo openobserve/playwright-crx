@@ -14,14 +14,13 @@
  * limitations under the License.
  */
 
-import type { Entry } from '@trace/har';
 import * as React from 'react';
 import type { Boundaries } from './geometry';
 import './networkTab.css';
 import { NetworkResourceDetails } from './networkResourceDetails';
-import { bytesToString, msToString } from '@web/uiUtils';
+import { bytesToString, msToString } from '@isomorphic/formatUtils';
 import { PlaceholderPanel } from './placeholderPanel';
-import { context } from '@isomorphic/trace/traceModel';
+import { context, type ResourceEntry } from '@isomorphic/trace/traceModel';
 import type { TraceModel } from '@isomorphic/trace/traceModel';
 import { GridView, type RenderedGridCell } from '@web/components/gridView';
 import { SplitView } from '@web/components/splitView';
@@ -30,12 +29,11 @@ import { NetworkFilters, defaultFilterState, type FilterState, type ResourceType
 import type { Language } from '@isomorphic/locatorGenerators';
 
 type NetworkTabModel = {
-  resources: Entry[],
+  resources: ResourceEntry[],
   contextIdMap: ContextIdMap,
 };
 
 type RenderedEntry = {
-  ordinal: number,
   name: { name: string, url: string },
   method: string,
   status: { code: number, text: string },
@@ -44,7 +42,7 @@ type RenderedEntry = {
   size: number,
   start: number,
   route: string,
-  resource: Entry,
+  resource: ResourceEntry,
   contextId: string,
 };
 type ColumnName = keyof RenderedEntry;
@@ -68,21 +66,21 @@ export function useNetworkTabModel(model: TraceModel | undefined, selectedTime: 
 export const NetworkTab: React.FunctionComponent<{
   boundaries: Boundaries,
   networkModel: NetworkTabModel,
-  onResourceHovered?: (ordinal: number | undefined) => void,
+  onResourceHovered?: (key: string | undefined) => void,
   sdkLanguage: Language,
 }> = ({ boundaries, networkModel, onResourceHovered, sdkLanguage }) => {
   const [sorting, setSorting] = React.useState<Sorting | undefined>(undefined);
-  const [selectedEntry, setSelectedEntry] = React.useState<RenderedEntry | undefined>(undefined);
+  const [selectedResourceKey, setSelectedResourceKey] = React.useState<string | undefined>(undefined);
   const [filterState, setFilterState] = React.useState(defaultFilterState);
 
-  const visibleSelectedEntry = React.useMemo(() => (selectedEntry && networkModel.resources.includes(selectedEntry.resource)) ? selectedEntry : undefined, [selectedEntry, networkModel.resources]);
-
   const { renderedEntries } = React.useMemo(() => {
-    const renderedEntries = networkModel.resources.map((entry, i) => renderEntry(entry, boundaries, networkModel.contextIdMap, i)).filter(filterEntry(filterState));
+    const renderedEntries = networkModel.resources.map(entry => renderEntry(entry, boundaries, networkModel.contextIdMap)).filter(filterEntry(filterState));
     if (sorting)
       sort(renderedEntries, sorting);
     return { renderedEntries };
   }, [networkModel.resources, networkModel.contextIdMap, filterState, sorting, boundaries]);
+
+  const visibleSelectedEntry = React.useMemo(() => (selectedResourceKey ? renderedEntries.find(entry => entry.resource.id === selectedResourceKey) : undefined), [selectedResourceKey, renderedEntries]);
 
   const [columnWidths, setColumnWidths] = React.useState<Map<ColumnName, number>>(() => {
     return new Map(allColumns().map(column => [column, columnWidth(column)]));
@@ -90,7 +88,7 @@ export const NetworkTab: React.FunctionComponent<{
 
   const onFilterStateChange = React.useCallback((newFilterState: FilterState) => {
     setFilterState(newFilterState);
-    setSelectedEntry(undefined);
+    setSelectedResourceKey(undefined);
   }, []);
 
   if (!networkModel.resources.length)
@@ -101,8 +99,8 @@ export const NetworkTab: React.FunctionComponent<{
     ariaLabel='Network requests'
     items={renderedEntries}
     selectedItem={visibleSelectedEntry}
-    onSelected={item => setSelectedEntry(item)}
-    onHighlighted={item => onResourceHovered?.(item?.ordinal)}
+    onSelected={item => setSelectedResourceKey(item.resource.id)}
+    onHighlighted={item => onResourceHovered?.(item?.resource.id)}
     columns={visibleColumns(!!visibleSelectedEntry, renderedEntries)}
     columnTitle={columnTitle}
     columnWidths={columnWidths}
@@ -122,7 +120,7 @@ export const NetworkTab: React.FunctionComponent<{
         sidebarIsFirst={true}
         orientation='horizontal'
         settingName='networkResourceDetails'
-        main={<NetworkResourceDetails resource={visibleSelectedEntry.resource} sdkLanguage={sdkLanguage} startTimeOffset={visibleSelectedEntry.start} onClose={() => setSelectedEntry(undefined)} />}
+        main={<NetworkResourceDetails resource={visibleSelectedEntry.resource} sdkLanguage={sdkLanguage} startTimeOffset={visibleSelectedEntry.start} onClose={() => setSelectedResourceKey(undefined)} />}
         sidebar={grid}
       />}
   </>;
@@ -223,7 +221,7 @@ class ContextIdMap {
 
   constructor(model: TraceModel | undefined) {}
 
-  contextId(resource: Entry): string {
+  contextId(resource: ResourceEntry): string {
     if (resource.pageref)
       return this._pageId(resource.pageref);
     else if (resource._apiRequest)
@@ -241,7 +239,7 @@ class ContextIdMap {
     return shortId;
   }
 
-  private _apiRequestContextId(resource: Entry): string {
+  private _apiRequestContextId(resource: ResourceEntry): string {
     const contextEntry = context(resource);
     if (!contextEntry)
       return '';
@@ -265,7 +263,7 @@ function hasMultipleContexts(renderedEntries: RenderedEntry[]): boolean {
   return false;
 }
 
-const renderEntry = (resource: Entry, boundaries: Boundaries, contextIdGenerator: ContextIdMap, ordinal: number): RenderedEntry => {
+const renderEntry = (resource: ResourceEntry, boundaries: Boundaries, contextIdGenerator: ContextIdMap): RenderedEntry => {
   const routeStatus = formatRouteStatus(resource);
   let resourceName: string;
   try {
@@ -284,7 +282,6 @@ const renderEntry = (resource: Entry, boundaries: Boundaries, contextIdGenerator
     contentType = charset[1];
 
   return {
-    ordinal,
     name: { name: resourceName, url: resource.request.url },
     method: resource.request.method,
     status: { code: resource.response.status, text: resource.response.statusText },
@@ -298,7 +295,7 @@ const renderEntry = (resource: Entry, boundaries: Boundaries, contextIdGenerator
   };
 };
 
-function formatRouteStatus(request: Entry): string {
+function formatRouteStatus(request: ResourceEntry): string {
   if (request._wasAborted)
     return 'aborted';
   if (request._wasContinued)

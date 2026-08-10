@@ -50,6 +50,10 @@ export interface Commands {
     };
     returnType: Bidi.Browser.RemoveUserContext;
   };
+  'browser.setDownloadBehavior': {
+    params: Bidi.Browser.SetDownloadBehaviorParameters;
+    returnType: Bidi.Browser.SetDownloadBehaviorResult;
+  }
 
   'browsingContext.activate': {
     params: Bidi.BrowsingContext.ActivateParameters;
@@ -137,6 +141,10 @@ export interface Commands {
   'emulation.setLocaleOverride': {
     params: Bidi.Emulation.SetLocaleOverrideParameters;
     returnType: Bidi.EmptyResult;
+  };
+  'emulation.setNetworkConditions': {
+    params: Bidi.Emulation.SetNetworkConditionsParameters;
+    returnType: Bidi.Emulation.SetNetworkConditionsResult;
   };
 
   'permissions.setPermission': {

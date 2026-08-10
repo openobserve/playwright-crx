@@ -16,7 +16,6 @@
  */
 
 import { contextTest as it, expect } from '../config/browserTest';
-import { hostPlatform } from '../../packages/playwright-core/src/server/utils/hostPlatform';
 
 function getPermission(page, name) {
   return page.evaluate(name => navigator.permissions.query({ name }).then(result => result.state), name);
@@ -30,9 +29,8 @@ it.describe('permissions', () => {
     expect(await getPermission(page, 'geolocation')).toBe('prompt');
   });
 
-  it('should deny permission when not listed', async ({ page, context, server, browserName, isMac, macVersion }) => {
-    it.skip(browserName === 'webkit' && isMac && macVersion === 13, 'WebKit on macOS 13 is frozen.');
-    it.skip(hostPlatform.startsWith('debian11'), 'WebKit on Debian 11 is frozen.');
+  it('should deny permission when not listed', async ({ page, context, server, browserName, isBidi, isFrozenWebkit }) => {
+    it.skip(isFrozenWebkit);
 
     await page.goto(server.EMPTY_PAGE);
     await context.grantPermissions([], { origin: server.EMPTY_PAGE });
@@ -42,16 +40,21 @@ it.describe('permissions', () => {
       // permission value, if the API has been accessed.
       await page.evaluate(() => navigator.geolocation.getCurrentPosition(() => { }));
       expect(await getPermission(page, 'geolocation')).toBe('denied');
+    } else if (isBidi) {
+      expect(await getPermission(page, 'geolocation')).toBe('prompt');
     } else {
       expect(await getPermission(page, 'geolocation')).toBe('denied');
     }
   });
 
-  it('should fail when bad permission is given', async ({ page, context, server }) => {
+  it('should fail when bad permission is given', async ({ page, context, server, isBidi }) => {
     await page.goto(server.EMPTY_PAGE);
     let error: Error;
     await context.grantPermissions(['foo'], { origin: server.EMPTY_PAGE }).catch(e => error = e);
-    expect(error.message).toContain('Unknown permission: foo');
+    if (isBidi)
+      expect(error.message).toContain('Protocol error (permissions.setPermission): invalid argument');
+    else
+      expect(error.message).toContain('Unknown permission: foo');
   });
 
   it('should grant geolocation permission when origin is listed', async ({ page, context, server }) => {
@@ -112,7 +115,7 @@ it.describe('permissions', () => {
     expect(await getPermission(page, 'geolocation')).toBe('prompt');
   });
 
-  it('should trigger permission onchange', async ({ page, context, server, browserName, browserMajorVersion }) => {
+  it('should trigger permission onchange', async ({ page, context, server, browserName, isBidi }) => {
     it.fail(browserName === 'webkit');
 
     await page.goto(server.EMPTY_PAGE);
@@ -125,18 +128,22 @@ it.describe('permissions', () => {
         };
       });
     });
-    expect(await page.evaluate(() => window['events'])).toEqual(['prompt']);
+    const expectedEvents = ['prompt'];
+    expect(await page.evaluate(() => window['events'])).toEqual(expectedEvents);
     await context.grantPermissions([], { origin: server.EMPTY_PAGE });
-    expect(await page.evaluate(() => window['events'])).toEqual(['prompt', 'denied']);
+    if (!isBidi)
+      expectedEvents.push('denied');
+    expect(await page.evaluate(() => window['events'])).toEqual(expectedEvents);
     await context.grantPermissions(['geolocation'], { origin: server.EMPTY_PAGE });
-    expect(await page.evaluate(() => window['events'])).toEqual(['prompt', 'denied', 'granted']);
+    expectedEvents.push('granted');
+    expect(await page.evaluate(() => window['events'])).toEqual(expectedEvents);
     await context.clearPermissions();
-    expect(await page.evaluate(() => window['events'])).toEqual(['prompt', 'denied', 'granted', 'prompt']);
+    expectedEvents.push('prompt');
+    expect(await page.evaluate(() => window['events'])).toEqual(expectedEvents);
   });
 
-  it('should isolate permissions between browser contexts', async ({ server, browser, browserName, isMac, macVersion }) => {
-    it.skip(browserName === 'webkit' && isMac && macVersion === 13, 'WebKit on macOS 13 is frozen.');
-    it.skip(hostPlatform.startsWith('debian11'), 'WebKit on Debian 11 is frozen.');
+  it('should isolate permissions between browser contexts', async ({ server, browser, browserName, isBidi, isFrozenWebkit }) => {
+    it.skip(isFrozenWebkit);
 
     const context = await browser.newContext();
     const page = await context.newPage();
@@ -155,6 +162,8 @@ it.describe('permissions', () => {
       // permission value, if the API has been accessed.
       await page.evaluate(() => navigator.geolocation.getCurrentPosition(() => { }));
       expect(await getPermission(page, 'geolocation')).toBe('denied');
+    } else if (isBidi) {
+      expect(await getPermission(page, 'geolocation')).toBe('prompt');
     } else {
       expect(await getPermission(page, 'geolocation')).toBe('denied');
     }
@@ -241,9 +250,10 @@ it.describe(() => {
   // Secure context
   it.use({ ignoreHTTPSErrors: true, });
 
-  it('should be able to use the local-fonts API', async ({ page, context, httpsServer, browserName, channel }) => {
+  it('should be able to use the local-fonts API', async ({ page, context, httpsServer, browserName, channel, headless }) => {
     it.skip(browserName !== 'chromium', 'chromium-only api');
     it.fixme(!!channel && channel.startsWith('msedge'), 'always times out in edge');
+    it.fixme(!headless, 'times out in headed');
     it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36113' });
 
     await page.goto(httpsServer.EMPTY_PAGE);
@@ -258,7 +268,6 @@ it('local network request is allowed from public origin', {
   annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/37861' }
 }, async ({ page, context, server, browserName, channel, browserMajorVersion }) => {
   it.skip(browserName === 'webkit');
-  it.skip(channel?.startsWith('msedge'));
   it.skip(browserName === 'chromium' && browserMajorVersion < 145, 'local-network-access permission support has changed between versions');
 
   if (browserName === 'chromium')
@@ -303,4 +312,13 @@ it('local network request is allowed from public origin', {
   expect(clientRequests).toEqual([
     `POST ${server.CROSS_PROCESS_PREFIX}/cors`,
   ]);
+});
+
+it('can request screen-wake-lock', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/39115' }
+}, async ({ page, context }) => {
+  await context.grantPermissions(['screen-wake-lock']);
+  await page.route('**/*', route => route.fulfill({ status: 200, body: '<div>Hello there!</div>', contentType: 'text/html' }));
+  await page.goto('https://example.com');
+  await page.evaluate(() => navigator.wakeLock.request('screen'));
 });

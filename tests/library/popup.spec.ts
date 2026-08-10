@@ -17,7 +17,9 @@
 import { browserTest as it, expect } from '../config/browserTest';
 import type { Page } from 'playwright-core';
 
-it('should inherit user agent from browser context @smoke', async function({ browser, server }) {
+it('should inherit user agent from browser context @smoke', async function({ browser, server, isFrozenWebkit }) {
+  it.skip(isFrozenWebkit);
+
   const context = await browser.newContext({
     userAgent: 'hey'
   });
@@ -97,7 +99,8 @@ it('should inherit http credentials from browser context', async function({ brow
   await context.close();
 });
 
-it('should inherit touch support from browser context', async function({ browser, server }) {
+it('should inherit touch support from browser context', async function({ browser, server, browserName, browserMajorVersion }) {
+  it.fixme(browserName === 'firefox' && browserMajorVersion >= 148, 'https://bugzilla.mozilla.org/show_bug.cgi?id=2014330');
   const context = await browser.newContext({
     viewport: { width: 400, height: 500 },
     hasTouch: true

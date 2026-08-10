@@ -410,6 +410,15 @@ Timeout:  10000ms
     await page.goto('data:text/html,<div>A</div>');
     await expect(page).toHaveURL('DATA:teXT/HTml,<div>a</div>', { ignoreCase: true });
   });
+
+  test('support URLPattern', async ({ page }) => {
+    test.skip(globalThis.URLPattern === undefined, 'URLPattern is not supported in this environment');
+    await page.goto('data:text/html,<div>A</div>');
+    // @ts-ignore URLPattern is not in @types/node yet
+    await expect(page).toHaveURL(new URLPattern({ protocol: 'data' }));
+    // @ts-ignore
+    await expect(page).not.toHaveURL(new URLPattern({ protocol: 'http' }));
+  });
 });
 
 test.describe('toHaveAttribute', () => {
@@ -565,7 +574,7 @@ test.describe('toBeInViewport', () => {
   test('should have good stack', async ({ page }) => {
     let error;
     try {
-      await expect(page.locator('body')).not.toBeInViewport({ timeout: 500 });
+      await expect(page.locator('body')).not.toBeInViewport({ timeout: 3000 });
     } catch (e) {
       error = e;
     }

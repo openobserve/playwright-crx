@@ -18,7 +18,6 @@ import fs from 'fs';
 import path from 'path';
 
 import { ManualPromise, SerializedFS, calculateSha1, createGuid, getPlaywrightVersion, monotonicTime } from 'playwright-core/lib/utils';
-import { yauzl, yazl } from 'playwright-core/lib/zipBundle';
 
 import { filteredStackTrace } from '../util';
 
@@ -35,7 +34,7 @@ const version: trace.VERSION = 8;
 let traceOrdinal = 0;
 
 type TraceFixtureValue =  PlaywrightWorkerOptions['trace'] | undefined;
-type TraceOptions = { screenshots: boolean, snapshots: boolean, sources: boolean, attachments: boolean, _live: boolean, mode: TraceMode };
+type TraceOptions = { screenshots: boolean, snapshots: boolean, sources: boolean, attachments: boolean, live: boolean, mode: TraceMode };
 
 export class TestTracing {
   private _testInfo: TestInfoImpl;
@@ -83,11 +82,14 @@ export class TestTracing {
     if (this._options?.mode === 'retain-on-first-failure' && this._testInfo.retry === 0)
       return true;
 
+    if (this._options?.mode === 'retain-on-failure-and-retries')
+      return true;
+
     return false;
   }
 
   async startIfNeeded(value: TraceFixtureValue) {
-    const defaultTraceOptions: TraceOptions = { screenshots: true, snapshots: true, sources: true, attachments: true, _live: false, mode: 'off' };
+    const defaultTraceOptions: TraceOptions = { screenshots: true, snapshots: true, sources: true, attachments: true, live: false, mode: 'off' };
 
     if (!value) {
       this._options = defaultTraceOptions;
@@ -103,7 +105,7 @@ export class TestTracing {
       return;
     }
 
-    if (!this._liveTraceFile && this._options._live) {
+    if (!this._liveTraceFile && this._options.live) {
       // Note that trace name must start with testId for live tracing to work.
       this._liveTraceFile = { file: path.join(this._tracesDir, `${this._testInfo.testId}-test.trace`), fs: new SerializedFS() };
       this._liveTraceFile.fs.mkdir(path.dirname(this._liveTraceFile.file));
@@ -159,10 +161,14 @@ export class TestTracing {
     if (!this._options)
       return true;
     const testFailed = this._testInfo.status !== this._testInfo.expectedStatus;
+    if (this._options.mode === 'retain-on-failure-and-retries')
+      return !testFailed && this._testInfo.retry === 0;
     return !testFailed && (this._options.mode === 'retain-on-failure' || this._options.mode === 'retain-on-first-failure');
   }
 
   async stopIfNeeded() {
+    this._contextCreatedEvent.testTimeout = this._testInfo.timeout;
+
     if (!this._options)
       return;
 
@@ -176,6 +182,7 @@ export class TestTracing {
       return;
     }
 
+    const { yazl } = await import('playwright-core/lib/zipBundle');
     const zipFile = new yazl.ZipFile();
 
     if (!this._options?.attachments) {
@@ -340,6 +347,7 @@ async function mergeTraceFiles(fileName: string, temporaryTraceFiles: string[]) 
   }
 
   const mergePromise = new ManualPromise();
+  const { yazl, yauzl } = await import('playwright-core/lib/zipBundle');
   const zipFile = new yazl.ZipFile();
   const entryNames = new Set<string>();
   (zipFile as any as EventEmitter).on('error', error => mergePromise.reject(error));

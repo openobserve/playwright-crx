@@ -15,7 +15,8 @@
 */
 
 import type { ActionTraceEvent } from '@trace/trace';
-import { clsx, msToString } from '@web/uiUtils';
+import { clsx } from '@web/uiUtils';
+import { msToString } from '@isomorphic/formatUtils';
 import * as React from 'react';
 import './actionList.css';
 import { stats, buildActionTree } from '@isomorphic/trace/traceModel';
@@ -26,7 +27,7 @@ import type { ActionTraceEventInContext, ActionTreeItem } from '@isomorphic/trac
 import type { Boundaries } from './geometry';
 import { ToolbarButton } from '@web/components/toolbarButton';
 import { testStatusIcon } from './testUtils';
-import { methodMetainfo } from '@isomorphic/protocolMetainfo';
+import { getMetainfo } from '@isomorphic/protocolMetainfo';
 import { formatProtocolParam } from '@isomorphic/protocolFormatter';
 
 export interface ActionListProps {
@@ -35,13 +36,14 @@ export interface ActionListProps {
   selectedTime: Boundaries | undefined,
   setSelectedTime: (time: Boundaries | undefined) => void,
   treeState: TreeState,
-  setTreeState: (treeState: TreeState) => void,
+  setTreeState: React.Dispatch<React.SetStateAction<TreeState>>,
   sdkLanguage: Language | undefined;
   onSelected?: (action: ActionTraceEventInContext) => void,
   onHighlighted?: (action: ActionTraceEventInContext | undefined) => void,
   revealConsole?: () => void,
   revealActionAttachment?(callId: string): void,
   isLive?: boolean,
+  actionFilterText?: string,
 }
 
 const ActionTreeView = TreeView<ActionTreeItem>;
@@ -59,6 +61,7 @@ export const ActionList: React.FC<ActionListProps> = ({
   revealConsole,
   revealActionAttachment,
   isLive,
+  actionFilterText,
 }) => {
   const { rootItem, itemMap } = React.useMemo(() => buildActionTree(actions), [actions]);
 
@@ -81,8 +84,15 @@ export const ActionList: React.FC<ActionListProps> = ({
   }, [isLive, revealConsole, revealActionAttachment, sdkLanguage]);
 
   const isVisible = React.useCallback((item: ActionTreeItem) => {
-    return !selectedTime || !item.action || (item.action.startTime <= selectedTime.maximum && item.action.endTime >= selectedTime.minimum);
-  }, [selectedTime]);
+    const timeVisible = !selectedTime || !item.action || (item.action.startTime <= selectedTime.maximum && item.action.endTime >= selectedTime.minimum);
+    if (!timeVisible)
+      return false;
+    const title = renderTitleForCall(item.action).title;
+    if (!actionFilterText)
+      return true;
+    const isIncluded = title.toLowerCase().includes(actionFilterText.toLowerCase());
+    return isIncluded ? true : 'if-needed';
+  }, [selectedTime, actionFilterText]);
 
   const onSelectedAction = React.useCallback((item: ActionTreeItem) => {
     onSelected?.(item.action);
@@ -92,7 +102,7 @@ export const ActionList: React.FC<ActionListProps> = ({
     onHighlighted?.(item?.action);
   }, [onHighlighted]);
 
-  return <div className='vbox'>
+  return <div className='vbox action-list-container'>
     {selectedTime && <div className='action-list-show-all' onClick={() => setSelectedTime(undefined)}><span className='codicon codicon-triangle-left'></span>Show all</div>}
     <ActionTreeView
       name='actions'
@@ -106,6 +116,7 @@ export const ActionList: React.FC<ActionListProps> = ({
       isError={isError}
       isVisible={isVisible}
       render={render}
+      autoExpandDepth={actionFilterText?.trim() ? 5 : 0}
     />
   </div>;
 };
@@ -151,8 +162,8 @@ export const renderAction = (
   </div>;
 };
 
-export function renderTitleForCall(action: ActionTraceEvent): { elements: React.ReactNode[], title: string } {
-  let titleFormat = action.title ?? methodMetainfo.get(action.class + '.' + action.method)?.title ?? action.method;
+export function renderTitleForCall(action: ActionTraceEvent, sdkLanguage?: Language): { elements: React.ReactNode[], title: string } {
+  let titleFormat = action.title ?? getMetainfo({ type: action.class, method: action.method })?.title ?? action.method;
   titleFormat = titleFormat.replace(/\n/g, ' ');
 
   const elements: React.ReactNode[] = [];
@@ -188,5 +199,10 @@ export function renderTitleForCall(action: ActionTraceEvent): { elements: React.
     title.push(chunk);
   }
 
+  const locator = action.params.selector ? asLocatorDescription(sdkLanguage || 'javascript', action.params.selector) : undefined;
+  if (locator) {
+    title.push(' ');
+    title.push(locator);
+  }
   return { elements, title: title.join('') };
 }

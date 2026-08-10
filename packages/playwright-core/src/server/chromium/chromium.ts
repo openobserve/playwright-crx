@@ -20,7 +20,7 @@ import os from 'os';
 import path from 'path';
 
 import { chromiumSwitches } from './chromiumSwitches';
-import { CRBrowser } from './crBrowser';
+import { shouldProxyLoopback, CRBrowser } from './crBrowser';
 import { kBrowserCloseMessageId } from './crConnection';
 import { debugMode, headersArrayToObject, headersObjectToArray, } from '../../utils';
 import { wrapInASCIIBox } from '../utils/ascii';
@@ -89,6 +89,13 @@ export class Chromium extends BrowserType {
     else if (headersMap && !Object.keys(headersMap).some(key => key.toLowerCase() === 'user-agent'))
       headersMap['User-Agent'] = getUserAgent();
 
+    const wsEndpoint = await urlToWSEndpoint(progress, endpointURL, headersMap);
+    const chromeTransport = await WebSocketTransport.connect(progress, wsEndpoint, { headers: headersMap, followRedirects: true, debugLogHeader: 'x-playwright-debug-log' });
+    const closeAndWait = async () => await chromeTransport.closeAndWait();
+    return this._connectOverCDPImpl(progress, chromeTransport, closeAndWait, options, onClose);
+  }
+
+  private async _connectOverCDPImpl(progress: Progress, transport: ConnectionTransport, closeAndWait: () => Promise<void>, options: types.LaunchOptions & { isLocal?: boolean }, onClose?: () => Promise<void>) {
     const artifactsDir = await progress.race(fs.promises.mkdtemp(ARTIFACTS_FOLDER));
     const doCleanup = async () => {
       await removeFolders([artifactsDir]);
@@ -97,22 +104,18 @@ export class Chromium extends BrowserType {
       await cb?.();
     };
 
-    let chromeTransport: WebSocketTransport | undefined;
     const doClose = async () => {
-      await chromeTransport?.closeAndWait();
+      await closeAndWait();
       await doCleanup();
     };
 
     try {
-      const wsEndpoint = await urlToWSEndpoint(progress, endpointURL, headersMap);
-      chromeTransport = await WebSocketTransport.connect(progress, wsEndpoint, { headers: headersMap });
-
       const browserProcess: BrowserProcess = { close: doClose, kill: doClose };
       const persistent: types.BrowserContextOptions = { noDefaultViewport: true };
       const browserOptions: BrowserOptions = {
         slowMo: options.slowMo,
         name: 'chromium',
-        isChromium: true,
+        browserType: 'chromium',
         persistent,
         browserProcess,
         protocolLogger: helper.debugProtocolLogger(),
@@ -123,7 +126,7 @@ export class Chromium extends BrowserType {
         originalLaunchOptions: {},
       };
       validateBrowserContextOptions(persistent, browserOptions);
-      const browser = await progress.race(CRBrowser.connect(this.attribution.playwright, chromeTransport, browserOptions));
+      const browser = await progress.race(CRBrowser.connect(this.attribution.playwright, transport, browserOptions));
       if (!options.isLocal)
         browser._isCollocatedWithServer = false;
       browser.on(Browser.Events.Disconnected, doCleanup);
@@ -132,6 +135,11 @@ export class Chromium extends BrowserType {
       await doClose().catch(() => {});
       throw error;
     }
+  }
+
+  override async connectOverCDPTransport(progress: Progress, transport: ConnectionTransport) {
+    const closeAndWait = async () => transport.close();
+    return this._connectOverCDPImpl(progress, transport, closeAndWait, { isLocal: true });
   }
 
   private _createDevTools() {
@@ -183,8 +191,6 @@ export class Chromium extends BrowserType {
   }
 
   override async _launchWithSeleniumHub(progress: Progress, hubUrl: string, options: types.LaunchOptions): Promise<CRBrowser> {
-    await progress.race(this._createArtifactDirs(options));
-
     if (!hubUrl.endsWith('/'))
       hubUrl = hubUrl + '/';
 
@@ -339,11 +345,9 @@ export class Chromium extends BrowserType {
       chromeArguments.push(`--proxy-server=${proxy.server}`);
       const proxyBypassRules = [];
       // https://source.chromium.org/chromium/chromium/src/+/master:net/docs/proxy.md;l=548;drc=71698e610121078e0d1a811054dcf9fd89b49578
-      if (options.socksProxyPort)
-        proxyBypassRules.push('<-loopback>');
       if (proxy.bypass)
         proxyBypassRules.push(...proxy.bypass.split(',').map(t => t.trim()).map(t => t.startsWith('.') ? '*' + t : t));
-      if (!process.env.PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK && !proxyBypassRules.includes('<-loopback>'))
+      if (options.socksProxyPort || shouldProxyLoopback(proxy.bypass))
         proxyBypassRules.push('<-loopback>');
       if (proxyBypassRules.length > 0)
         chromeArguments.push(`--proxy-bypass-list=${proxyBypassRules.join(';')}`);

@@ -23,6 +23,7 @@ import type { PageTestFixtures, PageWorkerFixtures } from '../page/pageTestApi';
 import type { TraceViewerFixtures } from '../config/traceViewerFixtures';
 import { traceViewerFixtures } from '../config/traceViewerFixtures';
 import { removeFolders } from '../../packages/playwright-core/lib/server/utils/fileUtils';
+import { inheritAndCleanEnv } from '../config/utils';
 export { expect } from '@playwright/test';
 
 type ElectronTestFixtures = PageTestFixtures & {
@@ -40,6 +41,7 @@ export const electronTest = baseTest.extend<TraceViewerFixtures>(traceViewerFixt
   isAndroid: [false, { scope: 'worker' }],
   isElectron: [true, { scope: 'worker' }],
   isHeadlessShell: [false, { scope: 'worker' }],
+  isFrozenWebkit: [false, { scope: 'worker' }],
 
   createUserDataDir: async ({ mode }, run) => {
     const dirs: string[] = [];
@@ -62,10 +64,7 @@ export const electronTest = baseTest.extend<TraceViewerFixtures>(traceViewerFixt
       const app = await playwright._electron.launch({
         ...options,
         args: [path.join(__dirname, appFile), ...args],
-        env: {
-          ...process.env,
-          PWTEST_ELECTRON_USER_DATA_DIR: userDataDir,
-        }
+        env: inheritAndCleanEnv({ PWTEST_ELECTRON_USER_DATA_DIR: userDataDir }),
       });
       apps.push(app);
       return app;

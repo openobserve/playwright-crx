@@ -394,6 +394,13 @@ it.describe('page screenshot', () => {
     expect(error.message).toContain('options.quality is unsupported for the png');
   });
 
+  it('quality option should work for jpeg', async ({ page, server }) => {
+    await page.goto(server.PREFIX + '/grid.html');
+    const zeroQuality = await page.screenshot({ type: 'jpeg', quality: 0 });
+    const highQuality = await page.screenshot({ type: 'jpeg', quality: 100 });
+    expect(zeroQuality.byteLength).toBeLessThan(highQuality.byteLength);
+  });
+
   it('should prefer type over extension', async ({ page }, testInfo) => {
     const outputPath = testInfo.outputPath('file.png');
     const buffer = await page.screenshot({ path: outputPath, type: 'jpeg' });
@@ -884,18 +891,21 @@ it.describe('page screenshot animations', () => {
   });
 });
 
-it('should throw if screenshot size is too large', async ({ page, browserName, isMac }) => {
+it('should throw if screenshot size is too large', async ({ page, browserName, isMac, isBidi }) => {
+  const maxSize = browserName === 'firefox' && isBidi ? 65535 : 32767;
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/16727' });
   {
-    await page.setContent(`<style>body {margin: 0; padding: 0;}</style><div style='min-height: 32767px; background: red;'></div>`);
+    await page.setContent(`<style>body {margin: 0; padding: 0;}</style><div style='min-height: ${maxSize}px; background: red;'></div>`);
     const result = await page.screenshot({ fullPage: true });
     expect(result).toBeTruthy();
   }
   {
-    await page.setContent(`<style>body {margin: 0; padding: 0;}</style><div style='min-height: 32768px; background: red;'></div>`);
+    await page.setContent(`<style>body {margin: 0; padding: 0;}</style><div style='min-height: ${maxSize + 1}px; background: red;'></div>`);
     const exception = await page.screenshot({ fullPage: true }).catch(e => e);
-    if (browserName === 'firefox' || (browserName === 'webkit' && !isMac))
+    if ((browserName === 'firefox' && !isBidi) || (browserName === 'webkit' && !isMac))
       expect(exception.message).toContain('Cannot take screenshot larger than 32767');
+    else if (browserName === 'firefox' && isBidi)
+      expect(exception.message).toContain('Unable to capture screenshot');
   }
 });
 

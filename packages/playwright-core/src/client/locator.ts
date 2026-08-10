@@ -128,10 +128,6 @@ export class Locator implements api.Locator {
     return await this._withElement(h => h.evaluate(pageFunction, arg), { title: 'Evaluate', timeout: options?.timeout });
   }
 
-  async _evaluateFunction(functionDeclaration: string, options?: TimeoutOptions) {
-    return await this._withElement(h => h._evaluateFunction(functionDeclaration), { title: 'Evaluate', timeout: options?.timeout });
-  }
-
   async evaluateAll<R, Arg>(pageFunction: structs.PageFunctionOn<Element[], Arg, R>, arg?: Arg): Promise<R> {
     return await this._frame.$$eval(this._selector, pageFunction, arg);
   }
@@ -258,8 +254,9 @@ export class Locator implements api.Locator {
     return await this._frame._queryCount(this._selector, _options);
   }
 
-  async _resolveSelector(): Promise<{ resolvedSelector: string }> {
-    return await this._frame._channel.resolveSelector({ selector: this._selector });
+  async normalize(): Promise<Locator> {
+    const { resolvedSelector } = await this._frame._channel.resolveSelector({ selector: this._selector });
+    return new Locator(this._frame, resolvedSelector);
   }
 
   async getAttribute(name: string, options?: TimeoutOptions): Promise<string | null> {
@@ -315,8 +312,8 @@ export class Locator implements api.Locator {
     return await this._withElement((h, timeout) => h.screenshot({ ...options, mask, timeout }), { title: 'Screenshot', timeout: options.timeout });
   }
 
-  async ariaSnapshot(options?: TimeoutOptions): Promise<string> {
-    const result = await this._frame._channel.ariaSnapshot({ ...options, selector: this._selector, timeout: this._frame._timeout(options) });
+  async ariaSnapshot(options: TimeoutOptions & { mode?: 'ai' | 'default', depth?: number } = {}): Promise<string> {
+    const result = await this._frame._channel.ariaSnapshot({ timeout: this._frame._timeout(options), mode: options.mode, selector: this._selector, depth: options.depth });
     return result.snapshot;
   }
 
@@ -380,6 +377,7 @@ export class Locator implements api.Locator {
   async waitFor(options?: channels.FrameWaitForSelectorOptions & TimeoutOptions): Promise<void> {
     await this._frame._channel.waitForSelector({ selector: this._selector, strict: true, omitReturnValue: true, ...options, timeout: this._frame._timeout(options) });
   }
+
 
   async _expect(expression: string, options: FrameExpectParams): Promise<{ matches: boolean, received?: any, log?: string[], timedOut?: boolean, errorMessage?: string }> {
     return this._frame._expect(expression, {

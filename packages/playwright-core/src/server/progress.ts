@@ -42,9 +42,17 @@ export class ProgressController {
   static createForSdkObject(sdkObject: SdkObject, callMetadata: CallMetadata) {
     const logName = sdkObject.logName || 'api';
     return new ProgressController(callMetadata, message => {
+      // Note: "attribution.playwright" is undefined in DebugController. Unfortunate!
+      if (logName === 'api' && sdkObject.attribution.playwright?.options.isInternalPlaywright)
+        return;
       debugLogger.log(logName, message);
       sdkObject.instrumentation.onCallLog(sdkObject, callMetadata, logName, message);
     });
+  }
+
+  static runInternalTask(task: (progress: Progress) => Promise<void>, timeout?: number) {
+    const progress = new ProgressController();
+    return progress.run(task, timeout);
   }
 
   async abort(error: Error) {

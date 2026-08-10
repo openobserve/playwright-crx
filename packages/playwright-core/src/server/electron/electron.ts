@@ -86,7 +86,6 @@ export class ElectronApplication extends SdkObject {
     this._nodeSession.on('Runtime.consoleAPICalled', event => this._onConsoleAPI(event));
     const appClosePromise = new Promise(f => this.once(ElectronApplication.Events.Close, f));
     this._browserContext.setCustomCloseHandler(async () => {
-      await this._browserContext.stopVideoRecording();
       const electronHandle = await this._nodeElectronHandlePromise;
       await electronHandle.evaluate(({ app }) => app.quit()).catch(() => {});
       this._nodeConnection.close();
@@ -114,7 +113,7 @@ export class ElectronApplication extends SdkObject {
     if (!this._nodeExecutionContext)
       return;
     const args = event.args.map(arg => createHandle(this._nodeExecutionContext!, arg));
-    const message = new ConsoleMessage(null, null, event.type, undefined, args, toConsoleMessageLocation(event.stackTrace));
+    const message = new ConsoleMessage(null, null, event.type, undefined, args, toConsoleMessageLocation(event.stackTrace), event.timestamp);
     this.emit(ElectronApplication.Events.Console, message);
   }
 
@@ -160,12 +159,18 @@ export class Electron extends SdkObject {
     let electronArguments = ['--inspect=0', '--remote-debugging-port=0', ...(options.args || [])];
 
     if (os.platform() === 'linux') {
-      const runningAsRoot = process.geteuid && process.geteuid() === 0;
-      if (runningAsRoot && electronArguments.indexOf('--no-sandbox') === -1)
+      if (!options.chromiumSandbox && electronArguments.indexOf('--no-sandbox') === -1)
         electronArguments.unshift('--no-sandbox');
     }
 
-    const artifactsDir = await progress.race(fs.promises.mkdtemp(ARTIFACTS_FOLDER));
+    let artifactsDir: string;
+    const tempDirectories: string[] = [];
+    if (options.artifactsDir) {
+      artifactsDir = options.artifactsDir;
+    } else {
+      artifactsDir = await progress.race(fs.promises.mkdtemp(ARTIFACTS_FOLDER));
+      tempDirectories.push(artifactsDir);
+    }
     const browserLogsCollector = new RecentLogsCollector();
     const env = options.env ? envArrayToObject(options.env) : process.env;
 
@@ -217,7 +222,7 @@ export class Electron extends SdkObject {
       shell,
       stdio: 'pipe',
       cwd: options.cwd,
-      tempDirectories: [artifactsDir],
+      tempDirectories,
       attemptToGracefullyClose: () => app!.close(),
       handleSIGINT: true,
       handleSIGTERM: true,
@@ -268,7 +273,7 @@ export class Electron extends SdkObject {
       };
       const browserOptions: BrowserOptions = {
         name: 'electron',
-        isChromium: true,
+        browserType: 'chromium',
         headful: true,
         persistent: contextOptions,
         browserProcess,

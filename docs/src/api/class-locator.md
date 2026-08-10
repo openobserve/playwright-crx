@@ -72,7 +72,7 @@ texts = page.get_by_role("link").all_inner_texts()
 ```
 
 ```java
-String[] texts = page.getByRole(AriaRole.LINK).allInnerTexts();
+List<String> texts = page.getByRole(AriaRole.LINK).allInnerTexts();
 ```
 
 ```csharp
@@ -104,7 +104,7 @@ texts = page.get_by_role("link").all_text_contents()
 ```
 
 ```java
-String[] texts = page.getByRole(AriaRole.LINK).allTextContents();
+List<String> texts = page.getByRole(AriaRole.LINK).allTextContents();
 ```
 
 ```csharp
@@ -206,11 +206,28 @@ Below is the HTML markup and the respective ARIA snapshot:
     - link "About"
 ```
 
+An AI-optimized snapshot, controlled by [`option: Locator.ariaSnapshot.mode`], is different from a default snapshot:
+1. Includes element references `[ref=e2]`.
+2. Does not wait for an element matching the locator, and throws when no elements match.
+3. Includes snapshots of `<iframe>`s inside the target.
+
+### option: Locator.ariaSnapshot.mode
+* since: v1.59
+- `mode` <[AriaSnapshotMode]<"ai"|"default">>
+
+When set to `"ai"`, returns a snapshot optimized for AI consumption. Defaults to `"default"`. See details for more information.
+
 ### option: Locator.ariaSnapshot.timeout = %%-input-timeout-%%
 * since: v1.49
 
 ### option: Locator.ariaSnapshot.timeout = %%-input-timeout-js-%%
 * since: v1.49
+
+### option: Locator.ariaSnapshot.depth
+* since: v1.59
+- `depth` <[int]>
+
+When specified, limits the depth of the snapshot.
 
 ## async method: Locator.blur
 * since: v1.28
@@ -225,7 +242,7 @@ Calls [blur](https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/blur) 
 
 ## async method: Locator.boundingBox
 * since: v1.14
-- returns: <[null]|[Object]>
+- returns: <[null]|[Object=LocatorBoundingBoxResult]>
   - `x` <[float]> the x coordinate of the element in pixels.
   - `y` <[float]> the y coordinate of the element in pixels.
   - `width` <[float]> the width of the element in pixels.
@@ -1803,6 +1820,12 @@ var banana = await page.GetByRole(AriaRole.Listitem).Last(1);
 ### option: Locator.locator.hasNotText = %%-locator-option-has-not-text-%%
 * since: v1.33
 
+## async method: Locator.normalize
+* since: v1.59
+- returns: <[Locator]>
+
+Returns a new locator that uses best practices for referencing the matched element, prioritizing test ids,
+aria roles, and other user-facing attributes over CSS selectors. This is useful for converting implementation-detail selectors into more resilient, human-readable locators.
 
 ## method: Locator.nth
 * since: v1.14
@@ -2485,6 +2508,7 @@ This method expects [Locator] to point to an
 
 ### option: Locator.setInputFiles.timeout = %%-input-timeout-js-%%
 * since: v1.14
+
 
 ## async method: Locator.tap
 * since: v1.14

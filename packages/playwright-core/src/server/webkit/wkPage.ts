@@ -21,6 +21,7 @@ import { eventsHelper } from '../utils/eventsHelper';
 import { hostPlatform } from '../utils/hostPlatform';
 import { splitErrorMessage } from '../../utils/isomorphic/stackTrace';
 import { PNG, jpegjs } from '../../utilsBundle';
+import { calculateUserAgentEmulation } from '../browserContext';
 import * as dialog from '../dialog';
 import * as dom from '../dom';
 import { TargetClosedError } from '../errors';
@@ -34,6 +35,8 @@ import { WKInterceptableRequest, WKRouteImpl } from './wkInterceptableRequest';
 import { WKProvisionalPage } from './wkProvisionalPage';
 import { WKWorkers } from './wkWorkers';
 import { translatePathToWSL } from './webkit';
+import { registry } from '../registry';
+import { startAutomaticVideoRecording } from '../videoRecorder';
 
 import type { Protocol } from './protocol';
 import type { WKBrowserContext } from './wkBrowser';
@@ -46,7 +49,7 @@ import type * as types from '../types';
 
 const UTILITY_WORLD_NAME = '__playwright_utility_world__';
 
-const enableFrameSessions = !process.env.WK_DISABLE_FRAME_SESSIONS;
+const enableFrameSessions = !process.env.WK_DISABLE_FRAME_SESSIONS && parseInt(registry.findExecutable('webkit').revision!, 10) >= 2245 && parseInt(registry.findExecutable('webkit').revision!, 10) <= 2255;
 
 export class WKPage implements PageDelegate {
   readonly rawMouse: RawMouseImpl;
@@ -126,7 +129,7 @@ export class WKPage implements PageDelegate {
       for (const [key, value] of this._browserContext._permissions)
         promises.push(this._grantPermissions(key, value));
     }
-    promises.push(this._initializeVideoRecording());
+    startAutomaticVideoRecording(this._page);
     await Promise.all(promises);
   }
 
@@ -578,9 +581,9 @@ export class WKPage implements PageDelegate {
         url: url || '',
         lineNumber: (lineNumber || 1) - 1,
         columnNumber: (columnNumber || 1) - 1,
-      }
+      },
     };
-    this._onConsoleRepeatCountUpdated({ count: 1 });
+    this._onConsoleRepeatCountUpdated({ count: 1, timestamp: event.message.timestamp });
   }
 
   _onConsoleRepeatCountUpdated(event: Protocol.Console.messageRepeatCountUpdatedPayload) {
@@ -592,8 +595,9 @@ export class WKPage implements PageDelegate {
         count,
         location
       } = this._lastConsoleMessage;
+      const timestamp = event.timestamp ? event.timestamp * 1000 : Date.now();
       for (let i = count; i < event.count; ++i)
-        this._page.addConsoleMessage(null, derivedType, handles, location, handles.length ? undefined : text);
+        this._page.addConsoleMessage(null, derivedType, handles, location, handles.length ? undefined : text, timestamp);
       this._lastConsoleMessage.count = event.count;
     }
   }
@@ -689,10 +693,12 @@ export class WKPage implements PageDelegate {
   async updateUserAgent(): Promise<void> {
     const contextOptions = this._browserContext._options;
     this._updateState('Page.overrideUserAgent', { value: contextOptions.userAgent });
+    const { navigatorPlatform } = calculateUserAgentEmulation(contextOptions);
+    this._updateState('Page.overridePlatform', navigatorPlatform ? { value: navigatorPlatform } : { });
   }
 
   async bringToFront(): Promise<void> {
-    this._pageProxySession.send('Target.activate', {
+    await this._pageProxySession.send('Target.activate', {
       targetId: this._session.sessionId
     });
   }
@@ -844,13 +850,6 @@ export class WKPage implements PageDelegate {
     return 0;
   }
 
-  private async _initializeVideoRecording() {
-    const screencast = this._page.screencast;
-    const videoOptions = screencast.launchVideoRecorder();
-    if (videoOptions)
-      await screencast.startVideoRecording(videoOptions);
-  }
-
   private validateScreenshotDimension(side: number, omitDeviceScaleFactor: boolean) {
     // Cairo based implementations (Linux and Windows) have hard limit of 32767
     // (see https://github.com/microsoft/playwright/issues/16727).
@@ -925,27 +924,23 @@ export class WKPage implements PageDelegate {
     });
   }
 
-  async startScreencast(options: { width: number, height: number, quality: number }): Promise<void> {
-    const { generation } = await this._pageProxySession.send('Screencast.startScreencast', {
+  startScreencast(options: { width: number, height: number, quality: number }) {
+    this._pageProxySession.send('Screencast.startScreencast', {
       quality: options.quality,
       width: options.width,
       height: options.height,
       toolbarHeight: this._toolbarHeight(),
-    });
-    this._screencastGeneration = generation;
+    }).then(({ generation }) => this._screencastGeneration = generation).catch(() => {});
   }
 
-  async stopScreencast(): Promise<void> {
-    await this._pageProxySession.sendMayFail('Screencast.stopScreencast');
+  stopScreencast() {
+    this._pageProxySession.sendMayFail('Screencast.stopScreencast');
   }
 
   private _onScreencastFrame(event: Protocol.Screencast.screencastFramePayload) {
     const generation = this._screencastGeneration;
-    this._page.screencast.throttleFrameAck(() => {
-      this._pageProxySession.sendMayFail('Screencast.screencastFrameAck', { generation });
-    });
     const buffer = Buffer.from(event.data, 'base64');
-    this._page.emit(Page.Events.ScreencastFrame, {
+    this._page.screencast.onScreencastFrame({
       buffer,
       frameSwapWallTime: event.timestamp
         // timestamp is in seconds, we need to convert to milliseconds.
@@ -954,8 +949,10 @@ export class WKPage implements PageDelegate {
         // version that did not send timestamp.
         // TODO: remove this fallback when Debian 11 and Ubuntu 20.04 are EOL.
         : Date.now(),
-      width: event.deviceWidth,
-      height: event.deviceHeight,
+      viewportWidth: event.deviceWidth,
+      viewportHeight: event.deviceHeight,
+    }, () => {
+      this._pageProxySession.sendMayFail('Screencast.screencastFrameAck', { generation });
     });
   }
 
@@ -1092,6 +1089,7 @@ export class WKPage implements PageDelegate {
 
   private _handleRequestRedirect(request: WKInterceptableRequest, requestId: string, responsePayload: Protocol.Network.Response, timestamp: number) {
     const response = request.createResponse(responsePayload);
+    response._setHttpVersion(null);
     response._securityDetailsFinished();
     response._serverAddrFinished();
     response.setResponseHeadersSize(null);
@@ -1159,8 +1157,7 @@ export class WKPage implements PageDelegate {
         validFrom: responseReceivedPayload?.response.security?.certificate?.validFrom,
         validTo: responseReceivedPayload?.response.security?.certificate?.validUntil,
       });
-      if (event.metrics?.protocol)
-        response._setHttpVersion(event.metrics.protocol);
+      response._setHttpVersion(event.metrics?.protocol ?? null);
       response.setEncodedBodySize(event.metrics?.responseBodyBytesReceived ?? null);
       response.setResponseHeadersSize(event.metrics?.responseHeaderBytesReceived ?? null);
 
@@ -1194,6 +1191,7 @@ export class WKPage implements PageDelegate {
     if (response) {
       response._serverAddrFinished();
       response._securityDetailsFinished();
+      response._setHttpVersion(null);
       response.setResponseHeadersSize(null);
       response.setEncodedBodySize(null);
       response._requestFinished(helper.secondsToRoundishMillis(event.timestamp - request._timestamp));
@@ -1211,6 +1209,7 @@ export class WKPage implements PageDelegate {
       ['geolocation', 'geolocation'],
       ['notifications', 'notifications'],
       ['clipboard-read', 'clipboard-read'],
+      ['screen-wake-lock', 'screen-wake-lock'],
     ]);
     const filtered = permissions.map(permission => {
       const protocolPermission = webPermissionToProtocol.get(permission);
@@ -1227,6 +1226,9 @@ export class WKPage implements PageDelegate {
 
   shouldToggleStyleSheetToSyncAnimations(): boolean {
     return true;
+  }
+
+  async setDockTile(image: Buffer): Promise<void> {
   }
 }
 

@@ -19,7 +19,7 @@ import { Dispatcher } from './dispatcher';
 import { PageDispatcher } from './pageDispatcher';
 import * as rawWebSocketMockSource from '../../generated/webSocketMockSource';
 import { SdkObject } from '../instrumentation';
-import { urlMatches } from '../../utils/isomorphic/urlMatch';
+import { deserializeURLMatch, urlMatches } from '../../utils/isomorphic/urlMatch';
 import { eventsHelper } from '../utils/eventsHelper';
 
 import type { BrowserContextDispatcher } from './browserContextDispatcher';
@@ -97,7 +97,7 @@ export class WebSocketRouteDispatcher extends Dispatcher<SdkObject, channels.Web
     }
     ++data.counter;
 
-    return await target.addInitScript(progress, `
+    return await target.addInitScript(`
       (() => {
         const module = {};
         ${rawWebSocketMockSource.source}
@@ -112,8 +112,8 @@ export class WebSocketRouteDispatcher extends Dispatcher<SdkObject, channels.Web
     if (!data || data.connection !== connection)
       return;
     if (--data.counter <= 0)
-      await context.removeExposedBindings([data.binding]);
-    await target.removeInitScripts([initScript]);
+      await data.binding.dispose();
+    await initScript.dispose();
   }
 
   async connect(params: channels.WebSocketRouteConnectParams, progress: Progress) {
@@ -161,8 +161,7 @@ export class WebSocketRouteDispatcher extends Dispatcher<SdkObject, channels.Web
 
 function matchesPattern(dispatcher: PageDispatcher | BrowserContextDispatcher, baseURL: string | undefined, url: string) {
   for (const pattern of dispatcher._webSocketInterceptionPatterns || []) {
-    const urlMatch = pattern.regexSource ? new RegExp(pattern.regexSource, pattern.regexFlags) : pattern.glob;
-    if (urlMatches(baseURL, url, urlMatch, true))
+    if (urlMatches(baseURL, url, deserializeURLMatch(pattern), true))
       return true;
   }
   return false;
