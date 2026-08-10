@@ -212,8 +212,8 @@ export class CrxRecorderApp extends EventEmitter {
       recorderSources.push({
         // 1.55 removed `isPrimary` and `timestamp` from Source. They were how the Recorder
         // component chose a file to display when nothing was selected; it now shows only
-        // what `window.playwrightSelectSource` last named. The popup owns that choice and
-        // pushes it (see crxRecorder.tsx) — nothing to carry here any more.
+        // the source last revealed to it (`sourceRevealRequested` since 1.58). The popup
+        // owns that choice and pushes it — see crxRecorder.tsx.
         isRecorded: true,
         label: languageGenerator.name,
         group: languageGenerator.groupName,

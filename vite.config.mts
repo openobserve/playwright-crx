@@ -40,6 +40,19 @@ export default defineConfig({
       './babelBundleImpl': '../../bundles/babel/src/babelBundleImpl',
       './expectBundleImpl': '../../bundles/expect/src/expectBundleImpl',
 
+      // 1.59 replaced the vendored expect implementation with the real `expect` package
+      // (v30), whose ESM entry is a wrapper: `import cjs from './index.js'; export default
+      // cjs.default`. Node's CJS interop hands that wrapper the whole module.exports, so
+      // `cjs.default` is the expect function and it works. Rollup honours the CJS bundle's
+      // `__esModule` flag instead and hands it `exports.default` — already the expect
+      // function — whose own `.default` is undefined. `expectLibrary.setState({...})` then
+      // threw at module scope, killing the extension's service worker before it could
+      // activate and failing every test in fixture setup, with no build or type error
+      // anywhere. Resolving to the CJS entry skips the wrapper.
+      // Safe as a prefix alias: `expect` is imported bare from exactly one place and no
+      // subpath of it is imported at all.
+      'expect': path.resolve(__dirname, './playwright/packages/playwright/bundles/expect/node_modules/expect/build/index.js'),
+
       // 1.56 made `playwright/src/index.ts` import the MCP test backend, which drags the
       // whole MCP tree — SDK, zod, zod-to-json-schema, node built-ins — into the service
       // worker for a code path that can only no-op inside an extension. Cut at the one
