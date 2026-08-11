@@ -14,23 +14,20 @@
  * limitations under the License.
  */
 
-import url from 'url';
-
 import { EventEmitter } from 'events';
-import { asLocator } from '../../utils/isomorphic/locatorGenerators';
-import { locatorOrSelectorAsSelector } from '../../utils/isomorphic/locatorParser';
-import { ManualPromise } from '../../utils/isomorphic/manualPromise';
-import { debug } from '../../utilsBundle';
-
-import { eventsHelper } from '../../server/utils/eventsHelper';
-import { disposeAll } from '../../server/utils/disposable';
+import debug from 'debug';
+import { asLocator } from '@isomorphic/locatorGenerators';
+import { locatorOrSelectorAsSelector } from '@isomorphic/locatorParser';
+import { ManualPromise } from '@isomorphic/manualPromise';
+import { eventsHelper } from '@utils/eventsHelper';
+import { disposeAll } from '@isomorphic/disposable';
 import { waitForCompletion, eventWaiter } from './utils';
 import { LogFile } from './logFile';
 import { ModalState } from './tool';
 import { handleDialog } from './dialogs';
 import { uploadFile } from './files';
 
-import type { Disposable } from '../../server/utils/disposable';
+import type { Disposable } from '@isomorphic/disposable';
 import type { Context, ContextConfig } from './context';
 import type * as playwright from '../../..';
 
@@ -79,6 +76,7 @@ export type TabHeader = {
   title: string;
   url: string;
   current: boolean;
+  crashed: boolean;
   console: { total: number, warnings: number, errors: number };
 };
 
@@ -92,10 +90,11 @@ type TabSnapshot = {
 export class Tab extends EventEmitter<TabEventsInterface> {
   readonly context: Context;
   readonly page: playwright.Page;
-  private _lastHeader: TabHeader = { title: 'about:blank', url: 'about:blank', current: false, console: { total: 0, warnings: 0, errors: 0 } };
+  private _lastHeader: TabHeader = { title: 'about:blank', url: 'about:blank', current: false, crashed: false, console: { total: 0, warnings: 0, errors: 0 } };
   private _downloads: Download[] = [];
   private _requests: playwright.Request[] = [];
   private _onPageClose: (tab: Tab) => void;
+  crashed = false;
   private _modalStates: ModalState[] = [];
   private _initializedPromise: Promise<void>;
   private _recentEventEntries: EventEntry[] = [];
@@ -118,6 +117,7 @@ export class Tab extends EventEmitter<TabEventsInterface> {
       eventsHelper.addEventListener(p, 'response', response => this._handleResponse(response)),
       eventsHelper.addEventListener(p, 'requestfailed', request => this._handleRequestFailed(request)),
       eventsHelper.addEventListener(p, 'close', () => this._onClose()),
+      eventsHelper.addEventListener(p, 'crash', () => { this.crashed = true; }),
       eventsHelper.addEventListener(p, 'filechooser', chooser => {
         this.setModalState({
           type: 'fileChooser',
@@ -170,10 +170,11 @@ export class Tab extends EventEmitter<TabEventsInterface> {
       this._requests.push(request);
     for (const initPage of this.context.config.browser?.initPage || []) {
       try {
-        const { default: func } = await import(url.pathToFileURL(initPage).href);
+        const { default: func } = require(initPage);
         await func({ page: this.page });
       } catch (e) {
-        debug('pw:tools:error')(e);
+        const reason = e instanceof Error ? e.message : String(e);
+        throw new Error(`Failed to load init page "${initPage}": ${reason}`, { cause: e });
       }
     }
   }
@@ -256,6 +257,10 @@ export class Tab extends EventEmitter<TabEventsInterface> {
       this._consoleLog.appendLine(wallTime, message.toString());
   }
 
+  logErrorMessage(text: string) {
+    this._handleConsoleMessage(pageErrorToConsoleMessage(new Error(text)));
+  }
+
   private _addLogEntry(entry: EventEntry) {
     this._recentEventEntries.push(entry);
   }
@@ -267,14 +272,19 @@ export class Tab extends EventEmitter<TabEventsInterface> {
 
   async headerSnapshot(): Promise<TabHeader & { changed: boolean }> {
     let title: string | undefined;
-    await this._raceAgainstModalStates(async () => {
-      title = await this.page.title();
-    });
+    let consoleCounts = { total: 0, errors: 0, warnings: 0 };
+    if (!this.crashed) {
+      await this._raceAgainstModalStates(async () => {
+        title = await this.page.title();
+      });
+      consoleCounts = await this.consoleMessageCount();
+    }
     const newHeader: TabHeader = {
       title: title ?? '',
       url: this.page.url(),
       current: this.isCurrentTab(),
-      console: await this.consoleMessageCount()
+      crashed: this.crashed,
+      console: consoleCounts,
     };
 
     if (!tabHeaderEquals(this._lastHeader, newHeader)) {
@@ -291,6 +301,20 @@ export class Tab extends EventEmitter<TabEventsInterface> {
   async waitForLoadState(state: 'load', options?: { timeout?: number }): Promise<void> {
     await this._initializedPromise;
     await this.page.waitForLoadState(state, options).catch(e => debug('pw:tools:error')(e));
+  }
+
+  async checkUrlAndNavigate(url: string): Promise<string> {
+    try {
+      new URL(url);
+    } catch (e) {
+      if (url.startsWith('localhost'))
+        url = 'http://' + url;
+      else
+        url = 'https://' + url;
+    }
+    this.context.checkUrlAllowed(url);
+    await this.navigate(url);
+    return url;
   }
 
   async navigate(url: string) {
@@ -372,13 +396,13 @@ export class Tab extends EventEmitter<TabEventsInterface> {
     this._requests.length = 0;
   }
 
-  async captureSnapshot(selector: string | undefined, depth: number | undefined, relativeTo: string | undefined): Promise<TabSnapshot> {
+  async captureSnapshot(root: playwright.Locator | undefined, depth: number | undefined, boxes: boolean | undefined, relativeTo: string | undefined): Promise<TabSnapshot> {
     await this._initializedPromise;
     let tabSnapshot: TabSnapshot | undefined;
     const modalStates = await this._raceAgainstModalStates(async () => {
-      const ariaSnapshot = selector
-        ? await this.page.locator(selector).ariaSnapshot({ mode: 'ai', depth })
-        : await this.page.ariaSnapshot({ mode: 'ai', depth });
+      const ariaSnapshot = root
+        ? await root.ariaSnapshot({ mode: 'ai', depth, boxes })
+        : await this.page.ariaSnapshot({ mode: 'ai', depth, boxes });
       tabSnapshot = {
         ariaSnapshot,
         modalStates: [],
@@ -424,30 +448,30 @@ export class Tab extends EventEmitter<TabEventsInterface> {
     await this._raceAgainstModalStates(() => waitForCompletion(this, callback));
   }
 
-  async refLocator(params: { element?: string, ref: string, selector?: string }): Promise<{ locator: playwright.Locator, resolved: string }> {
+  async targetLocator(params: { element?: string, target: string }): Promise<{ locator: playwright.Locator, resolved: string }> {
     await this._initializedPromise;
-    return (await this.refLocators([params]))[0];
+    return (await this.targetLocators([params]))[0];
   }
 
-  async refLocators(params: { element?: string, ref: string, selector?: string }[]): Promise<{ locator: playwright.Locator, resolved: string }[]> {
+  async targetLocators(params: { element?: string, target: string }[]): Promise<{ locator: playwright.Locator, resolved: string }[]> {
     await this._initializedPromise;
     return Promise.all(params.map(async param => {
-      if (param.selector) {
-        const selector = locatorOrSelectorAsSelector('javascript', param.selector, this.context.config.testIdAttribute || 'data-testid');
+      if (!param.target.match(/^(f\d+)?e\d+$/)) {
+        const selector = locatorOrSelectorAsSelector('javascript', param.target, this.context.config.testIdAttribute || 'data-testid');
         const handle = await this.page.$(selector);
         if (!handle)
-          throw new Error(`"${param.selector}" does not match any elements.`);
+          throw new Error(`"${param.target}" does not match any elements.`);
         handle.dispose().catch(() => {});
         return { locator: this.page.locator(selector), resolved: asLocator('javascript', selector) };
       } else {
         try {
-          let locator = this.page.locator(`aria-ref=${param.ref}`);
+          let locator = this.page.locator(`aria-ref=${param.target}`);
           if (param.element)
             locator = locator.describe(param.element);
           const resolved = await locator.normalize();
           return { locator, resolved: resolved.toString() };
         } catch (e) {
-          throw new Error(`Ref ${param.ref} not found in the current page snapshot. Try capturing new snapshot.`);
+          throw new Error(`Ref ${param.target} not found in the current page snapshot. Try capturing new snapshot.`);
         }
       }
     }));
@@ -558,6 +582,7 @@ function tabHeaderEquals(a: TabHeader, b: TabHeader): boolean {
   return a.title === b.title &&
       a.url === b.url &&
       a.current === b.current &&
+      a.crashed === b.crashed &&
       a.console.errors === b.console.errors &&
       a.console.warnings === b.console.warnings &&
       a.console.total === b.console.total;

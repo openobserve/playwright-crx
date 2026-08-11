@@ -14,67 +14,167 @@
  * limitations under the License.
  */
 
-import { test, expect } from './cli-fixtures';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+import { test, expect, installSaveFilePickerMock } from './cli-fixtures';
+
+function displayPath(p: string): string {
+  const home = os.homedir();
+  if (p === home)
+    return '~';
+  if (p.startsWith(home + path.sep))
+    return '~' + p.slice(home.length);
+  return p;
+}
 
 test.beforeEach(({}, testInfo) => {
   process.env.PLAYWRIGHT_SERVER_REGISTRY = testInfo.outputPath('registry');
 });
 
-test('should show browser session chip', async ({ cli, server, openDashboard }) => {
+test('should show browser session chip', async ({ cli, server, startDashboardServer }) => {
   await cli('open', server.EMPTY_PAGE);
 
-  const dashboard = await openDashboard();
-  const chips = dashboard.locator('.session-chip');
-  await expect(chips).toHaveCount(1);
+  const dashboard = await startDashboardServer();
+  const sessions = dashboard.getByRole('region', { name: /^Session / });
+  await expect(sessions).toHaveCount(1);
 });
 
-test('should show devtools sidebar', async ({ cli, server, openDashboard, mcpBrowser }) => {
-  test.skip(!['chrome', 'msedge', 'chromium'].includes(mcpBrowser!), 'DevTools sidebar requires CDP, only available in Chromium');
+test('should show placeholder chip for browser with no contexts', async ({ boundBrowser, startDashboardServer }) => {
+  expect(boundBrowser.contexts()).toHaveLength(0);
 
+  const dashboard = await startDashboardServer();
+  const sessions = dashboard.getByRole('region', { name: /^Session / });
+  await expect(sessions).toHaveCount(1);
+  await expect(sessions.getByText('No tabs open.')).toBeVisible();
+  await expect(sessions.getByRole('button', { name: 'New tab' })).toHaveCount(0);
+});
+
+test('should show one row per context for a single browser', async ({ boundBrowser, server, startDashboardServer }) => {
+  const contextA = await boundBrowser.newContext();
+  const pageA = await contextA.newPage();
+  await pageA.goto(server.EMPTY_PAGE);
+
+  const dashboard = await startDashboardServer();
+  const sessions = dashboard.getByRole('region', { name: /^Session / });
+  await expect(sessions).toHaveCount(1);
+
+  const contextB = await boundBrowser.newContext();
+  const pageB = await contextB.newPage();
+  await pageB.goto(server.EMPTY_PAGE);
+  await expect(sessions).toHaveCount(2);
+});
+
+test('should show current workspace sessions first', async ({ cli, server, startDashboardServer }) => {
+  const wsA = test.info().outputPath('workspace-a');
+  const wsB = test.info().outputPath('workspace-b');
+
+  await fs.promises.mkdir(path.join(wsA, '.playwright'), { recursive: true });
+  await fs.promises.mkdir(path.join(wsB, '.playwright'), { recursive: true });
+
+  await cli('open', server.EMPTY_PAGE, { cwd: wsA });
+  await cli('open', server.EMPTY_PAGE, { cwd: wsB });
+
+  const checkOrder = async (first: string, second: string) => {
+    const dashboard = await startDashboardServer({ cwd: first });
+    const workspaceGroups = dashboard.getByRole('region', { name: /^Workspace / });
+    await expect(workspaceGroups).toHaveCount(2);
+
+    // Current workspace (first) should be first.
+    await expect(workspaceGroups.nth(0).getByRole('heading', { level: 3 })).toHaveText(displayPath(first));
+    await expect(workspaceGroups.nth(0).getByRole('region', { name: /^Session / })).toHaveCount(1);
+
+    // Other workspace (second) should be second.
+    await expect(workspaceGroups.nth(1).getByRole('heading', { level: 3 })).toHaveText(displayPath(second));
+    await expect(workspaceGroups.nth(1).getByRole('region', { name: /^Session / })).toHaveCount(1);
+  };
+
+  await test.step('open dashboard in workspace A', async () => {
+    await checkOrder(wsA, wsB);
+  });
+
+  await test.step('open dashboard in workspace B', async () => {
+    await checkOrder(wsB, wsA);
+  });
+});
+
+function activeSession(dashboard: import('playwright-core').Page) {
+  return dashboard.getByRole('region', { name: /^Session / }).filter({ has: dashboard.getByRole('option', { selected: true }) });
+}
+
+test('should activate session when show is called with -s', async ({ cli, server, startDashboardServer }) => {
+  await cli('-s=sessA', 'open', server.EMPTY_PAGE);
+  await cli('-s=sessB', 'open', server.EMPTY_PAGE);
+
+  const dashboard = await startDashboardServer({ session: 'sessB' });
+  await expect(activeSession(dashboard)).toHaveAccessibleName('Session sessB');
+});
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+test('daemon show: closing page exits the process', async ({ cli, connectToDashboard }) => {
+  const bindTitle = `--playwright-internal--${crypto.randomUUID()}`;
+  const { exitCode, dashboardPid } = await cli('show', { bindTitle });
+  expect(exitCode).toBe(0);
+  expect(dashboardPid).toBeDefined();
+  expect(isAlive(dashboardPid)).toBe(true);
+
+  const browser = await connectToDashboard(bindTitle);
+  const page = browser.contexts()[0].pages()[0];
+  await page.close();
+
+  await expect(() => expect(isAlive(dashboardPid)).toBe(false)).toPass();
+});
+
+test('should allow typing in omnibox in interactive mode', async ({ cli, server, startDashboardServer }) => {
+  server.setContent('/page1', '<html><body>Page 1</body></html>', 'text/html');
+  server.setContent('/page2', '<html><body>Page 2</body></html>', 'text/html');
+  await cli('open', server.PREFIX + '/page1');
+
+  const dashboard = await startDashboardServer();
+  await dashboard.getByRole('navigation', { name: 'Sessions' }).getByRole('option').first().click();
+  await expect(dashboard.locator('#omnibox')).toHaveValue(/page1/);
+
+  // Enter interactive mode.
+  await dashboard.getByRole('button', { name: 'Enable interactive mode' }).click();
+  await expect(dashboard.getByRole('main')).toHaveClass(/interactive/);
+
+  const schemeless = `${server.HOST}/page2`;
+  await dashboard.locator('#omnibox').click();
+  await dashboard.locator('#omnibox').fill(schemeless);
+  await expect(dashboard.locator('#omnibox')).toHaveValue(schemeless);
+
+  await dashboard.locator('#omnibox').press('Enter');
+  await expect(dashboard.locator('#omnibox')).toHaveValue(server.PREFIX + '/page2', { timeout: 10000 });
+});
+
+test('save recording streams WebM bytes to the chosen file', async ({ cli, server, startDashboardServer }) => {
   await cli('open', server.EMPTY_PAGE);
 
-  const dashboard = await openDashboard();
-  await dashboard.locator('.session-chip').click();
+  const dashboard = await startDashboardServer();
+  const awaitBytes = await installSaveFilePickerMock(dashboard);
+  await dashboard.getByRole('navigation', { name: 'Sessions' }).getByRole('option').first().click();
+  await expect(dashboard.locator('img#display')).toBeVisible();
 
-  const devToolsButton = dashboard.locator('button.nav-btn[title="Chrome DevTools"]');
-  await expect(dashboard.locator('.inspector-frame')).not.toBeVisible();
-  await devToolsButton.click();
-  await expect(dashboard.locator('.inspector-frame')).toBeVisible();
-});
+  // Enter recording mode from the normal toolbar.
+  await dashboard.getByRole('button', { name: 'Record video' }).click();
+  await expect(dashboard.locator('.mode-record-label')).toBeVisible();
 
-test('should pick locator from browser', async ({ cli, server, openDashboard }) => {
-  server.setContent('/', '<button style="position:fixed;top:0;left:0;width:200px;height:100px">Submit</button>', 'text/html');
+  // Click the toggled record button again to transition to the 'stopped' phase.
+  await dashboard.getByRole('button', { name: 'Stop recording' }).click();
 
-  await cli('open', server.PREFIX);
+  // Save the recording.
+  await dashboard.getByRole('button', { name: 'Save recording' }).click();
 
-  const dashboard = await openDashboard();
-  await dashboard.locator('.session-chip').click();
-
-  const pickBtn = dashboard.locator('button.nav-btn[title="Pick locator"]');
-  await pickBtn.click();
-
-  await expect(dashboard.locator('div.dashboard-view')).toContainClass('interactive');
-
-  // Intercept clipboard writes before clicking pick.
-  const copyPromise = dashboard.evaluate(() => {
-    if (!navigator.clipboard)
-      return 'no clipboard';
-    return new Promise<string>(f => {
-      const original = navigator.clipboard.writeText;
-      navigator.clipboard.writeText = text => {
-        f(text);
-        navigator.clipboard.writeText = original;
-        return navigator.clipboard.writeText(text);
-      };
-    });
-  }).catch(e => `Exception in eval: ${e}`);
-
-  await expect(async () => {
-    await dashboard.locator('img#display').click({ position: { x: 50, y: 25 } });
-    const text = await Promise.race([
-      copyPromise,
-      new Promise<string>(f => setTimeout(() => f('timeout'), 1000))
-    ]);
-    expect(text).toContain('Submit');
-  }).toPass();
+  const bytes = await awaitBytes();
+  // WebM files start with the EBML magic bytes.
+  expect(bytes.subarray(0, 4)).toEqual(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
 });

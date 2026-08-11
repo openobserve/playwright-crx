@@ -18,12 +18,12 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-import { devices } from '../../..';
-import { dotenv } from '../../utilsBundle';
-
+import dotenv from 'dotenv';
+import { isSystemDirectory } from '@utils/fileUtils';
+import { playwright } from '../../inprocess';
 import { configFromIniFile } from './configIni';
 
-import type * as playwright from '../../..';
+import type * as playwrightTypes from '../../..';
 import type { Config, ToolCapability } from './config.d';
 
 async function fileExistsAsync(resolved: string) {
@@ -116,17 +116,27 @@ export async function resolveCLIConfigForMCP(cliOptions: CLIOptions, env?: NodeJ
   const cliOverrides = configFromCLIOptions(cliOptions);
   const configFile = cliOverrides.configFile ?? envOverrides.configFile;
   const configInFile = await loadConfig(configFile);
+  const configDir = configFile ? path.dirname(path.resolve(configFile)) : process.cwd();
 
   let result = defaultConfig;
-  result = mergeConfig(result, configInFile);
-  result = mergeConfig(result, envOverrides);
-  result = mergeConfig(result, cliOverrides);
+  result = mergeConfig(result, resolveConfigPaths(configInFile, configDir));
+  result = mergeConfig(result, resolveConfigPaths(envOverrides, process.cwd()));
+  result = mergeConfig(result, resolveConfigPaths(cliOverrides, process.cwd()));
 
   const browser = await validateBrowserConfig(result.browser);
   if (browser.launchOptions.headless === undefined)
     browser.launchOptions.headless = os.platform() === 'linux' && !process.env.DISPLAY;
 
+  validateOutputDir(result.outputDir);
+
   return { ...result, browser, configFile };
+}
+
+function validateOutputDir(outputDir: string | undefined) {
+  if (!outputDir)
+    return;
+  if (isSystemDirectory(outputDir))
+    throw new Error(`--output-dir cannot point to a system directory: ${path.resolve(outputDir)}.`);
 }
 
 export async function resolveCLIConfigForCLI(daemonProfilesDir: string, sessionName: string, options: any, env?: NodeJS.ProcessEnv): Promise<FullConfig> {
@@ -140,6 +150,7 @@ export async function resolveCLIConfigForCLI(daemonProfilesDir: string, sessionN
 
   const daemonOverrides = configFromCLIOptions({
     endpoint: options.endpoint,
+    cdpEndpoint: options.cdp,
     config: options.config,
     browser: options.browser,
     headless: options.headed ? false : undefined,
@@ -151,30 +162,43 @@ export async function resolveCLIConfigForCLI(daemonProfilesDir: string, sessionN
   const envOverrides = configFromEnv(env);
   const configFile = daemonOverrides.configFile ?? envOverrides.configFile;
   const configInFile = await loadConfig(configFile);
+  const configDir = configFile ? path.dirname(path.resolve(configFile)) : process.cwd();
   const globalConfigPath = path.join((env ?? process.env)['PWTEST_CLI_GLOBAL_CONFIG'] ?? os.homedir(), '.playwright', 'cli.config.json');
-  const globalConfigInFile = await loadConfig(fs.existsSync(globalConfigPath) ? globalConfigPath : undefined);
+  const globalConfigExists = fs.existsSync(globalConfigPath);
+  const globalConfigInFile = await loadConfig(globalConfigExists ? globalConfigPath : undefined);
+  const globalConfigDir = globalConfigExists ? path.dirname(globalConfigPath) : process.cwd();
 
   let result = defaultConfig;
-  result = mergeConfig(result, globalConfigInFile);
-  result = mergeConfig(result, configInFile);
-  result = mergeConfig(result, envOverrides);
-  result = mergeConfig(result, daemonOverrides);
+  result = mergeConfig(result, resolveConfigPaths(globalConfigInFile, globalConfigDir));
+  result = mergeConfig(result, resolveConfigPaths(configInFile, configDir));
+  result = mergeConfig(result, resolveConfigPaths(envOverrides, process.cwd()));
+  result = mergeConfig(result, resolveConfigPaths(daemonOverrides, process.cwd()));
 
   if (result.browser.isolated === undefined)
-    result.browser.isolated = !options.profile && !options.persistent && !result.browser.userDataDir && !result.browser.remoteEndpoint && !result.extension;
-
-  if (!result.extension && !result.browser.isolated && !result.browser.userDataDir && !result.browser.remoteEndpoint) {
-    // No custom value provided, use the daemon data dir.
-    const browserToken = result.browser.launchOptions?.channel ?? result.browser?.browserName;
-    const userDataDir = path.resolve(daemonProfilesDir, `ud-${sessionName}-${browserToken}`);
-    result.browser.userDataDir = userDataDir;
-  }
+    result.browser.isolated = !options.profile && !options.persistent && !result.browser.userDataDir && !result.browser.remoteEndpoint && !result.browser.cdpEndpoint && !result.extension;
 
   if (result.browser.launchOptions.headless === undefined)
     result.browser.launchOptions.headless = true;
 
   const browser = await validateBrowserConfig(result.browser);
+
+  validateOutputDir(result.outputDir);
+
+  if (!result.extension && !browser.isolated && !browser.userDataDir && !browser.remoteEndpoint && !browser.cdpEndpoint) {
+    // No custom value provided, use the daemon data dir.
+    const browserToken = browser.launchOptions?.channel ?? browser?.browserName;
+    const userDataDir = path.resolve(daemonProfilesDir, `ud-${sessionName}-${browserToken}`);
+    browser.userDataDir = userDataDir;
+  }
+
   return { ...result, browser, configFile, skillMode: true };
+}
+
+export function resolveExtensionOptions(cliOptions: CLIOptions): { channel: string, executablePath?: string } {
+  const browser = cliOptions.browser ?? envToString(process.env.PLAYWRIGHT_MCP_BROWSER);
+  const { channel } = resolveBrowserParam(browser);
+  const executablePath = cliOptions.executablePath ?? envToString(process.env.PLAYWRIGHT_MCP_EXECUTABLE_PATH);
+  return { channel: channel ?? 'chrome', executablePath };
 }
 
 async function validateBrowserConfig(browser: MergedConfig['browser']): Promise<FullConfig['browser']> {
@@ -214,13 +238,18 @@ async function validateBrowserConfig(browser: MergedConfig['browser']): Promise<
     else
       browser.contextOptions.viewport = null;
   }
+
+  if (browserName === 'chromium') {
+    browser.launchOptions.args = browser.launchOptions.args ?? [];
+    if (!browser.launchOptions.args.some(a => a.includes('--disable-blink-features')))
+      browser.launchOptions.args.push(`--disable-blink-features=AutomationControlled`);
+  }
+
   return { ...browser, browserName };
 }
 
-function configFromCLIOptions(cliOptions: CLIOptions): Config & { configFile?: string } {
-  let browserName: 'chromium' | 'firefox' | 'webkit' | undefined;
-  let channel: string | undefined;
-  switch (cliOptions.browser) {
+function resolveBrowserParam(browserOption: string | undefined): { browserName?: 'chromium' | 'firefox' | 'webkit', channel?: string } {
+  switch (browserOption) {
     case 'chrome':
     case 'chrome-beta':
     case 'chrome-canary':
@@ -229,24 +258,23 @@ function configFromCLIOptions(cliOptions: CLIOptions): Config & { configFile?: s
     case 'msedge-beta':
     case 'msedge-canary':
     case 'msedge-dev':
-      browserName = 'chromium';
-      channel = cliOptions.browser;
-      break;
+      return { browserName: 'chromium', channel: browserOption };
     case 'chromium':
-      // Never use old headless.
-      browserName = 'chromium';
-      channel = 'chrome-for-testing';
-      break;
+      return { browserName: 'chromium', channel: 'chrome-for-testing' };
     case 'firefox':
-      browserName = 'firefox';
-      break;
+      return { browserName: 'firefox' };
     case 'webkit':
-      browserName = 'webkit';
-      break;
+      return { browserName: 'webkit' };
+    default:
+      return {};
   }
+}
+
+function configFromCLIOptions(cliOptions: CLIOptions): Config & { configFile?: string } {
+  const { browserName, channel } = resolveBrowserParam(cliOptions.browser);
 
   // Launch options
-  const launchOptions: playwright.LaunchOptions = {
+  const launchOptions: playwrightTypes.LaunchOptions = {
     channel,
     executablePath: cliOptions.executablePath,
     headless: cliOptions.headless,
@@ -257,19 +285,22 @@ function configFromCLIOptions(cliOptions: CLIOptions): Config & { configFile?: s
   if (cliOptions.sandbox !== undefined)
     launchOptions.chromiumSandbox = cliOptions.sandbox;
 
-  if (cliOptions.proxyServer) {
-    launchOptions.proxy = {
-      server: cliOptions.proxyServer
-    };
-    if (cliOptions.proxyBypass)
-      launchOptions.proxy.bypass = cliOptions.proxyBypass;
-  }
-
   if (cliOptions.device && cliOptions.cdpEndpoint)
     throw new Error('Device emulation is not supported with cdpEndpoint.');
 
   // Context options
-  const contextOptions: playwright.BrowserContextOptions = cliOptions.device ? devices[cliOptions.device] : {};
+  const contextOptions: playwrightTypes.BrowserContextOptions = cliOptions.device ? playwright.devices[cliOptions.device] : {};
+
+  if (cliOptions.proxyServer) {
+    const proxy: playwrightTypes.LaunchOptions['proxy'] = { server: cliOptions.proxyServer };
+    if (cliOptions.proxyBypass)
+      proxy.bypass = cliOptions.proxyBypass;
+    // Set on both to ensure CLI takes precedence over any proxy set in the config file
+    // (launchOptions.proxy applies at browser launch, contextOptions.proxy at context creation).
+    launchOptions.proxy = proxy;
+    contextOptions.proxy = proxy;
+  }
+
   if (cliOptions.storageState)
     contextOptions.storageState = cliOptions.storageState;
 
@@ -397,6 +428,18 @@ export async function loadConfig(configFile: string | undefined): Promise<Config
   }
 }
 
+// initPage/initScript paths are resolved against a per-source base dir
+// (config-file dir for entries loaded from a --config file, cwd for entries
+// supplied via CLI flags or PLAYWRIGHT_MCP_INIT_* env vars) so they keep
+// working when the CLI is invoked from a different cwd.
+function resolveConfigPaths(config: Config, baseDir: string): Config {
+  if (config.browser?.initPage)
+    config.browser.initPage = config.browser.initPage.map(p => path.resolve(baseDir, p));
+  if (config.browser?.initScript)
+    config.browser.initScript = config.browser.initScript.map(p => path.resolve(baseDir, p));
+  return config;
+}
+
 function pickDefined<T extends object>(obj: T | undefined): Partial<T> {
   return Object.fromEntries(
       Object.entries(obj ?? {}).filter(([_, v]) => v !== undefined)
@@ -412,8 +455,6 @@ function mergeConfig(base: MergedConfig, overrides: Config): MergedConfig {
     launchOptions: {
       ...pickDefined(base.browser?.launchOptions),
       ...pickDefined(overrides.browser?.launchOptions),
-      // Assistant mode is not a part of the public API.
-      ...{ assistantMode: true },
     },
     contextOptions: {
       ...pickDefined(base.browser?.contextOptions),

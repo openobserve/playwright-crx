@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { z } from '../../zodBundle';
+import * as z from 'zod';
 import { defineTabTool } from './tool';
 import { elementSchema } from './snapshot';
 
@@ -91,7 +91,7 @@ const type = defineTabTool({
   },
 
   handle: async (tab, params, response) => {
-    const { locator, resolved } = await tab.refLocator(params);
+    const { locator, resolved } = await tab.targetLocator(params);
     const secret = tab.context.lookupSecret(params.text);
 
     const action = async () => {

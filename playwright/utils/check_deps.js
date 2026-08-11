@@ -28,7 +28,8 @@ const packagesDir = path.resolve(path.join(__dirname, '..', 'packages'));
 const packages = new Map();
 packages.set('web', packagesDir + '/web/src/');
 packages.set('injected', packagesDir + '/injected/src/');
-packages.set('isomorphic', packagesDir + '/playwright-core/src/utils/isomorphic/');
+packages.set('isomorphic', packagesDir + '/isomorphic/');
+packages.set('utils', packagesDir + '/utils/');
 packages.set('testIsomorphic', packagesDir + '/playwright/src/isomorphic/');
 
 const peerDependencies = ['electron', 'react', 'react-dom', 'react-dom/client', '@zip.js/zip.js', 'zod', 'zod/v3'];
@@ -61,7 +62,8 @@ async function checkDeps() {
 
 async function innerCheckDeps(root) {
   console.log('Checking DEPS for ' + path.relative(packagesDir, root));
-  const deps = new Set();
+  /** @type {Map<string, Set<string>>} */
+  const deps = new Map();
   const src = path.join(root, 'src');
 
   let packageJSON;
@@ -95,8 +97,21 @@ async function innerCheckDeps(root) {
   if (packageJSON) {
     for (const dep of peerDependencies)
       deps.delete(dep);
-    for (const dep of deps) {
-      const resolved = require.resolve(dep, { paths: [root] });
+    // Vendored packages live in `bundles/utils/node_modules/` and are bridged
+    // through utilsBundle. Per-file `node_modules/<pkg>` declarations in
+    // DEPS.list authorize their use; skip the package.json dep check for them.
+    const { VENDORED_PACKAGES } = require('./build/utilsBundleMapping');
+    for (const pkg of VENDORED_PACKAGES) {
+      const top = pkg.startsWith('@') ? pkg.split('/').slice(0, 2).join('/') : pkg.split('/')[0];
+      deps.delete(top);
+    }
+    for (const dep of [...deps.keys()]) {
+      let resolved;
+      try {
+        resolved = require.resolve(dep, { paths: [root] });
+      } catch {
+        continue;
+      }
       if (dep === resolved || !resolved.includes('node_modules'))
         deps.delete(dep);
     }
@@ -105,8 +120,11 @@ async function innerCheckDeps(root) {
 
     if (deps.size) {
       console.log('Dependencies are not declared in package.json:');
-      for (const dep of deps)
+      for (const [dep, files] of deps) {
         console.log(`  ${dep}`);
+        for (const file of files)
+          console.log(`    ${path.relative(root, file)}`);
+      }
       process.exit(1);
     }
   }
@@ -150,9 +168,19 @@ async function innerCheckDeps(root) {
         if (!allowImport(fileName, importPath, mergedDeps))
           errors.push(`Disallowed import ${path.relative(root, importPath)} in ${path.relative(root, fileName)}`);
         return;
-      } else {
-        if (mergedDeps.includes('"strict"') && !builtins.has(node.moduleSpecifier.text))
-          errors.push(`Disallowed import ${node.moduleSpecifier.text} in ${path.relative(root, fileName)}`);
+      }
+
+      // Per-folder explicit allow-list: `node_modules/<importName>` in DEPS.list
+      // declares the file may import that exact package specifier. When a
+      // DEPS.list authorizes the dep, do NOT add it to the package.json
+      // dependency check either — the per-file allowlist is the contract. This
+      // also bypasses the strict-mode external-import rejection below.
+      if (mergedDeps.includes('node_modules/' + importName))
+        return;
+
+      if (mergedDeps.includes('"strict"') && !builtins.has(node.moduleSpecifier.text)) {
+        errors.push(`Disallowed import ${node.moduleSpecifier.text} in ${path.relative(root, fileName)}`);
+        return;
       }
 
       const fullStart = node.getFullStart();
@@ -163,10 +191,12 @@ async function innerCheckDeps(root) {
             return;
       }
 
-      if (importName.startsWith('@'))
-        deps.add(importName.split('/').slice(0, 2).join('/'));
-      else
-        deps.add(importName.split('/')[0]);
+      const topLevel = importName.startsWith('@')
+          ? importName.split('/').slice(0, 2).join('/')
+          : importName.split('/')[0];
+      if (!deps.has(topLevel))
+        deps.set(topLevel, new Set());
+      deps.get(topLevel).add(fileName);
 
       if (!allowExternalImport(importName, packageJSON))
         errors.push(`Disallowed external dependency ${importName} from ${path.relative(root, fileName)}`);
@@ -198,6 +228,8 @@ async function innerCheckDeps(root) {
           group.push('***');
         else if (line === '"strict"')
           group.push('"strict"');
+        else if (line.startsWith('node_modules/'))
+          group.push(line);
         else if (line.startsWith('@'))
           group.push(line.replace(/@([\w-]+)\/(.*)/, (_, arg1, arg2) => packages.get(arg1) + arg2));
         else

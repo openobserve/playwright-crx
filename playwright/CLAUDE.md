@@ -46,7 +46,7 @@ npm run watch       # Watch mode (recommended during development)
 
 Assume watch is running and code is up to date. Generated files (types, channels, validators) are produced by watch automatically.
 
-## Lint
+## Lint and type check
 
 ```bash
 npm run flint
@@ -94,6 +94,15 @@ Import boundaries are enforced via `DEPS.list` files (52+ across the repo), chec
 **Key rule**: Client code NEVER imports server code. Server code NEVER imports client code. Communication is only through the protocol.
 When creating or moving files, update the relevant `DEPS.list` to declare allowed imports. Files marked `"strict"` can only import what is explicitly listed.
 
+## Coding Convention
+
+For exported classes:
+- `private _method()` — only used within the class itself
+- `_method()` (no `private`) — used by other code in the same file, but not outside the file
+- `method()` (public) — used in other files
+
+Non-exported classes have no naming convention; they are internal implementation details.
+
 ## Commit Convention
 
 Before committing, run `npm run flint` and fix errors.
@@ -112,6 +121,7 @@ fix(proxy): handle SOCKS proxy authentication
 Fixes: https://github.com/microsoft/playwright/issues/39562
 EOF
 )"
+# **Never `git push` without an explicit instruction to push.**
 git push origin fix-39562
 gh pr create --repo microsoft/playwright --head username:fix-39562 \
   --title "fix(proxy): handle SOCKS proxy authentication" \
@@ -128,6 +138,10 @@ Never add Co-Authored-By agents in commit message.
 Never add "Generated with" in commit message.
 Never add test plan to PR description. Keep PR description short — a few bullet points at most.
 Branch naming for issue fixes: `fix-<issue-number>`
+
+**Never amend commits.** Always create a new commit for follow-up changes, even when iterating on an open PR. Amending rewrites history and forces a force-push, losing the incremental review trail. Only amend if the user explicitly says so.
+
+**Never `git push` without an explicit instruction to push.** Applies even when a PR is already open for the branch — additional commits are immediately visible to reviewers. Commit locally, report what was committed, and wait. Only push when the user's message contains "push", "upload", "create PR", "ship it", or equivalent.
 
 ## Development Guides
 

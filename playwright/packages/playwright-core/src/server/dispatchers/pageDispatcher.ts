@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { deserializeURLMatch, urlMatches } from '@isomorphic/urlMatch';
 import { Page, Worker } from '../page';
 import { Dispatcher } from './dispatcher';
 import { parseError, serializeError } from '../errors';
@@ -27,25 +28,26 @@ import { RouteDispatcher, WebSocketDispatcher } from './networkDispatchers';
 import { WebSocketRouteDispatcher } from './webSocketRouteDispatcher';
 import { DisposableDispatcher } from './disposableDispatcher';
 import { SdkObject } from '../instrumentation';
-import { deserializeURLMatch, urlMatches } from '../../utils/isomorphic/urlMatch';
 import { Recorder } from '../recorder';
 import { disposeAll } from '../disposable';
 import { VideoRecorder } from '../videoRecorder';
+import { nullProgress } from '../progress';
 
 import type { Artifact } from '../artifact';
 import type { BrowserContext } from '../browserContext';
 import type { CRCoverage } from '../chromium/crCoverage';
 import type { Download } from '../download';
 import type { FileChooser } from '../fileChooser';
-import type { JSHandle } from '../javascript';
 import type { BrowserContextDispatcher } from './browserContextDispatcher';
 import type { Frame } from '../frames';
 import type { RouteHandler } from '../network';
 import type { InitScript } from '../page';
 import type { Disposable } from '../disposable';
+import type { BrowserTypeDispatcher } from './browserTypeDispatcher';
+import type { ConsoleMessage } from '../console';
 import type * as channels from '@protocol/channels';
 import type { Progress } from '@protocol/progress';
-import type { URLMatch } from '../../utils/isomorphic/urlMatch';
+import type { URLMatch } from '@isomorphic/urlMatch';
 import type { ScreencastFrame } from '../types';
 import type { ScreencastClient } from '../screencast';
 
@@ -133,12 +135,12 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
   }
 
   async exposeBinding(params: channels.PageExposeBindingParams, progress: Progress): Promise<channels.PageExposeBindingResult> {
-    const binding = await this._page.exposeBinding(progress, params.name, !!params.needsHandle, (source, ...args) => {
+    const binding = await this._page.exposeBinding(progress, params.name, (source, ...args) => {
       // When reusing the context, we might have some bindings called late enough,
       // after context and page dispatchers have been disposed.
       if (this._disposed)
         return;
-      const binding = new BindingCallDispatcher(this, params.name, !!params.needsHandle, source, args);
+      const binding = new BindingCallDispatcher(this, params.name, source, args);
       this._dispatchEvent('bindingCall', { binding });
       return binding.promise();
     });
@@ -163,7 +165,7 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
   }
 
   async requestGC(params: channels.PageRequestGCParams, progress: Progress): Promise<channels.PageRequestGCResult> {
-    await progress.race(this._page.requestGC());
+    await this._page.requestGC(progress);
   }
 
   async registerLocatorHandler(params: channels.PageRegisterLocatorHandlerParams, progress: Progress): Promise<channels.PageRegisterLocatorHandlerResult> {
@@ -196,7 +198,7 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
   }
 
   async addInitScript(params: channels.PageAddInitScriptParams, progress: Progress): Promise<channels.PageAddInitScriptResult> {
-    const initScript = await this._page.addInitScript(params.source);
+    const initScript = await this._page.addInitScript(progress, params.source);
     this._disposables.push(initScript);
     return { disposable: new DisposableDispatcher(this, initScript) };
   }
@@ -207,7 +209,7 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
       // Note: it is important to remove the interceptor when there are no patterns,
       // because that disables the slow-path interception in the browser itself.
       if (hadMatchers)
-        await this._page.removeRequestInterceptor(this._requestInterceptor);
+        await progress.race(this._page.removeRequestInterceptor(this._requestInterceptor));
       this._interceptionUrlMatchers = [];
     } else {
       this._interceptionUrlMatchers = params.patterns.map(deserializeURLMatch);
@@ -249,13 +251,13 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
   async close(params: channels.PageCloseParams, progress: Progress): Promise<void> {
     if (!params.runBeforeUnload)
       progress.metadata.potentiallyClosesScope = true;
-    await this._page.close(params);
+    await this._page.close(progress, params);
   }
 
   async updateSubscription(params: channels.PageUpdateSubscriptionParams, progress: Progress): Promise<void> {
     // Note: progress is ignored because this operation is not cancellable and should not block in the browser anyway.
     if (params.event === 'fileChooser')
-      await this._page.setFileChooserInterceptedBy(params.enabled, this);
+      await this._page.setFileChooserInterceptedBy(progress, params.enabled, this);
     if (params.enabled)
       this._subscriptions.add(params.event);
     else
@@ -343,18 +345,23 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
   }
 
   async bringToFront(params: channels.PageBringToFrontParams, progress: Progress): Promise<void> {
-    await progress.race(this._page.bringToFront());
+    await this._page.bringToFront(progress);
   }
 
   async pickLocator(params: channels.PagePickLocatorParams, progress: Progress): Promise<channels.PagePickLocatorResult> {
-    const recorder = await Recorder.forContext(this._page.browserContext, { omitCallTracking: true, hideToolbar: true });
+    const recorder = await progress.race(Recorder.forContext(this._page.browserContext, { omitCallTracking: true, hideToolbar: true }));
     const selector = await recorder.pickLocator(progress, this._page);
     return { selector };
   }
 
   async cancelPickLocator(params: channels.PageCancelPickLocatorParams, progress: Progress): Promise<void> {
-    const recorder = await Recorder.existingForContext(this._page.browserContext);
-    await recorder?.setMode('none');
+    const recorder = await progress.race(Recorder.existingForContext(this._page.browserContext));
+    if (recorder)
+      await progress.race(recorder.setMode('none'));
+  }
+
+  async hideHighlight(params: channels.PageHideHighlightParams, progress: Progress): Promise<void> {
+    await progress.race(this._page.hideHighlight());
   }
 
   async screencastShowOverlay(params: channels.PageScreencastShowOverlayParams): Promise<channels.PageScreencastShowOverlayResult> {
@@ -389,7 +396,7 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
     if (params.sendFrames) {
       this._screencastClient = {
         onFrame: (frame: ScreencastFrame) => {
-          this._dispatchEvent('screencastFrame', { data: frame.buffer });
+          this._dispatchEvent('screencastFrame', { data: frame.buffer, viewportWidth: frame.viewportWidth, viewportHeight: frame.viewportHeight });
         },
         dispose: () => {},
         size: params.size,
@@ -427,7 +434,7 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
   async stopJSCoverage(params: channels.PageStopJSCoverageParams, progress: Progress): Promise<channels.PageStopJSCoverageResult> {
     this._jsCoverageActive = false;
     const coverage = this._page.coverage as CRCoverage;
-    return await coverage.stopJSCoverage();
+    return await progress.race(coverage.stopJSCoverage());
   }
 
   async startCSSCoverage(params: channels.PageStartCSSCoverageParams, progress: Progress): Promise<void> {
@@ -439,7 +446,7 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
   async stopCSSCoverage(params: channels.PageStopCSSCoverageParams, progress: Progress): Promise<channels.PageStopCSSCoverageResult> {
     this._cssCoverageActive = false;
     const coverage = this._page.coverage as CRCoverage;
-    return await coverage.stopCSSCoverage();
+    return await progress.race(coverage.stopCSSCoverage());
   }
 
   _onFrameAttached(frame: Frame) {
@@ -465,7 +472,7 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
     for (const uid of this._locatorHandlers)
       this._page.unregisterLocatorHandler(uid);
     this._locatorHandlers.clear();
-    this._page.setFileChooserInterceptedBy(false, this).catch(() => {});
+    this._page.setFileChooserInterceptedBy(nullProgress, false, this).catch(() => {});
     if (this._jsCoverageActive)
       (this._page.coverage as CRCoverage).stopJSCoverage().catch(() => {});
     this._jsCoverageActive = false;
@@ -481,32 +488,48 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
 }
 
 
-export class WorkerDispatcher extends Dispatcher<Worker, channels.WorkerChannel, PageDispatcher | BrowserContextDispatcher> implements channels.WorkerChannel {
+export class WorkerDispatcher extends Dispatcher<Worker, channels.WorkerChannel, PageDispatcher | BrowserContextDispatcher | BrowserTypeDispatcher> implements channels.WorkerChannel {
   _type_Worker = true;
   _type_EventTarget = true;
 
   readonly _subscriptions = new Set<channels.WorkerUpdateSubscriptionParams['event']>();
 
-  static fromNullable(scope: PageDispatcher | BrowserContextDispatcher, worker: Worker | null): WorkerDispatcher | undefined {
+  static fromNullable(scope: PageDispatcher | BrowserContextDispatcher | BrowserTypeDispatcher, worker: Worker | null): WorkerDispatcher | undefined {
     if (!worker)
       return undefined;
     const result = scope.connection.existingDispatcher<WorkerDispatcher>(worker);
     return result || new WorkerDispatcher(scope, worker);
   }
 
-  constructor(scope: PageDispatcher | BrowserContextDispatcher, worker: Worker) {
+  constructor(scope: PageDispatcher | BrowserContextDispatcher | BrowserTypeDispatcher, worker: Worker) {
     super(scope, worker, 'Worker', {
       url: worker.url
+    });
+    this.addObjectListener(Worker.Events.Console, (message: ConsoleMessage) => {
+      if (!this._subscriptions.has('console'))
+        return;
+      this._dispatchEvent('console', {
+        type: message.type(),
+        text: message.text(),
+        args: message.args().map(a => JSHandleDispatcher.fromJSHandle(this, a)),
+        location: message.location(),
+        timestamp: message.timestamp(),
+      });
     });
     this.addObjectListener(Worker.Events.Close, () => this._dispatchEvent('close'));
   }
 
+  async disconnect(params: channels.WorkerDisconnectParams, progress: Progress): Promise<void> {
+    progress.metadata.potentiallyClosesScope = true;
+    await this._object.disconnect(progress, params);
+  }
+
   async evaluateExpression(params: channels.WorkerEvaluateExpressionParams, progress: Progress): Promise<channels.WorkerEvaluateExpressionResult> {
-    return { value: serializeResult(await progress.race(this._object.evaluateExpression(params.expression, params.isFunction, parseArgument(params.arg)))) };
+    return { value: serializeResult(await this._object.evaluateExpression(progress, params.expression, params.isFunction, parseArgument(params.arg))) };
   }
 
   async evaluateExpressionHandle(params: channels.WorkerEvaluateExpressionHandleParams, progress: Progress): Promise<channels.WorkerEvaluateExpressionHandleResult> {
-    return { handle: JSHandleDispatcher.fromJSHandle(this, await progress.race(this._object.evaluateExpressionHandle(params.expression, params.isFunction, parseArgument(params.arg)))) };
+    return { handle: JSHandleDispatcher.fromJSHandle(this, await this._object.evaluateExpressionHandle(progress, params.expression, params.isFunction, parseArgument(params.arg))) };
   }
 
   async updateSubscription(params: channels.WorkerUpdateSubscriptionParams, progress: Progress): Promise<void> {
@@ -523,13 +546,12 @@ export class BindingCallDispatcher extends Dispatcher<SdkObject, channels.Bindin
   private _reject: ((error: any) => void) | undefined;
   private _promise: Promise<any>;
 
-  constructor(scope: PageDispatcher, name: string, needsHandle: boolean, source: { context: BrowserContext, page: Page, frame: Frame }, args: any[]) {
+  constructor(scope: PageDispatcher, name: string, source: { context: BrowserContext, page: Page, frame: Frame }, args: any[]) {
     const frameDispatcher = FrameDispatcher.from(scope.parentScope(), source.frame);
     super(scope, new SdkObject(scope._object, 'bindingCall'), 'BindingCall', {
       frame: frameDispatcher,
       name,
-      args: needsHandle ? undefined : args.map(serializeResult),
-      handle: needsHandle ? ElementHandleDispatcher.fromJSOrElementHandle(frameDispatcher, args[0] as JSHandle) : undefined,
+      args: args.map(serializeResult),
     });
     this._promise = new Promise((resolve, reject) => {
       this._resolve = resolve;

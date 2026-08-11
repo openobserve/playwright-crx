@@ -360,23 +360,14 @@ it('should fail when main resources failed to load', async ({ page, browserName,
   it.skip(channel === 'webkit-wsl', 'Networking mode mirrored ends up stalling connections rather than terminating them, see https://github.com/microsoft/WSL/issues/10855.');
   let error = null;
   await page.goto('http://localhost:44123/non-existing-url').catch(e => error = e);
-  if (browserName === 'chromium') {
-    if (mode === 'service2')
-      expect(error.message).toContain('net::ERR_SOCKS_CONNECTION_FAILED');
-    else
-      expect(error.message).toContain('net::ERR_CONNECTION_REFUSED');
-  } else if (browserName === 'webkit' && isWindows && mode === 'service2') {
-    expect(error.message).toContain(`proxy handshake error`);
-  } else if (browserName === 'webkit' && isWindows && channel !== 'webkit-wsl') {
+  if (browserName === 'chromium')
+    expect(error.message).toContain('net::ERR_CONNECTION_REFUSED');
+  else if (browserName === 'webkit' && isWindows && channel !== 'webkit-wsl')
     expect(error.message).toContain(`Could not connect to server`);
-  } else if (browserName === 'webkit') {
-    if (mode === 'service2')
-      expect(error.message).toContain('Connection refused');
-    else
-      expect(error.message).toContain('Could not connect');
-  } else {
+  else if (browserName === 'webkit')
+    expect(error.message).toContain('Could not connect');
+  else
     expect(error.message).toContain('NS_ERROR_CONNECTION_REFUSED');
-  }
 });
 
 it('should fail when exceeding maximum navigation timeout', async ({ page, server, playwright }) => {
@@ -416,8 +407,8 @@ it('should fail when exceeding browser context navigation timeout', async ({ pag
   expect(error).toBeInstanceOf(playwright.errors.TimeoutError);
 });
 
-it('should fail when exceeding default maximum timeout', async ({ page, server, playwright, isAndroid }) => {
-  it.skip(isAndroid, 'No context per test');
+it('should fail when exceeding default maximum timeout', async ({ page, server, playwright, isAndroid, isElectron }) => {
+  it.skip(isAndroid || isElectron, 'No context per test');
 
   // Hang for request to the empty.html
   server.setRoute('/empty.html', (req, res) => { });
@@ -432,8 +423,8 @@ it('should fail when exceeding default maximum timeout', async ({ page, server, 
   expect(error).toBeInstanceOf(playwright.errors.TimeoutError);
 });
 
-it('should fail when exceeding browser context timeout', async ({ page, server, playwright, isAndroid }) => {
-  it.skip(isAndroid, 'No context per test');
+it('should fail when exceeding browser context timeout', async ({ page, server, playwright, isAndroid, isElectron }) => {
+  it.skip(isAndroid || isElectron, 'No context per test');
 
   // Hang for request to the empty.html
   server.setRoute('/empty.html', (req, res) => { });

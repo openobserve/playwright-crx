@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-import { renderTitleForCall } from '../utils';
-import { debugLogger } from '../utils';
+import { ManualPromise } from '@isomorphic/manualPromise';
+import { renderTitleForCall } from '@isomorphic/protocolFormatter';
+import { debugLogger } from '@utils/debugLogger';
 import { Page } from './page';
 
 import type * as types from './types';
@@ -39,9 +40,10 @@ type ActionOptions = {
 
 export class Screencast implements InstrumentationListener {
   readonly page: Page;
-  private _clients = new Set<ScreencastClient>();
+  private _clients = new Map<ScreencastClient, ManualPromise<void>>();
   private _actions: ActionOptions | undefined;
   private _size: types.Size | undefined;
+  private _lastFrame: types.ScreencastFrame | undefined;
 
   constructor(page: Page) {
     this.page = page;
@@ -49,7 +51,7 @@ export class Screencast implements InstrumentationListener {
   }
 
   async handlePageOrContextClose() {
-    const clients = [...this._clients];
+    const clients = [...this._clients.keys()];
     this._clients.clear();
     for (const client of clients) {
       if (client.gracefulClose)
@@ -58,7 +60,7 @@ export class Screencast implements InstrumentationListener {
   }
 
   dispose() {
-    for (const client of this._clients)
+    for (const client of this._clients.keys())
       client.dispose();
     this._clients.clear();
     this.page.instrumentation.removeListener(this);
@@ -73,22 +75,32 @@ export class Screencast implements InstrumentationListener {
   }
 
   addClient(client: ScreencastClient): { size: types.Size } {
-    this._clients.add(client);
-    if (this._clients.size === 1)
+    const isFirst = this._clients.size === 0;
+    this._clients.set(client, new ManualPromise<void>());
+    if (isFirst) {
       this._startScreencast(client.size, client.quality);
+    } else if (this._lastFrame) {
+      // Deliver the cached last frame to the new client so it does not have
+      // to wait for the next browser repaint. setTimeout(0) ensures the caller
+      // of addClient() finishes before the frame is dispatched.
+      const frame = this._lastFrame;
+      setTimeout(() => {
+        if (this._clients.has(client))
+          void client.onFrame(frame);
+      }, 0);
+    }
     return { size: this._size! };
   }
 
   removeClient(client: ScreencastClient) {
-    if (!this._clients.has(client))
+    const disconnected = this._clients.get(client);
+    if (!disconnected)
       return;
     this._clients.delete(client);
+    // A departing client must not block frame acks for the remaining clients.
+    disconnected.resolve();
     if (!this._clients.size)
       this._stopScreencast();
-  }
-
-  size(): types.Size | undefined {
-    return this._size;
   }
 
   private _startScreencast(size: types.Size | undefined, quality: number | undefined) {
@@ -116,15 +128,18 @@ export class Screencast implements InstrumentationListener {
   }
 
   private _stopScreencast() {
+    this._lastFrame = undefined;
     this.page.delegate.stopScreencast();
   }
 
   onScreencastFrame(frame: types.ScreencastFrame, ack?: () => void) {
+    this._lastFrame = frame;
     const asyncResults: Promise<void>[] = [];
-    for (const client of this._clients) {
+    for (const [client, disconnected] of this._clients) {
       const result = client.onFrame(frame);
-      if (result)
-        asyncResults.push(result);
+      if (!result)
+        continue;
+      asyncResults.push(Promise.race([result.catch(() => {}), disconnected]));
     }
     if (ack) {
       // Ack when any client resolves (OR logic). This ensures that even if
@@ -152,7 +167,7 @@ export class Screencast implements InstrumentationListener {
       return;
 
     const actionTitle = renderTitleForCall(metadata);
-    const utility = await page.mainFrame()._utilityContext();
+    const utility = await page.mainFrame().utilityContext();
 
     // Run this outside of the progress timer.
     await utility.evaluate(async options => {

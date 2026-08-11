@@ -22,8 +22,7 @@ import playwright from '../../packages/playwright-core';
 
 test('list', async ({ cli, server }) => {
   const { output: emptyOutput } = await cli('list');
-  expect(emptyOutput).toContain('### Browsers');
-  expect(emptyOutput).toContain('  (no browsers)');
+  expect(emptyOutput).toContain('(no browsers)');
 
   await cli('open', server.HELLO_WORLD);
 
@@ -52,19 +51,6 @@ test('close named session', async ({ cli, server }) => {
 test('close non-running session', async ({ cli }) => {
   const { output } = await cli('-s', 'nonexistent', 'close');
   expect(output).toContain(`Browser 'nonexistent' is not open.`);
-});
-
-test('persistent session shows in list after close', async ({ cli, server }) => {
-  await cli('open', server.HELLO_WORLD, '--persistent');
-
-  const { output: listBefore } = await cli('list');
-  expect(listBefore).toContain('- default:');
-  expect(listBefore).not.toContain('<in-memory>');
-
-  await cli('close');
-
-  const { output: listAfter } = await cli('list');
-  expect(listAfter).toContain('- default:');
 });
 
 test('close-all', async ({ cli, server }) => {
@@ -166,7 +152,7 @@ test('workspace isolation - sessions in different workspaces are isolated', asyn
   await cli('close', { cwd: workspace1 });
 
   const { output: list1After } = await cli('list', { cwd: workspace1 });
-  expect(list1After).toContain('(no browsers)');
+  expect(list1After).not.toContain('### Browsers');
   const { output: list2After } = await cli('list', { cwd: workspace2 });
   expect(list2After).toContain('default');
 
@@ -225,7 +211,7 @@ test('list --all lists sessions from all workspaces', async ({ cli, server }, te
   expect(sessionFilesAfterClose).toContain('session2.session');
   expect(sessionFilesAfterClose).toContain('session3.session');
 
-  killProcessGroup(session3.pid);
+  killProcessGroup(session3.daemonPid);
 
   const { output: listOne } = await cli('list', '--all', { cwd: workspace2 });
   expect(listOne).not.toContain('workspace1');
@@ -290,13 +276,11 @@ test.describe('browser server', () => {
     await using browser = await playwright[browserName].launch({ headless: true });
     await browser.bind('foobar', { workspaceDir: 'workspace1' });
     const { output } = await cli('list', '--all');
-    expect(output).toBe(`### Browsers
-### Browser servers available for attach
+    expect(output).toBe(`### Browser servers available for attach
 workspace1:
 - browser "foobar":
   - browser: ${/* FIX browser._options */ mcpBrowser.replace('chrome', 'chromium')}
   - version: ${version}
-  - status: open
   - data-dir: <in-memory>
   - run \`playwright-cli attach "foobar"\` to attach`);
   });
@@ -309,15 +293,21 @@ workspace1:
     await page.setContent('<title>My Page</title>');
     const { output: openOutput } = await cli('attach', 'foobar');
     expect(openOutput).toContain('### Session `foobar` created, attached to `foobar`.');
-    expect(openOutput).toContain('Run commands with: playwright-cli --session=foobar <command>');
+    expect(openOutput).toContain('Run commands with: playwright-cli --s=foobar <command>');
     const { output: listOutput } = await cli('list', '--all');
     expect(listOutput).toBe(`### Browsers
 /:
 - foobar:
   - status: open
-  - browser-type: ${/* FIX browser._options */ mcpBrowser.replace('chrome', 'chromium')}
-  - user-data-dir: <in-memory>
-  - headed: false`);
+  - browser-type: ${mcpBrowser.replace('chrome', 'chromium')} (attached)
+
+### Browser servers available for attach
+workspace1:
+- browser "foobar":
+  - browser: ${mcpBrowser.replace('chrome', 'chromium')}
+  - version: ${version}
+  - data-dir: <in-memory>
+  - run \`playwright-cli attach "foobar"\` to attach`);
   });
 
   test('fail to attach to browser server without contexts', async ({ cli, mcpBrowser }) => {
@@ -328,26 +318,6 @@ workspace1:
     expect(error).toContain('Error: unable to connect to a browser that does not have any contexts');
   });
 
-  test('attach via PLAYWRIGHT_CLI_SESSION env', async ({ cli, mcpBrowser }) => {
-    const browserName = mcpBrowser.replace('chrome', 'chromium');
-    await using browser = await playwright[browserName].launch({ headless: true });
-    const page = await browser.newPage();
-    await page.setContent('<title>Env Page</title><h1>Hello from env</h1>');
-    await browser.bind('foobar', { workspaceDir: 'workspace1' });
-    const { output: openOutput, snapshot } = await cli('open', { env: { PLAYWRIGHT_CLI_SESSION: 'foobar' } });
-    expect(openOutput).toContain('### Browser `foobar` opened with pid');
-    expect(openOutput).toContain('Env Page');
-    expect(snapshot).toContain('Hello from env');
-    const { output: listOutput } = await cli('list', '--all');
-    expect(listOutput).toBe(`### Browsers
-/:
-- foobar:
-  - status: open
-  - browser-type: ${mcpBrowser.replace('chrome', 'chromium')}
-  - user-data-dir: <in-memory>
-  - headed: false`);
-  });
-
   test('attach with session alias', async ({ cli, mcpBrowser }) => {
     const browserName = mcpBrowser.replace('chrome', 'chromium');
     await using browser = await playwright[browserName].launch({ headless: true });
@@ -356,7 +326,7 @@ workspace1:
     await page.setContent('<title>Alias Page</title>');
     const { output: openOutput } = await cli('attach', 'foobar', '--session=mybrowser');
     expect(openOutput).toContain('### Session `mybrowser` created, attached to `foobar`.');
-    expect(openOutput).toContain('Run commands with: playwright-cli --session=mybrowser <command>');
+    expect(openOutput).toContain('Run commands with: playwright-cli --s=mybrowser <command>');
     await cli('-s', 'mybrowser', 'close');
   });
 
@@ -369,13 +339,11 @@ workspace1:
     expect(openOutput).toContain('Session `foobar` created, attached to `foobar`');
     await cli('-s', 'foobar', 'close');
     const { output: listOutput } = await cli('list', '--all');
-    expect(listOutput).toBe(`### Browsers
-### Browser servers available for attach
+    expect(listOutput).toBe(`### Browser servers available for attach
 workspace1:
 - browser \"foobar\":
   - browser: ${/* FIX browser._options */ mcpBrowser.replace('chrome', 'chromium')}
   - version: ${version}
-  - status: open
   - data-dir: <in-memory>
   - run \`playwright-cli attach \"foobar\"\` to attach`);
   });

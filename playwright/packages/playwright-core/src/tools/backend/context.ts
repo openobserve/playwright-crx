@@ -15,19 +15,21 @@
  */
 
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
-import { debug } from '../../utilsBundle';
-import { escapeWithQuotes } from '../../utils/isomorphic/stringUtils';
-import { selectors } from '../../..';
+import debug from 'debug';
+import { escapeWithQuotes } from '@isomorphic/stringUtils';
+import { disposeAll } from '@isomorphic/disposable';
+import { eventsHelper } from '@utils/eventsHelper';
+import { isPathInside, isSystemDirectory, isWritable } from '@utils/fileUtils';
+import { playwright } from '../../inprocess';
 
 import { Tab } from './tab';
-import { disposeAll } from '../../server/utils/disposable';
-import { eventsHelper } from '../../server/utils/eventsHelper';
 
-import type * as playwright from '../../..';
+import type * as playwrightTypes from '../../..';
 import type { SessionLog } from './sessionLog';
-import type { Disposable } from '../../server/utils/disposable';
+import type { Disposable } from '@isomorphic/disposable';
 import type { ToolCapability } from './tool';
 
 const testDebug = debug('pw:mcp:test');
@@ -76,7 +78,7 @@ export type RouteEntry = {
   contentType?: string;
   addHeaders?: Record<string, string>;
   removeHeaders?: string[];
-  handler: (route: playwright.Route) => Promise<void>;
+  handler: (route: playwrightTypes.Route) => Promise<void>;
 };
 
 export type FilenameTemplate = {
@@ -92,8 +94,8 @@ export class Context {
   readonly config: ContextConfig;
   readonly sessionLog: SessionLog | undefined;
   readonly options: ContextOptions;
-  private _rawBrowserContext: playwright.BrowserContext;
-  private _browserContextPromise: Promise<playwright.BrowserContext> | undefined;
+  private _rawBrowserContext: playwrightTypes.BrowserContext;
+  private _browserContextPromise: Promise<playwrightTypes.BrowserContext> | undefined;
   private _tabs: Tab[] = [];
   private _currentTab: Tab | undefined;
   private _routes: RouteEntry[] = [];
@@ -105,22 +107,42 @@ export class Context {
   private _disposables: Disposable[] = [];
 
   private _runningToolName: string | undefined;
+  private _pendingUnhandledRejections: unknown[] = [];
+  private _unhandledRejectionListeners = new Set<(reason: unknown) => void>();
+  private _onUnhandledRejection = (reason: unknown) => {
+    this._pendingUnhandledRejections.push(reason);
+    for (const listener of this._unhandledRejectionListeners)
+      listener(reason);
+  };
 
-  constructor(browserContext: playwright.BrowserContext, options: ContextOptions) {
+  constructor(browserContext: playwrightTypes.BrowserContext, options: ContextOptions) {
     this.config = options.config;
     this.sessionLog = options.sessionLog;
     this.options = options;
     this._rawBrowserContext = browserContext;
     testDebug('create context');
+    process.on('unhandledRejection', this._onUnhandledRejection);
   }
 
   async dispose() {
+    process.off('unhandledRejection', this._onUnhandledRejection);
     await disposeAll(this._disposables);
     for (const tab of this._tabs)
       await tab.dispose();
     this._tabs.length = 0;
     this._currentTab = undefined;
     await this.stopVideoRecording();
+  }
+
+  drainPendingUnhandledRejections(): unknown[] {
+    const reasons = this._pendingUnhandledRejections.slice();
+    this._pendingUnhandledRejections.length = 0;
+    return reasons;
+  }
+
+  onUnhandledRejection(listener: (reason: unknown) => void): () => void {
+    this._unhandledRejectionListeners.add(listener);
+    return () => this._unhandledRejectionListeners.delete(listener);
   }
 
   debugger() {
@@ -158,9 +180,16 @@ export class Context {
   }
 
   async ensureTab(): Promise<Tab> {
-    const browserContext = await this.ensureBrowserContext();
+    await this.ensureBrowserContext();
+    const crashed = this._currentTab?.crashed;
+    if (crashed) {
+      await this._currentTab!.page.close().catch(() => {});
+      this._currentTab = undefined;
+    }
     if (!this._currentTab)
-      await browserContext.newPage();
+      await this.newTab();
+    if (crashed)
+      this._currentTab!.logErrorMessage('Page crashed and was reset to about:blank.');
     return this._currentTab!;
   }
 
@@ -201,7 +230,7 @@ export class Context {
     return [...video.fileNames];
   }
 
-  private async _startPageVideo(page: playwright.Page) {
+  private async _startPageVideo(page: playwrightTypes.Page) {
     if (!this._video)
       return;
     const suffix = this._video.fileNames.length ? `-${this._video.fileNames.length}` : '';
@@ -214,7 +243,7 @@ export class Context {
     await page.screencast.start({ path: fileName, ...this._video.params });
   }
 
-  private _onPageCreated(page: playwright.Page) {
+  private _onPageCreated(page: playwrightTypes.Page) {
     const tab = new Tab(this, page, tab => this._onPageClosed(tab));
     this._tabs.push(tab);
     if (!this._currentTab)
@@ -268,7 +297,7 @@ export class Context {
     this._runningToolName = name;
   }
 
-  private async _setupRequestInterception(context: playwright.BrowserContext) {
+  private async _setupRequestInterception(context: playwrightTypes.BrowserContext) {
     if (this.config.network?.allowedOrigins?.length) {
       this._disposables.push(await context.route('**', route => route.abort('blockedbyclient')));
 
@@ -284,7 +313,7 @@ export class Context {
     }
   }
 
-  async ensureBrowserContext(): Promise<playwright.BrowserContext> {
+  async ensureBrowserContext(): Promise<playwrightTypes.BrowserContext> {
     if (this._browserContextPromise)
       return this._browserContextPromise;
     this._browserContextPromise = this._initializeBrowserContext();
@@ -293,7 +322,7 @@ export class Context {
 
   private async _initializeBrowserContext() {
     if (this.config.testIdAttribute)
-      selectors.setTestIdAttribute(this.config.testIdAttribute);
+      playwright.selectors.setTestIdAttribute(this.config.testIdAttribute);
     const browserContext = this._rawBrowserContext;
     await this._setupRequestInterception(browserContext);
 
@@ -366,7 +395,10 @@ export async function workspaceFile(options: ContextOptions, fileName: string, p
 export function outputDir(options: ContextOptions): string {
   if (options.config.outputDir)
     return path.resolve(options.config.outputDir);
-  return path.resolve(options.cwd, options.config.skillMode ? '.playwright-cli' : '.playwright-mcp');
+  const baseName = options.config.skillMode ? '.playwright-cli' : '.playwright-mcp';
+  if (isSystemDirectory(options.cwd) || !isWritable(options.cwd))
+    return path.join(os.tmpdir(), baseName);
+  return path.join(options.cwd, baseName);
 }
 
 export async function outputFile(options: ContextOptions, fileName: string, flags: { origin: 'code' | 'llm' }): Promise<string> {
@@ -379,13 +411,12 @@ export async function outputFile(options: ContextOptions, fileName: string, flag
 
 async function checkFile(options: ContextOptions, resolvedFilename: string, flags: { origin: 'code' | 'llm' }) {
   // Trust code and unrestricted file access.
-  if (flags.origin === 'code' || options.config.allowUnrestrictedFileAccess)
+  if (flags.origin === 'code' || options.config.allowUnrestrictedFileAccess || options.config.skillMode)
     return;
 
   // Trust llm to use valid characters in file names.
   const output = outputDir(options);
   const workspace = options.cwd;
-  const withinDir = (root: string) => resolvedFilename === root || resolvedFilename.startsWith(root + path.sep);
-  if (!withinDir(output) && !withinDir(workspace))
+  if (!isPathInside(output, resolvedFilename) && !isPathInside(workspace, resolvedFilename))
     throw new Error(`File access denied: ${resolvedFilename} is outside allowed roots. Allowed roots: ${output}, ${workspace}`);
 }

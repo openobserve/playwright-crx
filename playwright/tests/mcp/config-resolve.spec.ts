@@ -15,22 +15,20 @@
  */
 
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 
-import { resolveCLIConfigForCLI, resolveCLIConfigForMCP } from '../../packages/playwright-core/lib/tools/mcp/config';
-
+import { tools } from '../../packages/playwright-core/lib/coreBundle';
 import type { Config } from '../../packages/playwright-core/src/tools/mcp/config.d';
+
+const { resolveCLIConfigForCLI, resolveCLIConfigForMCP, isSystemDirectory, outputDir } = tools;
 
 // Empty env to isolate tests from the host environment.
 const emptyEnv = {};
 
-// ---------------------------------------------------------------------------
-// Shared behavior — browserName / channel resolution
-// These are tested via resolveCLIConfigForMCP; the underlying configFromCLIOptions
-// and validateBrowserConfig are shared with resolveCLIConfigForCLI.
-// ---------------------------------------------------------------------------
+test.skip(({ mcpBrowser }) => mcpBrowser !== 'chrome', 'Channel-agnostic tests.');
 
 test.describe('browserName and channel', () => {
   test('no browser option defaults to chromium / chrome', async () => {
@@ -264,6 +262,67 @@ test.describe('validation', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Output directory — fallback for unsuitable cwd, throw on explicit system dir
+// ---------------------------------------------------------------------------
+
+test.describe('outputDir', () => {
+  test.skip(process.platform === 'win32', 'POSIX-specific cases');
+
+  test('falls back to tmpdir when cwd is /', () => {
+    const result = outputDir({ config: {}, cwd: '/' });
+    expect(result).toBe(path.join(os.tmpdir(), '.playwright-mcp'));
+  });
+
+  test('uses cwd-relative .playwright-mcp for normal cwd', ({}, testInfo) => {
+    const cwd = testInfo.outputPath('workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    const result = outputDir({ config: {}, cwd });
+    expect(result).toBe(path.join(cwd, '.playwright-mcp'));
+  });
+
+  test('uses .playwright-cli when skillMode is set', ({}, testInfo) => {
+    const cwd = testInfo.outputPath('workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    const result = outputDir({ config: { skillMode: true }, cwd });
+    expect(result).toBe(path.join(cwd, '.playwright-cli'));
+  });
+
+  test('skillMode falls back to tmpdir/.playwright-cli when cwd is /', () => {
+    const result = outputDir({ config: { skillMode: true }, cwd: '/' });
+    expect(result).toBe(path.join(os.tmpdir(), '.playwright-cli'));
+  });
+
+  test('explicit outputDir wins regardless of cwd', ({}, testInfo) => {
+    const explicit = testInfo.outputPath('explicit');
+    const result = outputDir({ config: { outputDir: explicit }, cwd: '/' });
+    expect(result).toBe(explicit);
+  });
+
+  test('falls back to tmpdir when cwd is not writable', ({}, testInfo) => {
+    const cwd = testInfo.outputPath('readonly');
+    fs.mkdirSync(cwd, { recursive: true });
+    fs.chmodSync(cwd, 0o500);
+    try {
+      const result = outputDir({ config: {}, cwd });
+      expect(result).toBe(path.join(os.tmpdir(), '.playwright-mcp'));
+    } finally {
+      fs.chmodSync(cwd, 0o700);
+    }
+  });
+
+  test('isSystemDirectory detects /', () => {
+    expect(isSystemDirectory('/')).toBe(true);
+    expect(isSystemDirectory('/tmp')).toBe(false);
+    expect(isSystemDirectory(os.homedir())).toBe(false);
+  });
+
+  test('resolveCLIConfigForMCP throws when --output-dir is /', async () => {
+    await expect(resolveCLIConfigForMCP({ outputDir: '/' }, emptyEnv))
+        .rejects.toThrow(/--output-dir cannot point to a system directory/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // MCP-specific: headless platform default, timeout CLI options
 // ---------------------------------------------------------------------------
 
@@ -375,7 +434,7 @@ test.describe('resolveCLIConfigForCLI - isolated and userDataDir', () => {
   test('auto userDataDir uses undefined token when no browser specified', async ({}, testInfo) => {
     const profilesDir = testInfo.outputPath('profiles');
     const config = await resolveCLI(profilesDir, 'default', { persistent: true });
-    expect(config.browser.userDataDir).toBe(path.resolve(profilesDir, 'ud-default-undefined'));
+    expect(config.browser.userDataDir).toBe(path.resolve(profilesDir, 'ud-default-chrome'));
   });
 
   test('no auto userDataDir when isolated', async ({}, testInfo) => {

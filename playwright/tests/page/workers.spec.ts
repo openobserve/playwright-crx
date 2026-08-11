@@ -41,7 +41,7 @@ it('should emit created and destroyed events', async function({ page }) {
   const workerCreatedPromise = page.waitForEvent('worker');
   const workerObj = await page.evaluateHandle(() => new Worker(URL.createObjectURL(new Blob(['1'], { type: 'application/javascript' }))));
   const worker = await workerCreatedPromise;
-  const workerThisObj = await worker.evaluateHandle(() => this);
+  const workerThisObj = await worker.evaluateHandle('this');
   const workerDestroyedPromise = new Promise(x => worker.once('close', x));
   await page.evaluate(workerObj => workerObj.terminate(), workerObj);
   expect(await workerDestroyedPromise).toBe(worker);
@@ -351,6 +351,7 @@ it('should support extra http headers', {
 
 it('should support offline', async ({ page, server, browserName }) => {
   it.fixme(browserName === 'webkit', 'flaky on all platforms');
+  it.fixme(browserName === 'firefox', 'does not plumb setOffline into WorkerNavigator::OnLine');
 
   const [worker] = await Promise.all([
     page.waitForEvent('worker'),
@@ -358,9 +359,7 @@ it('should support offline', async ({ page, server, browserName }) => {
     page.goto(server.PREFIX + '/worker/worker.html'),
   ]);
   await page.context().setOffline(true);
-  // TODO: Firefox does not plumb setOffline into WorkerNavigator::OnLine.
-  const expectedOnline = browserName === 'firefox' ? true : false;
-  await expect.poll(() =>  worker.evaluate(() => navigator.onLine)).toBe(expectedOnline);
+  await expect.poll(() =>  worker.evaluate(() => navigator.onLine)).toBe(false);
   expect(await worker.evaluate(() => fetch('/one-style.css').catch(e => 'error'))).toBe('error');
   await page.context().setOffline(false);
   await expect.poll(() =>  worker.evaluate(() => navigator.onLine)).toBe(true);

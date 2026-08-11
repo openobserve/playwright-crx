@@ -16,11 +16,15 @@
 
 import path from 'path';
 
-import { assert, createGuid, debugLogger, mkdirIfNeeded, monotonicTime } from '../utils';
-import { launchProcess } from './utils/processLauncher';
-import { jpegjs } from '../utilsBundle';
+import jpegjs from 'jpeg-js';
+import { launchProcess } from '@utils/processLauncher';
+import { assert } from '@isomorphic/assert';
+import { createGuid } from '@utils/crypto';
+import { debugLogger } from '@utils/debugLogger';
+import { mkdirIfNeeded } from '@utils/fileUtils';
+import { monotonicTime } from '@isomorphic/time';
 import { Artifact } from './artifact';
-import { registry } from '.';
+import { registry } from './registry';
 
 import type * as types from './types';
 import type { ChildProcess } from 'child_process';
@@ -72,7 +76,7 @@ export class VideoRecorder {
     this._videoRecorder = undefined;
 
     this._screencast.removeClient(client);
-    await videoRecorder.stop();
+    await videoRecorder._stop();
     await artifact.reportFinished();
   }
 }
@@ -225,7 +229,7 @@ class FfmpegVideoRecorder {
     });
   }
 
-  async stop() {
+  async _stop() {
     // Only report the error on stop. This allows to make the constructor synchronous.
     const error = await this._launchPromise;
     if (error)

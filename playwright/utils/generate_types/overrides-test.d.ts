@@ -173,6 +173,8 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
     only(title: string, details: TestDetails, body: TestBody<TestArgs & WorkerArgs>): void;
   }
 
+  abort(message?: string): never;
+
   slow(): void;
   slow(condition: boolean, description?: string): void;
   slow(callback: ConditionBody<TestArgs & WorkerArgs>, description?: string): void;
@@ -317,7 +319,7 @@ export type PlaywrightTestConfig<TestArgs = {}, WorkerArgs = {}> = Config<Playwr
 
 // Use the global URLPattern type if available (Node.js 22+, modern browsers),
 // otherwise fall back to `never` so it disappears from union types.
-type URLPattern = typeof globalThis extends { URLPattern: infer T } ? T : never;
+type URLPattern = typeof globalThis extends { URLPattern: new (...args: any) => infer T } ? T : never;
 type AsymmetricMatcher = Record<string, any>;
 
 interface AsymmetricMatchers {

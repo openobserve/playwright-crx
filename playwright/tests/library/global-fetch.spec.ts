@@ -16,9 +16,9 @@
 
 import os from 'os';
 import * as util from 'util';
-import { getPlaywrightVersion } from '../../packages/playwright-core/lib/server/utils/userAgent';
+import { getPlaywrightVersion } from '../../packages/playwright-core/lib/coreBundle';
 import { expect, playwrightTest as base } from '../config/browserTest';
-import { kTargetClosedErrorMessage } from 'tests/config/errors';
+import { kTargetClosedErrorMessage } from '../config/errors';
 
 const it = base.extend({
   context: async ({}, use) => {
@@ -87,6 +87,28 @@ it('should propagate extra http headers with redirects', async ({ playwright, se
   expect(req1.headers['my-secret']).toBe('Value');
   expect(req2.headers['my-secret']).toBe('Value');
   expect(req3.headers['my-secret']).toBe('Value');
+  await request.dispose();
+});
+
+it('should preserve authorization on same-origin redirect but strip on cross-origin', async ({ playwright, server }) => {
+  server.setRedirect('/same/redirect', '/same/dest');
+  server.setRedirect('/cross/redirect', server.CROSS_PROCESS_PREFIX + '/cross/dest');
+  const request = await playwright.request.newContext({
+    extraHTTPHeaders: { 'Authorization': 'Bearer secret' },
+  });
+
+  const [sameDestReq] = await Promise.all([
+    server.waitForRequest('/same/dest'),
+    request.get(`${server.PREFIX}/same/redirect`),
+  ]);
+  expect(sameDestReq.headers['authorization']).toBe('Bearer secret');
+
+  const [crossDestReq] = await Promise.all([
+    server.waitForRequest('/cross/dest'),
+    request.get(`${server.PREFIX}/cross/redirect`),
+  ]);
+  expect(crossDestReq.headers['authorization']).toBeUndefined();
+
   await request.dispose();
 });
 

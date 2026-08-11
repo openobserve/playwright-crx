@@ -18,14 +18,15 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { calculateSha1 } from './utils/crypto';
+import * as yazl from 'yazl';
+import * as yauzl from '@utils/third_party/yauzl';
+import { ManualPromise } from '@isomorphic/manualPromise';
+import { serializeClientSideCallMetadata } from '@isomorphic/trace/traceUtils';
+import { assert } from '@isomorphic/assert';
+import { calculateSha1 } from '@utils/crypto';
+import { ZipFile } from '@utils/zipFile';
+import { removeFolders, resolveWithinRoot } from '@utils/fileUtils';
 import { HarBackend } from './harBackend';
-import { ManualPromise } from '../utils/isomorphic/manualPromise';
-import { ZipFile } from './utils/zipFile';
-import { serializeClientSideCallMetadata } from '../utils/isomorphic/trace/traceUtils';
-import { assert } from '../utils/isomorphic/assert';
-import { removeFolders } from './utils/fileUtils';
-
 import type * as channels from '@protocol/channels';
 import type * as har from '@trace/har';
 import type EventEmitter from 'events';
@@ -42,7 +43,6 @@ export type StackSession = {
 
 export async function zip(progress: Progress, stackSessions: Map<string, StackSession>, params: channels.LocalUtilsZipParams): Promise<void> {
   const promise = new ManualPromise<void>();
-  const { yauzl, yazl } = await import('../zipBundle');
   const zipFile = new yazl.ZipFile();
   (zipFile as any as EventEmitter).on('error', error => promise.reject(error));
 
@@ -129,6 +129,7 @@ async function deleteStackSession(progress: Progress, stackSessions: Map<string,
   const session = stacksId ? stackSessions.get(stacksId) : undefined;
   if (!session)
     return;
+  await progress.race(session.writer);
   stackSessions.delete(stacksId!);
   if (session.tmpDir)
     await progress.race(removeFolders([session.tmpDir]));
@@ -174,15 +175,24 @@ export function harClose(harBackends: Map<string, HarBackend>, params: channels.
 }
 
 export async function harUnzip(progress: Progress, params: channels.LocalUtilsHarUnzipParams): Promise<void> {
-  const dir = path.dirname(params.zipFile);
+  const resourcesDir = params.resourcesDir ?? path.dirname(params.zipFile);
   const zipFile = new ZipFile(params.zipFile);
+  let resourcesDirCreated = false;
   try {
     for (const entry of await progress.race(zipFile.entries())) {
       const buffer = await progress.race(zipFile.read(entry));
-      if (entry === 'har.har')
+      if (entry === 'har.har') {
         await progress.race(fs.promises.writeFile(params.harFile, buffer));
-      else
-        await progress.race(fs.promises.writeFile(path.join(dir, entry), buffer));
+      } else {
+        if (!resourcesDirCreated) {
+          await progress.race(fs.promises.mkdir(resourcesDir, { recursive: true }));
+          resourcesDirCreated = true;
+        }
+        const outPath = resolveWithinRoot(resourcesDir, entry);
+        if (!outPath)
+          throw new Error(`HAR zip entry '${entry}' escapes output directory`);
+        await progress.race(fs.promises.writeFile(outPath, buffer));
+      }
     }
     await progress.race(fs.promises.unlink(params.zipFile));
   } finally {

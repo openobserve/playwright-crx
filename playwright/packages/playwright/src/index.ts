@@ -18,14 +18,21 @@ import fs from 'fs';
 import path from 'path';
 
 import * as playwrightLibrary from 'playwright-core';
-import { setBoxedStackPrefixes, createGuid, currentZone, debugMode, jsonStringifyForceASCII, asLocatorDescription, renderTitleForCall, getActionGroup, escapeHTML } from 'playwright-core/lib/utils';
+import { asLocatorDescription } from '@isomorphic/locatorGenerators';
+import { getActionGroup, renderTitleForCall } from '@isomorphic/protocolFormatter';
+import { escapeHTML } from '@isomorphic/stringUtils';
+import { jsonStringifyForceASCII } from '@utils/ascii';
+import { createGuid } from '@utils/crypto';
+import { debugMode } from '@utils/debug';
+import { setBoxedStackPrefixes } from '@utils/nodePlatform';
+import { currentZone } from '@utils/zones';
 import { buildErrorContext } from './errorContext';
-import { currentTestInfo } from './common/globals';
-import { rootTestType } from './common/testType';
+import { config, testType } from './common';
+import * as globals from './globals';
+import { packageRoot } from './package';
 import { createCustomMessageHandler, runDaemonForContext } from './mcp/test/browserBackend';
 
 import type { Fixtures, PlaywrightTestArgs, PlaywrightTestOptions, PlaywrightWorkerArgs, PlaywrightWorkerOptions, ScreenshotMode, TestInfo, TestType, VideoMode } from '../types/test';
-import type { ContextReuseMode } from './common/config';
 import type { TestInfoImpl, TestStepInternal } from './worker/testInfo';
 import type { ClientInstrumentationListener } from '../../playwright-core/src/client/clientInstrumentation';
 import type { Playwright as PlaywrightImpl } from '../../playwright-core/src/client/playwright';
@@ -37,9 +44,9 @@ import type { Page as PageImpl } from '../../playwright-core/src/client/page';
 import type { BrowserContext, BrowserContextOptions, LaunchOptions, Page, Tracing } from 'playwright-core';
 
 export { expect } from './matchers/expect';
-export const _baseTest: TestType<{}, {}> = rootTestType.test;
+export const _baseTest: TestType<{}, {}> = testType.rootTestType.test;
 
-setBoxedStackPrefixes([path.dirname(require.resolve('../package.json'))]);
+setBoxedStackPrefixes([packageRoot]);
 
 if ((process as any)['__pw_initiator__']) {
   const originalStackTraceLimit = Error.stackTraceLimit;
@@ -63,26 +70,164 @@ type TestFixtures = PlaywrightTestArgs & PlaywrightTestOptions & {
 type WorkerFixtures = PlaywrightWorkerArgs & PlaywrightWorkerOptions & {
   playwright: PlaywrightImpl;
   _browserOptions: LaunchOptions;
-  _optionContextReuseMode: ContextReuseMode,
+  _optionContextReuseMode: config.ContextReuseMode,
   _optionConnectOptions: PlaywrightWorkerOptions['connectOptions'],
   _reuseContext: boolean,
 };
 
-const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
-  defaultBrowserType: ['chromium', { scope: 'worker', option: true, box: true }],
-  browserName: [({ defaultBrowserType }, use) => use(defaultBrowserType), { scope: 'worker', option: true, box: true }],
+// Note: utility fixtures and _utilityTest are reused in electron package. Be mindful when changing them.
+type UtilityTestFixtures = Pick<TestFixtures, 'testIdAttribute' | 'request' | '_combinedContextOptions' | '_setupArtifacts'>;
+type UtilityWorkerFixtures = Pick<WorkerFixtures, 'playwright' | 'screenshot' | 'trace'>;
+const utilityFixtures: Fixtures<UtilityTestFixtures, UtilityWorkerFixtures> = {
   playwright: [async ({}, use) => {
     await use(require('playwright-core'));
   }, { scope: 'worker', box: true }],
+  screenshot: ['off', { scope: 'worker', option: true, box: true }],
+  trace: ['off', { scope: 'worker', option: true, box: true }],
+  testIdAttribute: ['data-testid', { option: true, box: true }],
+  _combinedContextOptions: [{}, { box: true }],
+  _setupArtifacts: [async ({ playwright, screenshot, _combinedContextOptions }, use, testInfo) => {
+    // This fixture has a separate zero-timeout slot to ensure that artifact collection
+    // happens even after some fixtures or hooks time out.
+    // Now that default test timeout is known, we can replace zero with an actual value.
+    testInfo.setTimeout(testInfo.project.timeout);
+
+    const artifactsRecorder = new ArtifactsRecorder(playwright, tracing().artifactsDir(), screenshot);
+    await artifactsRecorder.willStartTest(testInfo as TestInfoImpl);
+
+    const tracingGroupSteps: TestStepInternal[] = [];
+    const pausedContexts = new Set<BrowserContextImpl>();
+    const csiListener: ClientInstrumentationListener = {
+      onApiCallBegin: (data, channel) => {
+        const testInfo = globals.currentTestInfo();
+        // Some special calls do not get into steps.
+        if (!testInfo || data.apiName.includes('setTestIdAttribute') || data.apiName === 'tracing.groupEnd')
+          return;
+        const zone = currentZone().data<TestStepInternal>('stepZone');
+        const isExpectCall = data.apiName === 'locator._expect' || data.apiName === 'frame._expect' || data.apiName === 'page._expectScreenshot';
+        if (zone && zone.category === 'expect' && isExpectCall) {
+          // Display the internal locator._expect call under the name of the enclosing expect call,
+          // and connect it to the existing expect step.
+          if (zone.apiName)
+            data.apiName = zone.apiName;
+          if (zone.shortTitle || zone.title)
+            data.title = zone.shortTitle ?? zone.title;
+          data.stepId = zone.stepId;
+          return;
+        }
+
+        // In the general case, create a step for each api call and connect them through the stepId.
+        const step = testInfo._addStep({
+          location: data.frames[0],
+          category: 'pw:api',
+          title: renderTitle(channel.type, channel.method, channel.params, data.title),
+          apiName: data.apiName,
+          params: channel.params,
+          group: getActionGroup({ type: channel.type, method: channel.method }),
+        }, tracingGroupSteps[tracingGroupSteps.length - 1]);
+        data.userData = step;
+        data.stepId = step.stepId;
+        if (data.apiName === 'tracing.group')
+          tracingGroupSteps.push(step);
+      },
+      onApiCallEnd: data => {
+
+        // "tracing.group" step will end later, when "tracing.groupEnd" finishes.
+        if (data.apiName === 'tracing.group')
+          return;
+        if (data.apiName === 'tracing.groupEnd') {
+          const step = tracingGroupSteps.pop();
+          step?.complete({ error: data.error });
+          return;
+        }
+        const step = data.userData;
+        step?.complete({ error: data.error });
+      },
+      onWillPause: ({ keepTestTimeout }) => {
+        if (!keepTestTimeout)
+          globals.currentTestInfo()?._setIgnoreTimeouts(true);
+      },
+      runBeforeCreateBrowserContext: async (options: BrowserContextOptions) => {
+        for (const [key, value] of Object.entries(_combinedContextOptions)) {
+          if (!(key in options))
+            options[key as keyof BrowserContextOptions] = value;
+        }
+      },
+      runBeforeCreateRequestContext: async (options: APIRequestContextOptions) => {
+        for (const [key, value] of Object.entries(_combinedContextOptions)) {
+          if (!(key in options))
+            options[key as keyof APIRequestContextOptions] = value;
+        }
+      },
+      runAfterCreateBrowserContext: async (context: BrowserContextImpl) => {
+        context.debugger.on('pausedstatechanged', () => {
+          const paused = !!context.debugger.pausedDetails();
+          if (pausedContexts.has(context) && !paused) {
+            pausedContexts.delete(context);
+            (testInfo as TestInfoImpl)._setIgnoreTimeouts(false);
+          } else if (!pausedContexts.has(context) && paused) {
+            pausedContexts.add(context);
+            (testInfo as TestInfoImpl)._setIgnoreTimeouts(true);
+          }
+        });
+
+        await artifactsRecorder.didCreateBrowserContext(context);
+        const currentTestInfo = globals.currentTestInfo() as TestInfoImpl | undefined;
+        if (currentTestInfo) {
+          attachConnectedHeaderIfNeeded(currentTestInfo, context.browser());
+          currentTestInfo._onCustomMessageCallback = createCustomMessageHandler(currentTestInfo, context);
+          await runDaemonForContext(currentTestInfo, context);
+        }
+      },
+      runAfterCreateRequestContext: async (context: APIRequestContextImpl) => {
+        await artifactsRecorder.didCreateRequestContext(context);
+      },
+      runBeforeCloseBrowserContext: async (context: BrowserContextImpl) => {
+        await artifactsRecorder.willCloseBrowserContext(context);
+      },
+      runBeforeCloseRequestContext: async (context: APIRequestContextImpl) => {
+        await artifactsRecorder.willCloseRequestContext(context);
+      },
+    };
+
+    const clientInstrumentation = playwright._instrumentation;
+    clientInstrumentation.addListener(csiListener);
+
+    await use();
+
+    clientInstrumentation.removeListener(csiListener);
+    await artifactsRecorder.didFinishTest();
+  }, { auto: 'all-hooks-included',  title: 'trace recording', box: true, timeout: 0 } as any],
+
+  request: async ({ playwright }, use) => {
+    const request = await playwright.request.newContext();
+    await use(request);
+    const hook = (test.info() as TestInfoImpl)._currentHookType();
+    if (hook === 'beforeAll') {
+      await request.dispose({ reason: [
+        `Fixture { request } from beforeAll cannot be reused in a test.`,
+        `  - Recommended fix: use a separate { request } in the test.`,
+        `  - Alternatively, manually create APIRequestContext in beforeAll and dispose it in afterAll.`,
+        `See https://playwright.dev/docs/api-testing#sending-api-requests-from-ui-tests for more details.`,
+      ].join('\n') });
+    } else {
+      await request.dispose();
+    }
+  },
+};
+
+export const _utilityTest: TestType<UtilityTestFixtures, UtilityWorkerFixtures> = _baseTest.extend<UtilityTestFixtures, UtilityWorkerFixtures>(utilityFixtures);
+
+const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures, UtilityTestFixtures, UtilityWorkerFixtures> = ({
+  defaultBrowserType: ['chromium', { scope: 'worker', option: true, box: true }],
+  browserName: [({ defaultBrowserType }, use) => use(defaultBrowserType), { scope: 'worker', option: true, box: true }],
   headless: [({ launchOptions }, use) => use(launchOptions.headless ?? true), { scope: 'worker', option: true, box: true }],
   channel: [({ launchOptions }, use) => use(launchOptions.channel), { scope: 'worker', option: true, box: true }],
   launchOptions: [{}, { scope: 'worker', option: true, box: true }],
   connectOptions: [async ({ _optionConnectOptions }, use) => {
     await use(connectOptionsFromEnv() || _optionConnectOptions);
   }, { scope: 'worker', option: true, box: true }],
-  screenshot: ['off', { scope: 'worker', option: true, box: true }],
   video: ['off', { scope: 'worker', option: true, box: true }],
-  trace: ['off', { scope: 'worker', option: true, box: true }],
 
   _browserOptions: [async ({ playwright, headless, channel, launchOptions }, use) => {
     const options: LaunchOptions = {
@@ -148,7 +293,6 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
   userAgent: [({ contextOptions }, use) => use(contextOptions.userAgent), { option: true, box: true }],
   viewport: [({ contextOptions }, use) => use(contextOptions.viewport === undefined ? { width: 1280, height: 720 } : contextOptions.viewport), { option: true, box: true }],
   actionTimeout: [0, { option: true, box: true }],
-  testIdAttribute: ['data-testid', { option: true, box: true }],
   navigationTimeout: [0, { option: true, box: true }],
   baseURL: [async ({ }, use) => {
     await use(process.env.PLAYWRIGHT_TEST_BASE_URL);
@@ -230,7 +374,7 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
       ...contextOptions,
       ...options,
     });
-  }, { box: true }],
+  }, { scope: 'test', box: true }],
 
   _setupContextOptions: [async ({ playwright, actionTimeout, navigationTimeout, testIdAttribute }, use, _testInfo) => {
     const testInfo = _testInfo as TestInfoImpl;
@@ -247,116 +391,6 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
     playwright._defaultContextTimeout = undefined;
     playwright._defaultContextNavigationTimeout = undefined;
   }, { auto: 'all-hooks-included',  title: 'context configuration', box: true } as any],
-
-  _setupArtifacts: [async ({ playwright, screenshot, _combinedContextOptions }, use, testInfo) => {
-    // This fixture has a separate zero-timeout slot to ensure that artifact collection
-    // happens even after some fixtures or hooks time out.
-    // Now that default test timeout is known, we can replace zero with an actual value.
-    testInfo.setTimeout(testInfo.project.timeout);
-
-    const artifactsRecorder = new ArtifactsRecorder(playwright, tracing().artifactsDir(), screenshot);
-    await artifactsRecorder.willStartTest(testInfo as TestInfoImpl);
-
-    const tracingGroupSteps: TestStepInternal[] = [];
-    const pausedContexts = new Set<BrowserContextImpl>();
-    const csiListener: ClientInstrumentationListener = {
-      onApiCallBegin: (data, channel) => {
-        const testInfo = currentTestInfo();
-        // Some special calls do not get into steps.
-        if (!testInfo || data.apiName.includes('setTestIdAttribute') || data.apiName === 'tracing.groupEnd')
-          return;
-        const zone = currentZone().data<TestStepInternal>('stepZone');
-        const isExpectCall = data.apiName === 'locator._expect' || data.apiName === 'frame._expect' || data.apiName === 'page._expectScreenshot';
-        if (zone && zone.category === 'expect' && isExpectCall) {
-          // Display the internal locator._expect call under the name of the enclosing expect call,
-          // and connect it to the existing expect step.
-          if (zone.apiName)
-            data.apiName = zone.apiName;
-          if (zone.shortTitle || zone.title)
-            data.title = zone.shortTitle ?? zone.title;
-          data.stepId = zone.stepId;
-          return;
-        }
-
-        // In the general case, create a step for each api call and connect them through the stepId.
-        const step = testInfo._addStep({
-          location: data.frames[0],
-          category: 'pw:api',
-          title: renderTitle(channel.type, channel.method, channel.params, data.title),
-          apiName: data.apiName,
-          params: channel.params,
-          group: getActionGroup({ type: channel.type, method: channel.method }),
-        }, tracingGroupSteps[tracingGroupSteps.length - 1]);
-        data.userData = step;
-        data.stepId = step.stepId;
-        if (data.apiName === 'tracing.group')
-          tracingGroupSteps.push(step);
-      },
-      onApiCallEnd: data => {
-
-        // "tracing.group" step will end later, when "tracing.groupEnd" finishes.
-        if (data.apiName === 'tracing.group')
-          return;
-        if (data.apiName === 'tracing.groupEnd') {
-          const step = tracingGroupSteps.pop();
-          step?.complete({ error: data.error });
-          return;
-        }
-        const step = data.userData;
-        step?.complete({ error: data.error });
-      },
-      onWillPause: ({ keepTestTimeout }) => {
-        if (!keepTestTimeout)
-          currentTestInfo()?._setIgnoreTimeouts(true);
-      },
-      runBeforeCreateBrowserContext: async (options: BrowserContextOptions) => {
-        for (const [key, value] of Object.entries(_combinedContextOptions)) {
-          if (!(key in options))
-            options[key as keyof BrowserContextOptions] = value;
-        }
-      },
-      runBeforeCreateRequestContext: async (options: APIRequestContextOptions) => {
-        for (const [key, value] of Object.entries(_combinedContextOptions)) {
-          if (!(key in options))
-            options[key as keyof APIRequestContextOptions] = value;
-        }
-      },
-      runAfterCreateBrowserContext: async (context: BrowserContextImpl) => {
-        context.debugger.on('pausedstatechanged', () => {
-          const paused = !!context.debugger.pausedDetails();
-          if (pausedContexts.has(context) && !paused) {
-            pausedContexts.delete(context);
-            (testInfo as TestInfoImpl)._setIgnoreTimeouts(false);
-          } else if (!pausedContexts.has(context) && paused) {
-            pausedContexts.add(context);
-            (testInfo as TestInfoImpl)._setIgnoreTimeouts(true);
-          }
-        });
-
-        await artifactsRecorder.didCreateBrowserContext(context);
-        const testInfo = currentTestInfo();
-        if (testInfo)
-          attachConnectedHeaderIfNeeded(testInfo, context.browser());
-      },
-      runAfterCreateRequestContext: async (context: APIRequestContextImpl) => {
-        await artifactsRecorder.didCreateRequestContext(context);
-      },
-      runBeforeCloseBrowserContext: async (context: BrowserContextImpl) => {
-        await artifactsRecorder.willCloseBrowserContext(context);
-      },
-      runBeforeCloseRequestContext: async (context: APIRequestContextImpl) => {
-        await artifactsRecorder.willCloseRequestContext(context);
-      },
-    };
-
-    const clientInstrumentation = playwright._instrumentation;
-    clientInstrumentation.addListener(csiListener);
-
-    await use();
-
-    clientInstrumentation.removeListener(csiListener);
-    await artifactsRecorder.didFinishTest();
-  }, { auto: 'all-hooks-included',  title: 'trace recording', box: true, timeout: 0 } as any],
 
   _contextFactory: [async ({ browser, video, _reuseContext, _combinedContextOptions /** mitigate dep-via-auto lack of traceability */ }, use, testInfo) => {
     const testInfoImpl = testInfo as TestInfoImpl;
@@ -448,8 +482,6 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
     attachConnectedHeaderIfNeeded(testInfo, browserImpl);
     if (!_reuseContext) {
       const { context, close } = await _contextFactory();
-      testInfo._onCustomMessageCallback = createCustomMessageHandler(testInfo, context);
-      await runDaemonForContext(testInfo, context);
       await installScreencastTitleUpdater(testInfo, context, show?.test);
       await use(context);
       await close();
@@ -457,8 +489,6 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
     }
 
     const context = await browserImpl._wrapApiCall(() => browserImpl._newContextForReuse(), { internal: true });
-    testInfo._onCustomMessageCallback = createCustomMessageHandler(testInfo, context);
-    await runDaemonForContext(testInfo, context);
     await installScreencastTitleUpdater(testInfo, context, show?.test);
     await use(context);
     const closeReason = testInfo.status === 'timedOut' ? 'Test timeout of ' + testInfo.timeout + 'ms exceeded.' : 'Test ended.';
@@ -476,22 +506,6 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
     if (!page)
       page = await context.newPage();
     await use(page);
-  },
-
-  request: async ({ playwright }, use) => {
-    const request = await playwright.request.newContext();
-    await use(request);
-    const hook = (test.info() as TestInfoImpl)._currentHookType();
-    if (hook === 'beforeAll') {
-      await request.dispose({ reason: [
-        `Fixture { request } from beforeAll cannot be reused in a test.`,
-        `  - Recommended fix: use a separate { request } in the test.`,
-        `  - Alternatively, manually create APIRequestContext in beforeAll and dispose it in afterAll.`,
-        `See https://playwright.dev/docs/api-testing#sending-api-requests-from-ui-tests for more details.`,
-      ].join('\n') });
-    } else {
-      await request.dispose();
-    }
   },
 });
 
@@ -707,6 +721,8 @@ class ArtifactsRecorder {
       return;
     if (this._testInfo.errors.length === 0)
       return;
+    if (this._testInfo.errors.some(e => e.errorContext))
+      return;
     if (this._pageSnapshot)
       return;
     const page = context.pages()[0];
@@ -722,11 +738,11 @@ class ArtifactsRecorder {
   }
 
   async didCreateRequestContext(context: APIRequestContextImpl) {
-    await this._startTraceChunkOnContextCreation(context, context._tracing);
+    await this._startTraceChunkOnContextCreation(context, context.tracing);
   }
 
   async willCloseRequestContext(context: APIRequestContextImpl) {
-    await this._stopTracing(context, context._tracing);
+    await this._stopTracing(context, context.tracing);
   }
 
   async didFinishTestFunction() {
@@ -743,7 +759,7 @@ class ArtifactsRecorder {
     await Promise.all(leftoverContexts.map(async context => {
       await this._stopTracing(context, context.tracing);
     }).concat(leftoverApiRequests.map(async context => {
-      await this._stopTracing(context, context._tracing);
+      await this._stopTracing(context, context.tracing);
     })));
 
     await this._screenshotRecorder.persistTemporary();
@@ -753,11 +769,12 @@ class ArtifactsRecorder {
       await this._takePageSnapshot(context);
 
     if (this._testInfo.errors.length > 0) {
+      const hasMatcherAriaSnapshot = this._testInfo.errors.some(e => e.errorContext);
       const errorContextContent = buildErrorContext({
         titlePath: this._testInfo.titlePath,
         location: { file: this._testInfo.file, line: this._testInfo.line, column: this._testInfo.column },
         errors: this._testInfo.errors,
-        pageSnapshot: this._pageSnapshot,
+        pageSnapshot: hasMatcherAriaSnapshot ? undefined : this._pageSnapshot,
       });
       if (errorContextContent) {
         const filePath = this._testInfo.outputPath('error-context.md');
@@ -866,8 +883,7 @@ function tracing() {
   return (test.info() as TestInfoImpl)._tracing;
 }
 
-export const test = _baseTest.extend<TestFixtures, WorkerFixtures>(playwrightFixtures);
+export const test = _utilityTest.extend<TestFixtures, WorkerFixtures>(playwrightFixtures);
 
-export { defineConfig } from './common/configLoader';
-export { mergeTests } from './common/testType';
+export { defineConfig, mergeTests } from './common';
 export { mergeExpects } from './matchers/expect';

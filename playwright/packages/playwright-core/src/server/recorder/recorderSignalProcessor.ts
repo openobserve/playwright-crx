@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-import { isUnderTest } from '../utils/debug';
-import { monotonicTime } from '../../utils/isomorphic/time';
+import { monotonicTime } from '@isomorphic/time';
+import { isUnderTest } from '@utils/debug';
 import { generateFrameSelector } from './recorderUtils';
+import { nullProgress } from '../progress';
 
 import type { Signal } from '../../../../recorder/src/actions';
 import type { Frame } from '../frames';
@@ -80,7 +81,7 @@ export class RecorderSignalProcessor {
       // like any other signal and attached to the causing action by the recorder app.
     }
 
-    generateFrameSelector(frame).then(framePath => {
+    generateFrameSelector(nullProgress, frame).then(framePath => {
       const signalInContext: actions.SignalInContext = {
         frame: {
           pageGuid: frame._page.guid,

@@ -54,6 +54,7 @@ export type FrameExpectParams = Omit<channels.FrameExpectParams, 'expectedValue'
 export type ElementState = 'visible' | 'hidden' | 'enabled' | 'disabled' | 'editable' | 'checked' | 'unchecked' | 'indeterminate' | 'stable';
 export type ElementStateWithoutStable = Exclude<ElementState, 'stable'>;
 export type ElementStateQueryResult = { matches: boolean, received?: string | 'error:notconnected', isRadio?: boolean };
+export type ExpectReceived = { value?: any, ariaSnapshot?: string };
 
 export type HitTargetInterceptionResult = {
   stop: () => 'done' | { hitTargetDescription: string };
@@ -74,6 +75,7 @@ export type InjectedScriptOptions = {
   testIdAttributeName: string;
   stableRafCount: number;
   browserName: string;
+  shouldPrependErrorPrefix?: boolean;
   isUtilityWorld?: boolean;
   customEngines: { name: string, source: string }[];
 };
@@ -83,6 +85,7 @@ export class InjectedScript {
   readonly _evaluator: SelectorEvaluatorImpl;
   private _stableRafCount: number;
   private _browserName: string;
+  private _shouldPrependErrorPrefix: boolean;
   private _isUtilityWorld: boolean;
   readonly onGlobalListenersRemoved: Set<() => void>;
   private _hitTargetInterceptor: undefined | ((event: MouseEvent | PointerEvent | TouchEvent) => void);
@@ -237,6 +240,7 @@ export class InjectedScript {
 
     this._stableRafCount = options.stableRafCount;
     this._browserName = options.browserName;
+    this._shouldPrependErrorPrefix = !!options.shouldPrependErrorPrefix;
     this._isUtilityWorld = !!options.isUtilityWorld;
     setGlobalOptions({ browserNameForWorkarounds: options.browserName });
 
@@ -786,16 +790,18 @@ export class InjectedScript {
     let remainingOptionsToSelect = optionsToSelect.slice();
     for (let index = 0; index < options.length; index++) {
       const option = options[index];
+      const normalizedOptionLabel = normalizeWhiteSpace(option.label);
       const filter = (optionToSelect: Node | { valueOrLabel?: string, value?: string, label?: string, index?: number }) => {
         if (optionToSelect instanceof Node)
           return option === optionToSelect;
+        const matchesLabel = (label: string) => label === option.label || normalizeWhiteSpace(label) === normalizedOptionLabel;
         let matches = true;
         if (optionToSelect.valueOrLabel !== undefined)
-          matches = matches && (optionToSelect.valueOrLabel === option.value || optionToSelect.valueOrLabel === option.label);
+          matches = matches && (optionToSelect.valueOrLabel === option.value || matchesLabel(optionToSelect.valueOrLabel));
         if (optionToSelect.value !== undefined)
           matches = matches && optionToSelect.value === option.value;
         if (optionToSelect.label !== undefined)
-          matches = matches && optionToSelect.label === option.label;
+          matches = matches && matchesLabel(optionToSelect.label);
         if (optionToSelect.index !== undefined)
           matches = matches && optionToSelect.index === index;
         return matches;
@@ -1273,13 +1279,12 @@ export class InjectedScript {
   }
 
   createStacklessError(message: string): Error {
+    const error = this._shouldPrependErrorPrefix ? new Error('Error: ' + message) : new Error(message);
     if (this._browserName === 'firefox') {
-      const error = new Error('Error: ' + message);
       // Firefox cannot delete the stack, so assign to an empty string.
       error.stack = '';
       return error;
     }
-    const error = new Error(message);
     // Chromium/WebKit should delete the stack instead.
     delete error.stack;
     return error;
@@ -1313,12 +1318,14 @@ export class InjectedScript {
     return this._highlight;
   }
 
-  highlight(selector: ParsedSelector) {
-    if (!this._highlight) {
-      this._highlight = new Highlight(this);
-      this._highlight.install();
-    }
-    this._highlight.runHighlightOnRaf(selector);
+  addHighlight(selector: ParsedSelector, style?: string) {
+    const highlight = this._ensureHighlight();
+    highlight.addElementHighlight(selector, style);
+  }
+
+  removeHighlight(selector: ParsedSelector) {
+    const highlight = this._ensureHighlight();
+    highlight.removeElementHighlight(selector);
   }
 
   setScreencastAnnotation(annotation: { point?: channels.Point, box?: channels.Rect, actionTitle?: string, duration?: number, position?: string, fontSize?: number } | null) {
@@ -1437,7 +1444,39 @@ export class InjectedScript {
     this.onGlobalListenersRemoved.add(addHitTargetInterceptorListeners);
   }
 
-  async expect(element: Element | undefined, options: FrameExpectParams, elements: Element[]): Promise<{ matches: boolean, received?: any, missingReceived?: boolean }> {
+  async expect(element: Element | undefined, options: FrameExpectParams, elements: Element[]): Promise<{ matches: boolean, received?: ExpectReceived, missingReceived?: boolean }> {
+    const core = await this._expectCore(element, options, elements);
+    const ariaSnapshot = this._ariaSnapshotForExpect(element, options);
+    if (core.received === undefined && ariaSnapshot === undefined)
+      return { matches: core.matches, missingReceived: core.missingReceived };
+    return { matches: core.matches, received: { value: core.received, ariaSnapshot }, missingReceived: core.missingReceived };
+  }
+
+  private _ariaSnapshotForExpect(element: Element | undefined, options: FrameExpectParams): string | undefined {
+    const expression = options.expression;
+    if (expression === 'to.have.count' || expression.endsWith('.array'))
+      return undefined;
+    if (expression === 'to.match.aria')
+      return undefined;
+    if (element && isElementVisible(element)) {
+      // Element-scoped snapshot. Containment matchers want the full subtree;
+      // property matchers only need the element's own line.
+      const isContainment = expression === 'to.have.text';
+      return this._renderAriaSnapshot(element, { mode: 'default', depth: isContainment ? undefined : 1 });
+    }
+    // Element missing or hidden — fall back to a full-page snapshot for context.
+    if (!this.document.body)
+      return undefined;
+    return this._renderAriaSnapshot(this.document.body, { mode: 'default' });
+  }
+
+  private _renderAriaSnapshot(element: Element, options: AriaTreeOptions): string {
+    // Bypass _lastAriaSnapshotForQuery — that cache is reserved for explicit
+    // ariaSnapshot() calls used by the aria-ref selector engine.
+    return renderAriaTree(generateAriaTree(element, options), options).text;
+  }
+
+  private async _expectCore(element: Element | undefined, options: FrameExpectParams, elements: Element[]): Promise<{ matches: boolean, received?: any, missingReceived?: boolean }> {
     const isArray = options.expression === 'to.have.count' || options.expression.endsWith('.array');
     if (isArray)
       return this.expectArray(elements, options);
@@ -1466,6 +1505,15 @@ export class InjectedScript {
         const matcher = new ExpectedTextMatcher(options.expectedText[0]);
         const received = this.document.location.href;
         return { received, matches: matcher.matches(received) };
+      }
+      if (options.expression === 'to.match.aria' && !options.selector) {
+        if (!this.document.body)
+          return { matches: options.isNot, missingReceived: true };
+        const result = matchesExpectAriaTemplate(this.document.body, options.expectedValue);
+        return {
+          received: result.received,
+          matches: !!result.matches.length,
+        };
       }
       // When none of the above applies, expect does not match.
       return { matches: options.isNot, missingReceived: true };
@@ -1603,7 +1651,7 @@ export class InjectedScript {
           matches: new ExpectedTextMatcher(options.expectedText[0]).matchesClassList(this, element.classList, /* partial */ expression === 'to.contain.class'),
         };
       } else if (expression === 'to.have.css') {
-        received = this.window.getComputedStyle(element).getPropertyValue(options.expressionArg);
+        received = this.window.getComputedStyle(element, options.pseudo ? `::${options.pseudo}` : undefined).getPropertyValue(options.expressionArg);
       } else if (expression === 'to.have.id') {
         received = element.id;
       } else if (expression === 'to.have.text') {

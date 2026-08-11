@@ -22,7 +22,6 @@ import fs from 'fs';
 import type { Source } from '../../../packages/recorder/src/recorderTypes';
 import type { CommonFixtures, TestChildProcess } from '../../config/commonFixtures';
 import { expect } from '@playwright/test';
-import { nodePlatform } from '../../../packages/playwright-core/lib/server/utils/nodePlatform';
 export { expect } from '@playwright/test';
 
 type CLITestArgs = {
@@ -43,11 +42,15 @@ const codegenLang2Id: Map<string, string> = new Map([
   ['C#', 'csharp'],
   ['C# NUnit', 'csharp-nunit'],
   ['C# MSTest', 'csharp-mstest'],
+  ['C# xUnit', 'csharp-xunit'],
   ['Playwright Test', 'playwright-test'],
 ]);
 const codegenLangId2lang = new Map([...codegenLang2Id.entries()].map(([lang, langId]) => [langId, lang]));
 
-const playwrightToAutomateInspector = require('../../../packages/playwright-core/lib/inProcessFactory').createInProcessPlaywright(nodePlatform);
+import { inprocess } from '../../../packages/playwright-core/lib/coreBundle';
+// Use a separate Playwright instance for automating the inspector so that
+// contexts created here do not get tracked by the test runner's tracing.
+const playwrightToAutomateInspector = inprocess.createInProcessPlaywright();
 
 export const test = contextTest.extend<CLITestArgs>({
   recorderPageGetter: async ({ context, toImpl, mode, headless }, run, testInfo) => {

@@ -17,10 +17,11 @@
 import fs from 'fs';
 import path from 'path';
 
-import { createGuid } from './utils/crypto';
-import { ZipFile } from './utils/zipFile';
+import { createGuid } from '@utils/crypto';
+import { isPathInside } from '@utils/fileUtils';
+import { ZipFile } from '@utils/zipFile';
 
-import type { HeadersArray } from '../utils/isomorphic/types';
+import type { HeadersArray } from '@isomorphic/types';
 import type * as har from '@trace/har';
 
 const redirectStatus = [301, 302, 303, 307, 308];
@@ -78,10 +79,14 @@ export class HarBackend {
     const file = content._file;
     let buffer: Buffer;
     if (file) {
-      if (this._zipFile)
+      if (this._zipFile) {
         buffer = await this._zipFile.read(file);
-      else
-        buffer = await fs.promises.readFile(path.resolve(this._baseDir!, file));
+      } else {
+        const resolved = path.resolve(this._baseDir!, file);
+        if (!isPathInside(this._baseDir!, resolved))
+          throw new Error(`HAR entry _file escapes base directory: ${file}`);
+        buffer = await fs.promises.readFile(resolved);
+      }
     } else {
       buffer = Buffer.from(content.text || '', content.encoding === 'base64' ? 'base64' : 'utf-8');
     }

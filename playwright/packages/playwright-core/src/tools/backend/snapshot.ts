@@ -14,35 +14,45 @@
  * limitations under the License.
  */
 
-import { z } from '../../zodBundle';
-import { formatObject, formatObjectOrVoid } from '../../utils/isomorphic/stringUtils';
+import * as z from 'zod';
+import { formatObject, formatObjectOrVoid } from '@isomorphic/stringUtils';
+import { defineTabTool } from './tool';
 
-import { defineTabTool, defineTool } from './tool';
+import type * as playwright from '../../..';
 
-const snapshot = defineTool({
+const elementTargetDescription = 'Exact target element reference from the page snapshot, or a unique element selector';
+
+export const optionalElementSchema = z.object({
+  element: z.string().optional().describe('Human-readable element description used to obtain permission to interact with the element'),
+  target: z.string().optional().describe(elementTargetDescription),
+});
+
+export const elementSchema = z.object({
+  element: z.string().optional().describe('Human-readable element description used to obtain permission to interact with the element'),
+  target: z.string().describe(elementTargetDescription),
+});
+
+const snapshot = defineTabTool({
   capability: 'core',
   schema: {
     name: 'browser_snapshot',
     title: 'Page snapshot',
     description: 'Capture accessibility snapshot of the current page, this is better than screenshot',
     inputSchema: z.object({
+      target: z.string().optional().describe(elementTargetDescription),
       filename: z.string().optional().describe('Save snapshot to markdown file instead of returning it in the response.'),
-      selector: z.string().optional().describe('Element selector of the root element to capture a partial snapshot instead of the whole page'),
       depth: z.number().optional().describe('Limit the depth of the snapshot tree'),
+      boxes: z.boolean().optional().describe('Include each element\'s bounding box as [box=x,y,width,height] in the snapshot. Coordinates are viewport-relative, in CSS pixels (Element.getBoundingClientRect)'),
     }),
     type: 'readOnly',
   },
 
-  handle: async (context, params, response) => {
-    await context.ensureTab();
-    response.setIncludeFullSnapshot(params.filename, params.selector, params.depth);
+  handle: async (tab, params, response) => {
+    let resolved: { locator: playwright.Locator | undefined, resolved: string } = { locator: undefined, resolved: '' };
+    if (params.target)
+      resolved = await tab.targetLocator({ target: params.target });
+    response.setIncludeFullSnapshot(params.filename, resolved.locator, params.depth, params.boxes);
   },
-});
-
-export const elementSchema = z.object({
-  element: z.string().optional().describe('Human-readable element description used to obtain permission to interact with the element'),
-  ref: z.string().describe('Exact target element reference from the page snapshot'),
-  selector: z.string().optional().describe('CSS or role selector for the target element, when "ref" is not available'),
 });
 
 const clickSchema = elementSchema.extend({
@@ -64,7 +74,7 @@ const click = defineTabTool({
   handle: async (tab, params, response) => {
     response.setIncludeSnapshot();
 
-    const { locator, resolved } = await tab.refLocator(params);
+    const { locator, resolved } = await tab.targetLocator(params);
     const options = {
       button: params.button,
       modifiers: params.modifiers,
@@ -93,12 +103,10 @@ const drag = defineTabTool({
     title: 'Drag mouse',
     description: 'Perform drag and drop between two elements',
     inputSchema: z.object({
-      startElement: z.string().describe('Human-readable source element description used to obtain the permission to interact with the element'),
-      startRef: z.string().describe('Exact source element reference from the page snapshot'),
-      startSelector: z.string().optional().describe('CSS or role selector for the source element, when ref is not available'),
-      endElement: z.string().describe('Human-readable target element description used to obtain the permission to interact with the element'),
-      endRef: z.string().describe('Exact target element reference from the page snapshot'),
-      endSelector: z.string().optional().describe('CSS or role selector for the target element, when ref is not available'),
+      startElement: z.string().optional().describe('Human-readable source element description used to obtain the permission to interact with the element'),
+      startTarget: z.string().describe(elementTargetDescription),
+      endElement: z.string().optional().describe('Human-readable target element description used to obtain the permission to interact with the element'),
+      endTarget: z.string().describe(elementTargetDescription),
     }),
     type: 'input',
   },
@@ -106,9 +114,9 @@ const drag = defineTabTool({
   handle: async (tab, params, response) => {
     response.setIncludeSnapshot();
 
-    const [start, end] = await tab.refLocators([
-      { ref: params.startRef, selector: params.startSelector, element: params.startElement },
-      { ref: params.endRef, selector: params.endSelector, element: params.endElement },
+    const [start, end] = await tab.targetLocators([
+      { target: params.startTarget, element: params.startElement },
+      { target: params.endTarget, element: params.endElement },
     ]);
 
     await tab.waitForCompletion(async () => {
@@ -132,7 +140,7 @@ const hover = defineTabTool({
   handle: async (tab, params, response) => {
     response.setIncludeSnapshot();
 
-    const { locator, resolved } = await tab.refLocator(params);
+    const { locator, resolved } = await tab.targetLocator(params);
     response.addCode(`await page.${resolved}.hover();`);
 
     await locator.hover(tab.actionTimeoutOptions);
@@ -156,14 +164,14 @@ const selectOption = defineTabTool({
   handle: async (tab, params, response) => {
     response.setIncludeSnapshot();
 
-    const { locator, resolved } = await tab.refLocator(params);
+    const { locator, resolved } = await tab.targetLocator(params);
     response.addCode(`await page.${resolved}.selectOption(${formatObject(params.values)});`);
 
     await locator.selectOption(params.values, tab.actionTimeoutOptions);
   },
 });
 
-const pickLocator = defineTabTool({
+const generateLocator = defineTabTool({
   capability: 'testing',
   schema: {
     name: 'browser_generate_locator',
@@ -174,7 +182,7 @@ const pickLocator = defineTabTool({
   },
 
   handle: async (tab, params, response) => {
-    const { resolved } = await tab.refLocator(params);
+    const { resolved } = await tab.targetLocator(params);
     response.addTextResult(resolved);
   },
 });
@@ -192,7 +200,7 @@ const check = defineTabTool({
   },
 
   handle: async (tab, params, response) => {
-    const { locator, resolved } = await tab.refLocator(params);
+    const { locator, resolved } = await tab.targetLocator(params);
     response.addCode(`await page.${resolved}.check();`);
     await locator.check(tab.actionTimeoutOptions);
   },
@@ -210,7 +218,7 @@ const uncheck = defineTabTool({
   },
 
   handle: async (tab, params, response) => {
-    const { locator, resolved } = await tab.refLocator(params);
+    const { locator, resolved } = await tab.targetLocator(params);
     response.addCode(`await page.${resolved}.uncheck();`);
     await locator.uncheck(tab.actionTimeoutOptions);
   },
@@ -222,7 +230,7 @@ export default [
   drag,
   hover,
   selectOption,
-  pickLocator,
+  generateLocator,
   check,
   uncheck,
 ];

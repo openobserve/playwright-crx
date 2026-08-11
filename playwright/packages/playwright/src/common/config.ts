@@ -18,11 +18,11 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { getPackageJsonPath, mergeObjects } from '../util';
+import { packageJSON } from '../package';
+import { getPackageJsonPath, mergeObjects, takeFirst } from '../util';
 
 import type { Config, Fixtures, Metadata, Project, ReporterDescription } from '../../types/test';
 import type { TestRunnerPluginRegistration } from '../plugins';
-import type { Matcher, TestCaseFilter } from '../util';
 import type { ConfigCLIOverrides } from './ipc';
 import type { Location } from '../../types/testReporter';
 import type { FullConfig, FullProject } from '../../types/testReporter';
@@ -49,19 +49,6 @@ export class FullConfigInternal {
   readonly singleTSConfigPath?: string;
   readonly captureGitInfo: Config['captureGitInfo'];
   readonly failOnFlakyTests: boolean;
-  cliArgs: string[] = [];
-  cliGrep: string | undefined;
-  cliGrepInvert: string | undefined;
-  cliOnlyChanged: string | undefined;
-  cliProjectFilter?: string[];
-  cliListOnly = false;
-  cliPassWithNoTests?: boolean;
-  cliLastFailed?: boolean;
-  cliTestList?: string;
-  cliTestListInvert?: string;
-  loadFileFilters: Matcher[] = [];
-  preOnlyTestFilters: TestCaseFilter[] = [];
-  postShardTestFilters: TestCaseFilter[] = [];
   defineConfigWasUsed = false;
 
   globalSetups: string[] = [];
@@ -117,7 +104,7 @@ export class FullConfigInternal {
       tags: globalTags,
       updateSnapshots: takeFirst(configCLIOverrides.updateSnapshots, userConfig.updateSnapshots, 'missing'),
       updateSourceMethod: takeFirst(configCLIOverrides.updateSourceMethod, userConfig.updateSourceMethod, 'patch'),
-      version: require('../../package.json').version,
+      version: packageJSON.version,
       workers: resolveWorkers(takeFirst((configCLIOverrides.debug || configCLIOverrides.pause) ? 1 : undefined, configCLIOverrides.workers, userConfig.workers, '50%')),
       webServer: null,
     };
@@ -215,14 +202,6 @@ export class FullProjectInternal {
   }
 }
 
-export function takeFirst<T>(...args: (T | undefined)[]): T {
-  for (const arg of args) {
-    if (arg !== undefined)
-      return arg;
-  }
-  return undefined as any as T;
-}
-
 function pathResolve(baseDir: string, relative: string | undefined): string | undefined {
   if (!relative)
     return undefined;
@@ -246,8 +225,12 @@ function resolveWorkers(workers: string | number): number {
     const parsedWorkers = parseInt(workers, 10);
     if (isNaN(parsedWorkers))
       throw new Error(`Workers ${workers} must be a number or percentage.`);
+    if (parsedWorkers < 1)
+      throw new Error(`Workers must be a positive number, received ${parsedWorkers}.`);
     return parsedWorkers;
   }
+  if (workers < 1)
+    throw new Error(`Workers must be a positive number, received ${workers}.`);
   return workers;
 }
 

@@ -18,12 +18,11 @@
 import { playwrightTest as test, expect } from '../../config/browserTest';
 import http from 'http';
 import fs from 'fs';
-import { getUserAgent } from '../../../packages/playwright-core/lib/server/utils/userAgent';
-import { WebSocketTransport } from '../../../packages/playwright-core/lib/server/transport';
+import { getUserAgent, server as coreServer } from '../../../packages/playwright-core/lib/coreBundle';
 import { suppressCertificateWarning } from '../../config/utils';
-import type { Frame } from '../../../packages/playwright-core/lib/server/frames';
 
-test.skip(({ mode }) => mode === 'service2');
+const { nullProgress } = coreServer;
+type Frame = coreServer.Frame;
 
 test('should connect to an existing cdp session', async ({ browserType, mode }, testInfo) => {
   const port = 9339 + testInfo.workerIndex;
@@ -37,33 +36,6 @@ test('should connect to an existing cdp session', async ({ browserType, mode }, 
     const contexts = cdpBrowser.contexts();
     expect(contexts.length).toBe(1);
     await cdpBrowser.close();
-  } finally {
-    await browserServer.close();
-  }
-});
-
-test('should use logger in default context', async ({ browserType }, testInfo) => {
-  test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/28813' });
-  const port = 9339 + testInfo.workerIndex;
-  const browserServer = await browserType.launch({
-    args: ['--remote-debugging-port=' + port]
-  });
-  try {
-    const log = [];
-    const browser = await browserType.connectOverCDP({
-      endpointURL: `http://127.0.0.1:${port}/`,
-      logger: {
-        log: (name, severity, message) => log.push({ name, severity, message }),
-        isEnabled: (name, severity) => severity !== 'verbose'
-      }
-    });
-    const page = await browser.contexts()[0].newPage();
-    await page.setContent('<button>Button</button>');
-    await page.click('button');
-    await browser.close();
-    expect(log.length > 0).toBeTruthy();
-    expect(log.filter(item => item.message.includes('page.setContent')).length > 0).toBeTruthy();
-    expect(log.filter(item => item.message.includes('page.click')).length > 0).toBeTruthy();
   } finally {
     await browserServer.close();
   }
@@ -457,6 +429,25 @@ test('should use proxy with connectOverCDP', async ({ browserType, server }, tes
   }
 });
 
+test('should use env proxy with connectOverCDP discovery request', async ({ browserType, server, proxyServer, mode }) => {
+  test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/40394' });
+  test.skip(mode !== 'default'); // Out of process transport does not allow us to set env vars dynamically.
+  proxyServer.forwardTo(server.PORT);
+
+  const oldValue = process.env.HTTP_PROXY;
+  try {
+    process.env.HTTP_PROXY = proxyServer.URL;
+    const error = await browserType.connectOverCDP(server.PREFIX).catch(e => e);
+    expect(error.message).toContain(`Unexpected status 404 when connecting to ${server.PREFIX}/json/version/`);
+    expect(proxyServer.requestUrls).toEqual([`${server.PREFIX}/json/version/`]);
+  } finally {
+    if (oldValue === undefined)
+      delete process.env.HTTP_PROXY;
+    else
+      process.env.HTTP_PROXY = oldValue;
+  }
+});
+
 test('should be able to connect via localhost', async ({ browserType }, testInfo) => {
   const port = 9339 + testInfo.workerIndex;
   const browserServer = await browserType.launch({
@@ -591,13 +582,13 @@ test('should not reuse utility worlds between two clients', async ({ browserType
     expect(context1.pages().length).toBe(0);
     const page1 = await context1.newPage();
     const frameImpl1 = toImpl(page1.mainFrame()) as Frame;
-    await frameImpl1.evaluateExpression('window.foo = 42', { world: 'utility' });
+    await frameImpl1.evaluateExpression(nullProgress, 'window.foo = 42', { world: 'utility' });
 
     const browser2 = await browserType.connectOverCDP(`http://127.0.0.1:${port}/`);
     const context2 = browser2.contexts()[0];
     const page2 = context2.pages()[0];
     const frameImpl2 = toImpl(page2.mainFrame()) as Frame;
-    const result = await frameImpl2.evaluateExpression('window.foo', { world: 'utility' });
+    const result = await frameImpl2.evaluateExpression(nullProgress, 'window.foo', { world: 'utility' });
 
     await browser1.close();
     await browser2.close();
@@ -645,30 +636,59 @@ test('should get title and URL of existing page', async ({ browserType, mode, se
   }
 });
 
-test('should connect over CDP using a ConnectionTransport', async ({ browserType, mode, server }, testInfo) => {
-  test.skip(mode !== 'default', '_connectOverCDPTransport is only available in-process');
-
+test('should skip default overrides with noDefaults', async ({ browserType, mode, server }, testInfo) => {
+  test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/40158' });
   const port = 9339 + testInfo.workerIndex;
   const browserServer = await browserType.launch({
     args: ['--remote-debugging-port=' + port]
   });
   try {
-    const json = await new Promise<string>((resolve, reject) => {
-      http.get(`http://127.0.0.1:${port}/json/version/`, resp => {
-        let data = '';
-        resp.on('data', chunk => data += chunk);
-        resp.on('end', () => resolve(data));
-      }).on('error', reject);
+    const browser = await browserType.connectOverCDP({
+      endpointURL: `http://127.0.0.1:${port}/`,
+      noDefaults: true,
     });
-    const wsEndpoint = JSON.parse(json).webSocketDebuggerUrl;
-    const transport = await WebSocketTransport.connect(undefined, wsEndpoint);
-    const cdpBrowser = await (browserType as any)._connectOverCDPTransport(transport);
-    const contexts = cdpBrowser.contexts();
-    expect(contexts.length).toBe(1);
-    const page = await contexts[0].newPage();
-    await page.goto(server.EMPTY_PAGE);
-    expect(page.url()).toBe(server.EMPTY_PAGE);
-    await cdpBrowser.close();
+    const defaultContext = browser.contexts()[0];
+    const page = await defaultContext.newPage();
+
+    // Browser.setDownloadBehavior was not sent, so no Playwright download event fires.
+    server.setRoute('/download', (req, res) => {
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Disposition', 'attachment; filename=file.txt');
+      res.end('Hello world');
+    });
+    await page.setContent(`<a href="${server.PREFIX}/download">download</a>`);
+    let sawDownload = false;
+    page.on('download', () => { sawDownload = true; });
+    await page.click('a');
+    await page.waitForTimeout(500);
+    expect(sawDownload).toBe(false);
+
+    await browser.close();
+  } finally {
+    await browserServer.close();
+  }
+});
+
+test('noDefaults should not affect new contexts', async ({ browserType, mode, server }, testInfo) => {
+  test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/40158' });
+  const port = 9339 + testInfo.workerIndex;
+  const browserServer = await browserType.launch({
+    args: ['--remote-debugging-port=' + port]
+  });
+  try {
+    const browser = await browserType.connectOverCDP({
+      endpointURL: `http://127.0.0.1:${port}/`,
+      noDefaults: true,
+    });
+
+    // New contexts should still get normal Playwright defaults.
+    const newContext = await browser.newContext();
+    const page = await newContext.newPage();
+    const hasFocus = await page.evaluate(() => document.hasFocus());
+    expect(hasFocus).toBe(true);
+
+    await newContext.close();
+    await browser.close();
   } finally {
     await browserServer.close();
   }

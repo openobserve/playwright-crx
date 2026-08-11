@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 
-import { z } from '../../zodBundle';
+import * as z from 'zod';
 import { declareCommand } from './command';
 
 import type { AnyCommandSchema } from './command';
+
+const elementTargetDescription = 'Exact target element reference from the page snapshot, or a unique element selector';
 
 const numberArg = z.preprocess((val, ctx) => {
   const number = Number(val);
@@ -31,14 +33,6 @@ const numberArg = z.preprocess((val, ctx) => {
   return number;
 }, z.number());
 
-function asRef(refOrSelector: string | undefined): { ref?: string, selector?: string } {
-  if (refOrSelector === undefined)
-    return {};
-  if (refOrSelector.match(/^(f\d+)?e\d+$/))
-    return { ref: refOrSelector };
-  return { ref: '', selector: refOrSelector };
-}
-
 // Navigation commands
 
 const open = declareCommand({
@@ -51,13 +45,12 @@ const open = declareCommand({
   options: z.object({
     browser: z.string().optional().describe('Browser or chrome channel to use, possible values: chrome, firefox, webkit, msedge.'),
     config: z.string().optional().describe('Path to the configuration file, defaults to .playwright/cli.config.json'),
-    extension: z.boolean().optional().describe('Connect to browser extension'),
     headed: z.boolean().optional().describe('Run browser in headed mode'),
     persistent: z.boolean().optional().describe('Use persistent browser profile'),
-    profile: z.string().optional().describe('Use persistent browser profile, store profile in specified directory.'),
+    profile: z.string().optional().describe('Path to a persistent user data directory.'),
   }),
-  toolName: ({ url }) => url ? 'browser_navigate' : 'browser_snapshot',
-  toolParams: ({ url }) => url ? ({ url: url || 'about:blank' }) : { filename: '<auto>' },
+  toolName: '',
+  toolParams: () => ({}),
 });
 
 const attach = declareCommand({
@@ -65,11 +58,14 @@ const attach = declareCommand({
   description: 'Attach to a running Playwright browser',
   category: 'core',
   args: z.object({
-    name: z.string().describe('Name or endpoint of the browser to attach to'),
+    name: z.string().optional().describe('Bound browser name to attach to'),
   }),
   options: z.object({
+    cdp: z.string().optional().describe('Connect to an existing browser via CDP endpoint URL.'),
+    endpoint: z.string().optional().describe('Playwright browser server endpoint to attach to.'),
+    extension: z.union([z.boolean(), z.string()]).optional().describe('Connect to browser extension, optionally specify browser name (e.g. --extension=chrome)'),
     config: z.string().optional().describe('Path to the configuration file, defaults to .playwright/cli.config.json'),
-    session: z.string().optional().describe('Session name alias (defaults to the attach target name)'),
+    session: z.string().optional().describe('Session name (defaults to bound browser name or "default")'),
   }),
   toolName: 'browser_snapshot',
   toolParams: () => ({ filename: '<auto>' }),
@@ -78,6 +74,15 @@ const attach = declareCommand({
 const close = declareCommand({
   name: 'close',
   description: 'Close the browser',
+  category: 'core',
+  args: z.object({}),
+  toolName: '',
+  toolParams: () => ({}),
+});
+
+const detach = declareCommand({
+  name: 'detach',
+  description: 'Detach from an attached browser',
   category: 'core',
   args: z.object({}),
   toolName: '',
@@ -226,14 +231,14 @@ const click = declareCommand({
   description: 'Perform click on a web page',
   category: 'core',
   args: z.object({
-    target: z.string().describe('Exact target element reference from the page snapshot, or a unique element selector'),
+    target: z.string().describe(elementTargetDescription),
     button: z.string().optional().describe('Button to click, defaults to left'),
   }),
   options: z.object({
     modifiers: z.array(z.string()).optional().describe('Modifier keys to press'),
   }),
   toolName: 'browser_click',
-  toolParams: ({ target, button, modifiers }) => ({ ...asRef(target), button, modifiers }),
+  toolParams: ({ target, button, modifiers }) => ({ target, button, modifiers }),
 });
 
 const doubleClick = declareCommand({
@@ -241,14 +246,14 @@ const doubleClick = declareCommand({
   description: 'Perform double click on a web page',
   category: 'core',
   args: z.object({
-    target: z.string().describe('Exact target element reference from the page snapshot, or a unique element selector'),
+    target: z.string().describe(elementTargetDescription),
     button: z.string().optional().describe('Button to click, defaults to left'),
   }),
   options: z.object({
     modifiers: z.array(z.string()).optional().describe('Modifier keys to press'),
   }),
   toolName: 'browser_click',
-  toolParams: ({ target, button, modifiers }) => ({ ...asRef(target), button, modifiers, doubleClick: true }),
+  toolParams: ({ target, button, modifiers }) => ({ target, button, modifiers, doubleClick: true }),
 });
 
 const drag = declareCommand({
@@ -256,14 +261,37 @@ const drag = declareCommand({
   description: 'Perform drag and drop between two elements',
   category: 'core',
   args: z.object({
-    startElement: z.string().describe('Exact source element reference from the page snapshot, or a unique element selector'),
-    endElement: z.string().describe('Exact target element reference from the page snapshot, or a unique element selector'),
+    startTarget: z.string().describe('Exact source element reference from the page snapshot, or a unique element selector'),
+    endTarget: z.string().describe(elementTargetDescription),
   }),
   toolName: 'browser_drag',
-  toolParams: ({ startElement, endElement }) => {
-    const start = asRef(startElement);
-    const end = asRef(endElement);
-    return { startRef: start.ref, startSelector: start.selector, endRef: end.ref, endSelector: end.selector };
+  toolParams: ({ startTarget, endTarget }) => ({ startTarget, endTarget }),
+});
+
+const drop = declareCommand({
+  name: 'drop',
+  description: 'Drop files or data onto an element',
+  category: 'core',
+  args: z.object({
+    target: z.string().describe(elementTargetDescription),
+  }),
+  options: z.object({
+    path: z.union([z.string(), z.array(z.string())]).optional().transform(v => v ? (Array.isArray(v) ? v : [v]) : undefined).describe('Absolute path to a file to drop onto the element (repeatable)'),
+    data: z.union([z.string(), z.array(z.string())]).optional().transform(v => v ? (Array.isArray(v) ? v : [v]) : undefined).describe('Data to drop in "mime/type=value" format, e.g. --data "text/plain=hello" (repeatable)'),
+  }),
+  toolName: 'browser_drop',
+  toolParams: ({ target, path, data }) => {
+    let dataMap: Record<string, string> | undefined;
+    if (data) {
+      dataMap = {};
+      for (const entry of data) {
+        const idx = entry.indexOf('=');
+        if (idx === -1)
+          throw new Error(`--data must be in "mime/type=value" format, got: ${entry}`);
+        dataMap[entry.slice(0, idx)] = entry.slice(idx + 1);
+      }
+    }
+    return { target, paths: path, data: dataMap };
   },
 });
 
@@ -272,14 +300,14 @@ const fill = declareCommand({
   description: 'Fill text into editable element',
   category: 'core',
   args: z.object({
-    target: z.string().describe('Exact target element reference from the page snapshot, or a unique element selector'),
+    target: z.string().describe(elementTargetDescription),
     text: z.string().describe('Text to fill into the element'),
   }),
   options: z.object({
     submit: z.boolean().optional().describe('Whether to submit entered text (press Enter after)'),
   }),
   toolName: 'browser_type',
-  toolParams: ({ target, text, submit }) => ({ ...asRef(target), text, submit }),
+  toolParams: ({ target, text, submit }) => ({ target, text, submit }),
 });
 
 const hover = declareCommand({
@@ -287,10 +315,10 @@ const hover = declareCommand({
   description: 'Hover over element on page',
   category: 'core',
   args: z.object({
-    target: z.string().describe('Exact target element reference from the page snapshot, or a unique element selector'),
+    target: z.string().describe(elementTargetDescription),
   }),
   toolName: 'browser_hover',
-  toolParams: ({ target }) => ({ ...asRef(target) }),
+  toolParams: ({ target }) => ({ target }),
 });
 
 const select = declareCommand({
@@ -298,11 +326,11 @@ const select = declareCommand({
   description: 'Select an option in a dropdown',
   category: 'core',
   args: z.object({
-    target: z.string().describe('Exact target element reference from the page snapshot, or a unique element selector'),
+    target: z.string().describe(elementTargetDescription),
     val: z.string().describe('Value to select in the dropdown'),
   }),
   toolName: 'browser_select_option',
-  toolParams: ({ target, val: value }) => ({ ...asRef(target), values: [value] }),
+  toolParams: ({ target, val: value }) => ({ target, values: [value] }),
 });
 
 const fileUpload = declareCommand({
@@ -321,10 +349,10 @@ const check = declareCommand({
   description: 'Check a checkbox or radio button',
   category: 'core',
   args: z.object({
-    target: z.string().describe('Exact target element reference from the page snapshot, or a unique element selector'),
+    target: z.string().describe(elementTargetDescription),
   }),
   toolName: 'browser_check',
-  toolParams: ({ target }) => ({ ...asRef(target) }),
+  toolParams: ({ target }) => ({ target }),
 });
 
 const uncheck = declareCommand({
@@ -332,10 +360,10 @@ const uncheck = declareCommand({
   description: 'Uncheck a checkbox or radio button',
   category: 'core',
   args: z.object({
-    target: z.string().describe('Exact target element reference from the page snapshot, or a unique element selector'),
+    target: z.string().describe(elementTargetDescription),
   }),
   toolName: 'browser_uncheck',
-  toolParams: ({ target }) => ({ ...asRef(target) }),
+  toolParams: ({ target }) => ({ target }),
 });
 
 const snapshot = declareCommand({
@@ -343,14 +371,41 @@ const snapshot = declareCommand({
   description: 'Capture page snapshot to obtain element ref',
   category: 'core',
   args: z.object({
-    element: z.string().optional().describe('Element selector of the root element to capture a partial snapshot instead of the whole page'),
+    target: z.string().optional().describe('Element reference from the previous page snapshot, or a unique element selector for the root element to capture a partial snapshot instead of the whole page'),
   }),
   options: z.object({
     filename: z.string().optional().describe('Save snapshot to markdown file instead of returning it in the response.'),
     depth: numberArg.optional().describe('Limit snapshot depth, unlimited by default.'),
+    boxes: z.boolean().optional().describe('Include each element\'s bounding box as [box=x,y,width,height] in the snapshot. Coordinates are viewport-relative, in CSS pixels (Element.getBoundingClientRect).'),
   }),
   toolName: 'browser_snapshot',
-  toolParams: ({ filename, element, depth }) => ({ filename, selector: element, depth }),
+  toolParams: ({ filename, target, depth, boxes }) => ({ filename, target, depth, boxes }),
+});
+
+const generateLocator = declareCommand({
+  name: 'generate-locator',
+  description: 'Generate a Playwright locator for the given element',
+  category: 'devtools',
+  args: z.object({
+    target: z.string().describe(elementTargetDescription),
+  }),
+  toolName: 'browser_generate_locator',
+  toolParams: ({ target }) => ({ target }),
+});
+
+const highlight = declareCommand({
+  name: 'highlight',
+  description: 'Show (or with --hide, remove) a highlight overlay for an element; `--hide` without a target hides all page highlights.',
+  category: 'devtools',
+  args: z.object({
+    target: z.string().optional().describe(elementTargetDescription),
+  }),
+  options: z.object({
+    hide: z.boolean().optional().describe('Hide a previously added highlight for this element, or all page highlights when no element is given'),
+    style: z.string().optional().describe('Additional inline CSS applied to the highlight overlay, e.g. "outline: 2px dashed red"'),
+  }),
+  toolName: ({ hide }) => hide ? 'browser_hide_highlight' : 'browser_highlight',
+  toolParams: ({ target, style }) => ({ target, style }),
 });
 
 const evaluate = declareCommand({
@@ -359,13 +414,13 @@ const evaluate = declareCommand({
   category: 'core',
   args: z.object({
     func: z.string().describe('() => { /* code */ } or (element) => { /* code */ } when element is provided'),
-    element: z.string().optional().describe('Exact target element reference from the page snapshot, or a unique element selector'),
+    target: z.string().optional().describe(elementTargetDescription),
   }),
   options: z.object({
     filename: z.string().optional().describe('Save evaluation result to a file instead of returning it in the response.'),
   }),
   toolName: 'browser_evaluate',
-  toolParams: ({ func, element, filename }) => ({ function: func, filename, ...asRef(element) }),
+  toolParams: ({ func, target, filename }) => ({ function: func, filename, target }),
 });
 
 const dialogAccept = declareCommand({
@@ -410,7 +465,7 @@ const runCode = declareCommand({
   options: z.object({
     filename: z.string().optional().describe('Load code from the specified file.'),
   }),
-  toolName: 'browser_run_code',
+  toolName: 'browser_run_code_unsafe',
   toolParams: ({ code, filename }) => ({ code, filename }),
 });
 
@@ -488,6 +543,7 @@ const cookieList = declareCommand({
   name: 'cookie-list',
   description: 'List all cookies (optionally filtered by domain/path)',
   category: 'storage',
+  raw: true,
   args: z.object({}),
   options: z.object({
     domain: z.string().optional().describe('Filter cookies by domain'),
@@ -501,6 +557,7 @@ const cookieGet = declareCommand({
   name: 'cookie-get',
   description: 'Get a specific cookie by name',
   category: 'storage',
+  raw: true,
   args: z.object({
     name: z.string().describe('Cookie name'),
   }),
@@ -554,6 +611,7 @@ const localStorageList = declareCommand({
   name: 'localstorage-list',
   description: 'List all localStorage key-value pairs',
   category: 'storage',
+  raw: true,
   args: z.object({}),
   toolName: 'browser_localstorage_list',
   toolParams: () => ({}),
@@ -563,6 +621,7 @@ const localStorageGet = declareCommand({
   name: 'localstorage-get',
   description: 'Get a localStorage item by key',
   category: 'storage',
+  raw: true,
   args: z.object({
     key: z.string().describe('Key to get'),
   }),
@@ -608,6 +667,7 @@ const sessionStorageList = declareCommand({
   name: 'sessionstorage-list',
   description: 'List all sessionStorage key-value pairs',
   category: 'storage',
+  raw: true,
   args: z.object({}),
   toolName: 'browser_sessionstorage_list',
   toolParams: () => ({}),
@@ -617,6 +677,7 @@ const sessionStorageGet = declareCommand({
   name: 'sessionstorage-get',
   description: 'Get a sessionStorage item by key',
   category: 'storage',
+  raw: true,
   args: z.object({
     key: z.string().describe('Key to get'),
   }),
@@ -687,6 +748,7 @@ const routeList = declareCommand({
   name: 'route-list',
   description: 'List all active network routes',
   category: 'network',
+  raw: true,
   args: z.object({}),
   toolName: 'browser_route_list',
   toolParams: () => ({}),
@@ -721,14 +783,14 @@ const screenshot = declareCommand({
   description: 'screenshot of the current page or element',
   category: 'export',
   args: z.object({
-    target: z.string().optional().describe('Exact target element reference from the page snapshot, or a unique element selector.'),
+    target: z.string().optional().describe(elementTargetDescription),
   }),
   options: z.object({
     filename: z.string().optional().describe('File name to save the screenshot to. Defaults to `page-{timestamp}.{png|jpeg}` if not specified.'),
     ['full-page']: z.boolean().optional().describe('When true, takes a screenshot of the full scrollable page, instead of the currently visible viewport.'),
   }),
   toolName: 'browser_take_screenshot',
-  toolParams: ({ target, filename, ['full-page']: fullPage }) => ({ filename, ...asRef(target), fullPage }),
+  toolParams: ({ target, filename, ['full-page']: fullPage }) => ({ filename, target, fullPage }),
 });
 
 const pdfSave = declareCommand({
@@ -760,19 +822,93 @@ const consoleList = declareCommand({
 });
 
 const networkRequests = declareCommand({
-  name: 'network',
-  description: 'List all network requests since loading the page',
-  category: 'devtools',
+  name: 'requests',
+  description: 'List all network requests since loading the page. Each request is numbered for use with the `request` command.',
+  category: 'network',
   args: z.object({}),
   options: z.object({
     static: z.boolean().optional().describe('Whether to include successful static resources like images, fonts, scripts, etc. Defaults to false.'),
-    ['request-body']: z.boolean().optional().describe('Whether to include request body. Defaults to false.'),
-    ['request-headers']: z.boolean().optional().describe('Whether to include request headers. Defaults to false.'),
     filter: z.string().optional().describe('Only return requests whose URL matches this regexp (e.g. "/api/.*user").'),
     clear: z.boolean().optional().describe('Whether to clear the network list'),
   }),
   toolName: ({ clear }) => clear ? 'browser_network_clear' : 'browser_network_requests',
-  toolParams: ({ static: s, 'request-body': requestBody, 'request-headers': requestHeaders, filter, clear }) => clear ? ({}) : ({ static: s, requestBody, requestHeaders, filter }),
+  toolParams: ({ static: s, filter, clear }) => clear ? ({}) : ({ static: s, filter }),
+});
+
+const filenameOption = z.string().optional().describe('Filename to save the result to. If not provided, output is returned as text.');
+
+const networkRequest = declareCommand({
+  name: 'request',
+  description: 'Show full details (headers, body, response) of a single network request by its number from the `requests` command.',
+  category: 'network',
+  args: z.object({
+    index: numberArg.describe('1-based number of the request as listed by `requests`'),
+  }),
+  options: z.object({
+    filename: filenameOption,
+  }),
+  toolName: 'browser_network_request',
+  toolParams: ({ index, filename }) => ({ index, filename }),
+});
+
+const networkRequestHeaders = declareCommand({
+  name: 'request-headers',
+  description: 'Print only the request headers for a single network request by its number from the `requests` command.',
+  category: 'network',
+  raw: true,
+  args: z.object({
+    index: numberArg.describe('1-based number of the request as listed by `requests`'),
+  }),
+  options: z.object({
+    filename: filenameOption,
+  }),
+  toolName: 'browser_network_request',
+  toolParams: ({ index, filename }) => ({ index, part: 'request-headers', filename }),
+});
+
+const networkRequestBody = declareCommand({
+  name: 'request-body',
+  description: 'Print only the request body for a single network request by its number from the `requests` command.',
+  category: 'network',
+  raw: true,
+  args: z.object({
+    index: numberArg.describe('1-based number of the request as listed by `requests`'),
+  }),
+  options: z.object({
+    filename: filenameOption,
+  }),
+  toolName: 'browser_network_request',
+  toolParams: ({ index, filename }) => ({ index, part: 'request-body', filename }),
+});
+
+const networkResponseHeaders = declareCommand({
+  name: 'response-headers',
+  description: 'Print only the response headers for a single network request by its number from the `requests` command.',
+  category: 'network',
+  raw: true,
+  args: z.object({
+    index: numberArg.describe('1-based number of the request as listed by `requests`'),
+  }),
+  options: z.object({
+    filename: filenameOption,
+  }),
+  toolName: 'browser_network_request',
+  toolParams: ({ index, filename }) => ({ index, part: 'response-headers', filename }),
+});
+
+const networkResponseBody = declareCommand({
+  name: 'response-body',
+  description: 'Print the response body for a single network request by its number from the `requests` command. Textual bodies are inlined; binary bodies are saved to a file and the path is printed.',
+  category: 'network',
+  raw: true,
+  args: z.object({
+    index: numberArg.describe('1-based number of the request as listed by `requests`'),
+  }),
+  options: z.object({
+    filename: filenameOption,
+  }),
+  toolName: 'browser_network_request',
+  toolParams: ({ index, filename }) => ({ index, part: 'response-body', filename }),
 });
 
 const tracingStart = declareCommand({
@@ -833,12 +969,19 @@ const videoChapter = declareCommand({
   toolParams: ({ title, description, duration }) => ({ title, description, duration }),
 });
 
-const devtoolsShow = declareCommand({
+const dashboardShow = declareCommand({
   name: 'show',
-  description: 'Show browser DevTools',
+  description: 'Show Playwright Dashboard',
   category: 'devtools',
+  raw: true,
   args: z.object({}),
-  toolName: '',
+  options: z.object({
+    port: numberArg.optional().describe('Start as a blocking HTTP server on this port (use 0 for a random port)'),
+    host: z.string().optional().describe('Host to bind to when using --port (defaults to localhost)'),
+    annotate: z.boolean().optional().describe('Switch the dashboard into annotation mode.'),
+    kill: z.boolean().optional().describe('Kill the dashboard daemon.'),
+  }),
+  toolName: ({ annotate }) => annotate ? 'browser_annotate' : '',
   toolParams: () => ({}),
 });
 
@@ -924,7 +1067,7 @@ const install = declareCommand({
   category: 'install',
   args: z.object({}),
   options: z.object({
-    skills: z.string().optional().describe('Install skills to ".claude" (default) or ".agents" dir'),
+    skills: z.string().optional().describe('Install skills, possible values: claude (default), agents.'),
   }),
   toolName: '',
   toolParams: () => ({}),
@@ -963,12 +1106,14 @@ const commandsArray: AnyCommandSchema[] = [
   open,
   attach,
   close,
+  detach,
   goto,
   type,
   click,
   doubleClick,
   fill,
   drag,
+  drop,
   hover,
   select,
   fileUpload,
@@ -1029,6 +1174,12 @@ const commandsArray: AnyCommandSchema[] = [
   sessionStorageClear,
 
   // network category
+  networkRequests,
+  networkRequest,
+  networkRequestHeaders,
+  networkRequestBody,
+  networkResponseHeaders,
+  networkResponseBody,
   routeMock,
   routeList,
   unroute,
@@ -1042,16 +1193,17 @@ const commandsArray: AnyCommandSchema[] = [
   installBrowser,
 
   // devtools category
-  networkRequests,
   tracingStart,
   tracingStop,
   videoStart,
   videoStop,
   videoChapter,
-  devtoolsShow,
+  dashboardShow,
   pauseAt,
   resume,
   stepOver,
+  generateLocator,
+  highlight,
 
   // session category
   sessionList,
