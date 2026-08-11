@@ -15,9 +15,10 @@
  * limitations under the License.
  */
 
-import type { HeadersArray, Point, Size } from '../utils/isomorphic/types';
-export type { HeadersArray, Point, Quad, Rect, Size } from '../utils/isomorphic/types';
+import type { HeadersArray, Point, Size } from '@isomorphic/types';
+export type { HeadersArray, Point, Quad, Rect, Size } from '@isomorphic/types';
 import type * as channels from '@protocol/channels';
+import type { ProxySettings } from '@utils/network';
 
 export type StrictOptions = {
   strict?: boolean,
@@ -101,13 +102,7 @@ export type DeviceDescriptor = {
   defaultBrowserType: 'chromium' | 'firefox' | 'webkit'
 };
 export type Devices = { [name: string]: DeviceDescriptor };
-
-export type ProxySettings = {
-  server: string,
-  bypass?: string,
-  username?: string,
-  password?: string
-};
+export type { ProxySettings } from '@utils/network';
 
 export type KeyboardModifier = 'Alt' | 'Control' | 'Meta' | 'Shift';
 export type SmartKeyboardModifier = KeyboardModifier |  'ControlOrMeta';
@@ -160,9 +155,7 @@ export type NormalizedContinueOverrides = {
 export type EmulatedSize = { viewport: Size, screen: Size };
 
 export type LaunchOptions = Omit<channels.BrowserTypeLaunchParams, 'timeout'> & {
-  cdpPort?: number,
   proxyOverride?: ProxySettings,
-  assistantMode?: boolean,
   socksProxyPort?: number,
 };
 

@@ -15,9 +15,9 @@
  * limitations under the License.
  */
 
-import type { Size } from '../utils/isomorphic/types';
+import type { Size } from '@isomorphic/types';
 import type * as channels from '@protocol/channels';
-export type { HeadersArray, Point, Quad, Rect, Size } from '../utils/isomorphic/types';
+export type { HeadersArray, Point, Quad, Rect, Size } from '@isomorphic/types';
 
 type LoggerSeverity = 'verbose' | 'info' | 'warning' | 'error';
 export interface Logger {
@@ -35,6 +35,10 @@ export type WaitForFunctionOptions = TimeoutOptions & { polling?: 'raf' | number
 export type SelectOption = { value?: string, label?: string, index?: number, valueOrLabel?: string };
 export type SelectOptionOptions = TimeoutOptions & { force?: boolean };
 export type FilePayload = { name: string, mimeType: string, buffer: Buffer };
+export type DropPayload = {
+  files?: string | FilePayload | string[] | FilePayload[],
+  data?: { [mimeType: string]: string },
+};
 export type StorageState = {
   cookies: channels.NetworkCookie[],
   origins: (Omit<channels.OriginStorage, 'indexedDB'>)[],
@@ -62,8 +66,6 @@ export type BrowserContextOptions = Omit<channels.BrowserNewContextOptions, 'vie
   viewport?: Size | null;
   extraHTTPHeaders?: Headers;
   logger?: Logger;
-  videosPath?: string;
-  videoSize?: Size;
   storageState?: string | SetStorageState;
   har?: {
     path: string;
@@ -102,7 +104,6 @@ export type ConnectOptions = {
   exposeNetwork?: string;
   slowMo?: number;
   timeout?: number;
-  logger?: Logger;
 };
 export type LaunchServerOptions = LaunchOptions & {
   host?: string,

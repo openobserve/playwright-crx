@@ -15,16 +15,29 @@
  */
 
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { Transform } from 'stream';
 
-import { HttpServer, MultiMap, assert, calculateSha1, getPackageManagerExecCommand, copyFileAndMakeWritable, gracefullyProcessExitDoNotHang, removeFolders, sanitizeForFilePath, toPosixPath } from 'playwright-core/lib/utils';
-import { colors } from 'playwright-core/lib/utils';
-import { open } from 'playwright-core/lib/utilsBundle';
-import { mime } from 'playwright-core/lib/utilsBundle';
+import colors from 'colors/safe';
+import mime from 'mime';
+import open from 'open';
+import * as yazl from 'yazl';
+import { MultiMap } from '@isomorphic/multimap';
+import { calculateSha1 } from '@utils/crypto';
+import { copyFileAndMakeWritable, removeFolders, sanitizeForFilePath, toPosixPath } from '@utils/fileUtils';
+import { getPackageManagerExecCommand, isCodingAgent } from '@utils/env';
+import { HttpServer, serveFolder } from '@utils/httpServer';
+import { gracefullyProcessExitDoNotHang } from '@utils/processLauncher';
+import { extractZip } from '@utils/third_party/extractZip';
+
+// HMR: build-time flag — `true` in watch builds, `false` in release. esbuild's
+// `define` in the runner bundle replaces this so the dev-server code (incl.
+// `import('vite')`) is DCE'd in release builds.
+declare const __PW_HMR__: boolean;
 
 import { CommonReporterOptions, formatError, formatResultFailure, internalScreen } from './base';
-import { codeFrameColumns } from '../transform/babelBundle';
+import * as babel from '../transform/babelBundle';
 import { resolveReporterOutputPath, stripAnsiEscapes } from '../util';
 
 import type { ReportConfigureParams, ReportEndParams, ReporterV2 } from './reporterV2';
@@ -32,7 +45,7 @@ import type { HtmlReporterOptions as HtmlReporterConfigOptions, Metadata, TestAn
 import type * as api from '../../types/testReporter';
 import type { HTMLReport, HTMLReportOptions, Location, Stats, TestAttachment, TestCase, TestCaseSummary, TestFile, TestFileSummary, TestResult, TestStep } from '@html-reporter/types';
 import type { TransformCallback } from 'stream';
-import type { ZipFile } from 'playwright-core/lib/zipBundle';
+import type { ZipFile } from 'yazl';
 
 type TestEntry = {
   testCase: TestCase;
@@ -145,7 +158,6 @@ class HtmlReporter implements ReporterV2 {
     const noCopyPrompt = parseBooleanEnvVar('PLAYWRIGHT_HTML_NO_COPY_PROMPT') ?? this._options.noCopyPrompt;
     const doNotInlineAssets = parseBooleanEnvVar('PLAYWRIGHT_HTML_DO_NOT_INLINE_ASSETS') ?? this._options.doNotInlineAssets ?? false;
 
-    const { yazl } = await import('playwright-core/lib/zipBundle');
     const builder = new HtmlBuilder(yazl, this.config, this._outputFolder, this._attachmentsBaseURL, doNotInlineAssets, {
       title: process.env.PLAYWRIGHT_HTML_TITLE || this._options.title,
       noSnippets,
@@ -158,8 +170,7 @@ class HtmlReporter implements ReporterV2 {
     if (process.env.CI || !this._buildResult)
       return;
     const { ok, singleTestId } = this._buildResult;
-    const isCodingAgent = !!process.env.CLAUDECODE || !!process.env.COPILOT_CLI;
-    const shouldOpen = !isCodingAgent && !!process.stdin.isTTY && (this._open === 'always' || (!ok && this._open === 'on-failure'));
+    const shouldOpen = !isCodingAgent() && !!process.stdin.isTTY && (this._open === 'always' || (!ok && this._open === 'on-failure'));
     if (shouldOpen) {
       await showHTMLReport(this._outputFolder, this._host, this._port, singleTestId);
     } else if (this._options._mode === 'test' && !!process.stdin.isTTY) {
@@ -207,16 +218,58 @@ function standaloneDefaultFolder(): string {
   return reportFolderFromEnv() ?? resolveReporterOutputPath('playwright-report', process.cwd(), undefined);
 }
 
-export async function showHTMLReport(reportFolder: string | undefined, host: string = 'localhost', port?: number, testId?: string) {
-  const folder = reportFolder ?? standaloneDefaultFolder();
+async function resolveReportFolder(reportPath: string): Promise<string> {
+  const stat = await fs.promises.stat(reportPath).catch(() => null);
+  if (!stat)
+    throw new Error(`No report found at "${reportPath}"`);
+  if (stat.isDirectory())
+    return reportPath;
+  if (stat.isFile() && reportPath.toLowerCase().endsWith('.zip'))
+    return await extractReportZip(reportPath);
+  throw new Error(`No report found at "${reportPath}"`);
+}
+
+async function extractReportZip(zipPath: string): Promise<string> {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'playwright-show-report-'));
+  const cleanup = () => {
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+    }
+  };
+  // Default Node behavior on SIGINT/SIGTERM is to terminate, which fires 'exit'.
+  process.on('exit', cleanup);
   try {
-    assert(fs.statSync(folder).isDirectory());
+    await extractZip(zipPath, { dir: tempDir });
   } catch (e) {
-    writeLine(colors.red(`No report found at "${folder}"`));
+    cleanup();
+    throw new Error(`Failed to extract report from "${zipPath}": ${e.message}`);
+  }
+  const hasIndex = await fs.promises.access(path.join(tempDir, 'index.html')).then(() => true, () => false);
+  if (!hasIndex) {
+    cleanup();
+    throw new Error(`No "index.html" found at the top level of "${zipPath}"`);
+  }
+  return tempDir;
+}
+
+export async function showHTMLReport(reportFolder: string | undefined, host: string = 'localhost', port?: number, testId?: string) {
+  const requestedPath = reportFolder ?? standaloneDefaultFolder();
+  let folder: string;
+  try {
+    folder = await resolveReportFolder(requestedPath);
+  } catch (e) {
+    writeLine(colors.red(e.message));
     gracefullyProcessExitDoNotHang(1);
     return;
   }
-  const server = startHtmlReportServer(folder);
+  // HMR: watch builds serve the html-reporter through an embedded Vite dev
+  // server so edits to packages/html-reporter/src/* reload live. Release
+  // builds always take the static branch (the dev-server arm is DCE'd).
+  // Set PW_HMR_STATIC=1 during watch to exercise the bundled output.
+  const server = (__PW_HMR__ && process.env.PW_HMR_STATIC !== '1')
+    ? await serveHtmlReportWithHMR(folder)
+    : serveFolder(folder);
   await server.start({ port, host, preferredPort: port ? undefined : 9323 });
   let url = server.urlPrefix('human-readable');
   writeLine('');
@@ -224,29 +277,51 @@ export async function showHTMLReport(reportFolder: string | undefined, host: str
   if (testId)
     url += `#?testId=${testId}`;
   url = url.replace('0.0.0.0', 'localhost');
-  await open(url, { wait: true }).catch(() => {});
+  if (!isCodingAgent())
+    await open(url, { wait: true }).catch(() => {});
   await new Promise(() => {});
 }
 
-export function startHtmlReportServer(folder: string): HttpServer {
+// HMR begin: dev-mode branch — mounts a Vite dev server for the html-reporter
+// source at `/` while still serving the generated attachments (and the bundled
+// trace-viewer copy under /trace/) from the output folder. The report's data
+// payload lives in a <template id="playwrightReportBase64"> tag at the tail of
+// the generated index.html; we extract it and splice it into Vite's
+// transformed HTML so the client still finds it at runtime.
+async function serveHtmlReportWithHMR(folder: string): Promise<HttpServer> {
   const server = new HttpServer();
+  const reporterRoot = path.resolve(__dirname, '..', '..', '..', 'html-reporter');
+  const devServer = await server.createViteDevServer({ root: reporterRoot });
+  const generatedIndex = await fs.promises.readFile(path.join(folder, 'index.html'), 'utf-8');
+  const templateMatch = /<template id="playwrightReportBase64">[\s\S]*?<\/template>/.exec(generatedIndex);
+  const reportTemplate = templateMatch ? templateMatch[0] : '';
+  const sourceIndex = await fs.promises.readFile(path.join(reporterRoot, 'index.html'), 'utf-8');
+
   server.routePrefix('/', (request, response) => {
-    let relativePath = new URL('http://localhost' + request.url).pathname;
-    if (relativePath.startsWith('/trace/file')) {
-      const url = new URL('http://localhost' + request.url!);
-      try {
-        return server.serveFile(request, response, url.searchParams.get('path')!);
-      } catch (e) {
-        return false;
-      }
+    const url = new URL('http://localhost' + request.url!);
+    if (url.pathname === '/' || url.pathname === '/index.html') {
+      devServer.transformIndexHtml(url.pathname, sourceIndex).then(html => {
+        const injected = html.replace(/<\/body>/i, `${reportTemplate}</body>`);
+        response.statusCode = 200;
+        response.setHeader('Content-Type', 'text/html; charset=utf-8');
+        response.end(injected);
+      }, () => {
+        response.statusCode = 500;
+        response.end();
+      });
+      return true;
     }
-    if (relativePath === '/')
-      relativePath = '/index.html';
-    const absolutePath = path.join(folder, ...relativePath.split('/'));
-    return server.serveFile(request, response, absolutePath);
+    // Serve attachments and the bundled trace-viewer copy from the generated
+    // output folder first, falling through to Vite for source modules.
+    const absolutePath = path.join(folder, ...url.pathname.split('/'));
+    if (absolutePath.startsWith(folder) && server.serveFile(request, response, absolutePath))
+      return true;
+    devServer.middlewares(request, response, HttpServer.notFoundFallback(response));
+    return true;
   });
   return server;
 }
+// HMR end
 
 type DataMap = Map<string, { testFile: TestFile, testFileSummary: TestFileSummary }>;
 
@@ -260,7 +335,7 @@ class HtmlBuilder {
   private _options: HTMLReportOptions;
   private _doNotInlineAssets: boolean;
 
-  constructor(yazl: typeof import('playwright-core/lib/zipBundle').yazl, config: api.FullConfig, outputDir: string, attachmentsBaseURL: string, doNotInlineAssets: boolean, options: HTMLReportOptions) {
+  constructor(yazl: typeof import('yazl'), config: api.FullConfig, outputDir: string, attachmentsBaseURL: string, doNotInlineAssets: boolean, options: HTMLReportOptions) {
     this._dataZipFile = new yazl.ZipFile();
     this._config = config;
     this._reportFolder = outputDir;
@@ -447,10 +522,11 @@ class HtmlBuilder {
         location,
         duration,
         annotations: this._serializeAnnotations(test.annotations),
-        tags: test.tags,
+        tags: [...new Set(test.tags)],
         outcome: test.outcome(),
         path,
         results,
+        repeatEachIndex: test.repeatEachIndex || undefined, // Do not include zero.
         ok: test.outcome() === 'expected' || test.outcome() === 'flaky',
       },
       testCaseSummary: {
@@ -460,10 +536,11 @@ class HtmlBuilder {
         location,
         duration,
         annotations: this._serializeAnnotations(test.annotations),
-        tags: test.tags,
+        tags: [...new Set(test.tags)],
         outcome: test.outcome(),
         path,
         ok: test.outcome() === 'expected' || test.outcome() === 'flaky',
+        repeatEachIndex: test.repeatEachIndex || undefined, // Do not include zero.
         results: results.map(result => {
           return {
             attachments: result.attachments.map(a => ({ name: a.name, contentType: a.contentType, path: a.path })),
@@ -717,7 +794,7 @@ function createSnippets(stepsInFile: MultiMap<string, TestStep>) {
       continue;
     }
     const lines = source.split('\n').length;
-    const highlighted = codeFrameColumns(source, { start: { line: lines, column: 1 } }, { highlightCode: true, linesAbove: lines, linesBelow: 0 });
+    const highlighted = babel.codeFrameColumns(source, { start: { line: lines, column: 1 } }, { highlightCode: true, linesAbove: lines, linesBelow: 0 });
     const highlightedLines = highlighted.split('\n');
     const lineWithArrow = highlightedLines[highlightedLines.length - 1];
     for (const step of stepsInFile.get(file)) {
@@ -744,7 +821,7 @@ function createErrorCodeframe(message: string, location: Location) {
     return;
   }
 
-  return codeFrameColumns(
+  return babel.codeFrameColumns(
       source,
       {
         start: {

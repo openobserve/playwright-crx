@@ -388,6 +388,41 @@ test('should not pass return value from step', async ({ runInlineTest }) => {
   expect(result.output).toContain('v2 = 20');
 });
 
+test('should contain steps chain in the stack', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+
+      async function innerFunction(page) {
+        await test.step('inner step', async () => {
+          await expect(page.locator('div')).toBeVisible({ timeout: 1 });
+        });
+      }
+
+      async function outerFunction(page) {
+        await test.step('outer step', async () => {
+          await innerFunction(page);
+        });
+      }
+
+      // It is important to have "page" here to trigger some internal instrumentation.
+      test('test with chained steps', async ({ page }) => {
+        await test.step('top-level step', async () => {
+          await outerFunction(page);
+        });
+      });
+    `
+  }, { reporter: '', workers: 1 });
+  expect(result.exitCode).toBe(1);
+  expect(result.failed).toBe(1);
+  expect(result.output).toContain('at innerFunction');
+  expect(result.output).toContain('at outerFunction');
+  expect(result.output).toContain('a.test.ts:5');
+  expect(result.output).toContain('a.test.ts:6');
+  expect(result.output).toContain('a.test.ts:11');
+  expect(result.output).toContain('a.test.ts:18');
+});
+
 test('step timeout option', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'a.test.ts': `
@@ -443,22 +478,6 @@ test('step timeout includes interrupted action errors', async ({ runInlineTest }
   expect.soft(result.output).toContain('Error: page.waitForTimeout: Test ended.');
   expect.soft(result.output.split('Error: page.waitForTimeout: Test ended.').length).toBe(2);
   expect.soft(result.output).toContain('> 5 |           await page.waitForTimeout(100_000);');
-});
-
-test('step timeout is errors.TimeoutError', async ({ runInlineTest }) => {
-  const result = await runInlineTest({
-    'a.test.ts': `
-      import { test, expect, errors } from '@playwright/test';
-      test('step timeout error type', async () => {
-        const e = await test.step('my step', async () => {
-          await new Promise(() => {});
-        }, { timeout: 100 }).catch(e => e);
-        expect(e).toBeInstanceOf(errors.TimeoutError);
-      });
-    `
-  }, { reporter: '', workers: 1 });
-  expect(result.exitCode).toBe(0);
-  expect(result.passed).toBe(1);
 });
 
 test('should mark step as failed when soft expect fails', async ({ runInlineTest }) => {

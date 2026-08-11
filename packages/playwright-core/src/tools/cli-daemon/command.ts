@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-import { z } from '../../zodBundle';
-
+import * as z from 'zod';
 import type zodType from 'zod';
 
 export type Category = 'core' | 'navigation' | 'keyboard' | 'mouse' | 'export' | 'storage' | 'tabs' | 'network' | 'devtools' | 'browsers' | 'config' | 'install';
@@ -25,6 +24,7 @@ export type CommandSchema<Args extends zodType.ZodTypeAny, Options extends zodTy
   category: Category;
   description: string;
   hidden?: boolean;
+  raw?: boolean;
   args?: Args;
   options?: Options;
   toolName: string | ((args: zodType.infer<Args> & zodType.infer<Options>) => string);

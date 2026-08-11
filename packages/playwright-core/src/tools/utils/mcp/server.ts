@@ -16,9 +16,10 @@
 
 import { fileURLToPath } from 'url';
 
-import { debug } from '../../../utilsBundle';
-import * as mcpBundle from '../../../mcpBundle';
-
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import debug from 'debug';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { startMcpHttpServer } from './http';
 import { toMcpTool } from './tool';
 
@@ -26,7 +27,7 @@ import type { CallToolResult, CallToolRequest, Root } from '@modelcontextprotoco
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 export type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 export type { Tool, CallToolResult, CallToolRequest, Root } from '@modelcontextprotocol/sdk/types.js';
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import type { Server as ServerType } from '@modelcontextprotocol/sdk/server/index.js';
 import type { ToolSchema } from './tool';
 
 const serverDebug = debug('pw:mcp:server');
@@ -34,10 +35,8 @@ const serverDebugResponse = debug('pw:mcp:server:response');
 
 export type ClientInfo = {
   cwd: string;
+  clientName: string;
 };
-
-export type ProgressParams = { message?: string, progress?: number, total?: number };
-export type ProgressCallback = (params: ProgressParams) => void;
 
 class BackendManager {
   private _backends = new Map<ServerBackend, ServerBackendFactory>();
@@ -63,7 +62,7 @@ const backendManager = new BackendManager();
 
 export interface ServerBackend {
   initialize?(clientInfo: ClientInfo): Promise<void>;
-  callTool(name: string, args: CallToolRequest['params']['arguments'], progress: ProgressCallback): Promise<CallToolResult & { isClose?: boolean }>;
+  callTool(name: string, args: CallToolRequest['params']['arguments'], signal: AbortSignal): Promise<CallToolResult & { isClose?: boolean }>;
   dispose?(): Promise<void>;
 }
 
@@ -81,14 +80,14 @@ export async function connect(factory: ServerBackendFactory, transport: Transpor
   await server.connect(transport);
 }
 
-export function createServer(name: string, version: string, factory: ServerBackendFactory, runHeartbeat: boolean): Server {
-  const server = new mcpBundle.Server({ name, version }, {
+export function createServer(name: string, version: string, factory: ServerBackendFactory, runHeartbeat: boolean): ServerType {
+  const server = new Server({ name, version }, {
     capabilities: {
       tools: {},
     }
   });
 
-  server.setRequestHandler(mcpBundle.ListToolsRequestSchema, async () => {
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
     serverDebug('listTools');
     return { tools: factory.toolSchemas.map(s => toMcpTool(s)) };
   });
@@ -98,23 +97,8 @@ export function createServer(name: string, version: string, factory: ServerBacke
   const onClose = () => backendPromise?.then(b => backendManager.disposeBackend(b)).catch(serverDebug);
   addServerListener(server, 'close', onClose);
 
-  server.setRequestHandler(mcpBundle.CallToolRequestSchema, async (request, extra) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     serverDebug('callTool', request);
-
-    const progressToken = request.params._meta?.progressToken;
-    let progressCounter = 0;
-
-    const progress = progressToken ? (params: ProgressParams) => {
-      extra.sendNotification({
-        method: 'notifications/progress',
-        params: {
-          progressToken,
-          progress: params.progress ?? ++progressCounter,
-          total: params.total,
-          message: params.message,
-        },
-      }).catch(e => serverDebug('notification', e));
-    } : () => {};
 
     try {
       if (!backendPromise) {
@@ -125,7 +109,7 @@ export function createServer(name: string, version: string, factory: ServerBacke
       }
 
       const backend = await backendPromise;
-      const toolResult = await backend.callTool(request.params.name, request.params.arguments || {}, progress);
+      const toolResult = await backend.callTool(request.params.name, request.params.arguments || {}, extra.signal);
       if (toolResult.isClose) {
         await backendManager.disposeBackend(backend).catch(serverDebug);
         backendPromise = undefined;
@@ -145,7 +129,7 @@ export function createServer(name: string, version: string, factory: ServerBacke
   return server;
 }
 
-const initializeServer = async (server: Server, factory: ServerBackendFactory, runHeartbeat: boolean): Promise<ServerBackend> => {
+const initializeServer = async (server: ServerType, factory: ServerBackendFactory, runHeartbeat: boolean): Promise<ServerBackend> => {
   const capabilities = server.getClientCapabilities();
   let clientRoots: Root[] = [];
   if (capabilities?.roots) {
@@ -158,6 +142,7 @@ const initializeServer = async (server: Server, factory: ServerBackendFactory, r
 
   const clientInfo: ClientInfo = {
     cwd: firstRootPath(clientRoots),
+    clientName: server.getClientVersion()?.name ?? 'Playwright MCP',
   };
 
   const backend = await backendManager.createBackend(factory, clientInfo);
@@ -166,7 +151,7 @@ const initializeServer = async (server: Server, factory: ServerBackendFactory, r
   return backend;
 };
 
-const startHeartbeat = (server: Server) => {
+const startHeartbeat = (server: ServerType) => {
   const beat = () => {
     Promise.race([
       server.ping(),
@@ -181,7 +166,7 @@ const startHeartbeat = (server: Server) => {
   beat();
 };
 
-function addServerListener(server: Server, event: 'close' | 'initialized', listener: () => void) {
+function addServerListener(server: ServerType, event: 'close' | 'initialized', listener: () => void) {
   const oldListener = server[`on${event}`];
   server[`on${event}`] = () => {
     oldListener?.();
@@ -191,7 +176,11 @@ function addServerListener(server: Server, event: 'close' | 'initialized', liste
 
 export async function start(serverBackendFactory: ServerBackendFactory, options: { host?: string; port?: number, allowedHosts?: string[], socketPath?: string } = {}) {
   if (options.port === undefined) {
-    await connect(serverBackendFactory, new mcpBundle.StdioServerTransport(), false);
+    const transport = new StdioServerTransport();
+    // The SDK's StdioServerTransport doesn't detect peer disconnect — it never listens for stdin
+    // end-of-stream. Wire it up so callTool requests can be cancelled when the client goes away.
+    process.stdin.on('end', () => void transport.close());
+    await connect(serverBackendFactory, transport, false);
     return;
   }
 

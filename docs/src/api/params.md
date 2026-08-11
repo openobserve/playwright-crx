@@ -97,6 +97,7 @@ A selector to search for an element to drop onto. If there are multiple elements
 
 ## input-position
 - `position` <[Object]>
+  - alias-java: Position
   - `x` <[float]>
   - `y` <[float]>
 
@@ -126,10 +127,25 @@ and Linux and to "Meta" on macOS.
 Defaults to `left`.
 
 ## input-files
-- `files` <[path]|[Array]<[path]>|[Object=FilePayload]|[Array]<[Object=FilePayload]>>
+- `files` <[path]|[Array]<[path]>|[Object]|[Array]<[Object]>>
+  - alias: FilePayload
   - `name` <[string]> File name
   - `mimeType` <[string]> File type
   - `buffer` <[Buffer]> File content
+
+## drop-payload
+- `payload` <[Object]>
+  - alias: DropPayload
+  - `files` ?<[path]|[Array]<[path]>|[Object]|[Array]<[Object]>>
+    - alias: FilePayload
+    - `name` <[string]> File name
+    - `mimeType` <[string]> File type
+    - `buffer` <[Buffer]> File content
+  - `data` ?<[Object]<[string], [string]>>
+
+Data to drop onto the target. Provide `files` (file paths or in-memory buffers), `data`
+(a mime-type → string map for clipboard-like content such as `text/plain`, `text/html`,
+`text/uri-list`), or both.
 
 ## input-down-up-delay
 - `delay` <[float]>
@@ -153,6 +169,7 @@ When set, this method only performs the [actionability](../actionability.md) che
 
 ## input-source-position
 - `sourcePosition` <[Object]>
+  - alias-java: Position
   - `x` <[float]>
   - `y` <[float]>
 
@@ -160,6 +177,7 @@ Clicks on the source element at this point relative to the top-left corner of th
 
 ## input-target-position
 - `targetPosition` <[Object]>
+  - alias-java: Position
   - `x` <[float]>
   - `y` <[float]>
 
@@ -235,6 +253,7 @@ Dangerous option; use with care. Defaults to `false`.
 
 ## browser-option-proxy
 - `proxy` <[Object]>
+  - alias-java: Proxy
   - `server` <[string]> Proxy to be used for all requests. HTTP and SOCKS proxies are supported, for example
     `http://myproxy.com:3128` or `socks5://myproxy.com:3128`. Short form `myproxy.com:3128` is considered an HTTP
     proxy.
@@ -331,6 +350,7 @@ When using [`method: Page.goto`], [`method: Page.route`], [`method: Page.waitFor
 * langs: js, java
   - alias-java: viewportSize
 - `viewport` <[null]|[Object]>
+  - alias-java: ViewportSize
   - `width` <[int]> page width in pixels.
   - `height` <[int]> page height in pixels.
 
@@ -364,6 +384,7 @@ It makes the execution of the tests non-deterministic.
   - alias-java: screenSize
   - alias-csharp: screenSize
 - `screen` <[Object]>
+  - alias-java: ScreenSize
   - `width` <[int]> page width in pixels.
   - `height` <[int]> page height in pixels.
 
@@ -466,11 +487,11 @@ unless explicitly provided.
 
 ## python-fetch-option-form
 * langs: python
-- `form` <[Object]<[string], [string]|[float]|[boolean]>>
+- `form` <[Object]<[string], [string]|[float]|[boolean]>|[FormData]>
 
 Provides an object that will be serialized as html form using `application/x-www-form-urlencoded` encoding and sent as
 this request body. If this parameter is specified `content-type` header will be set to `application/x-www-form-urlencoded`
-unless explicitly provided.
+unless explicitly provided. Use [FormData] to send multiple values for the same field.
 
 ## csharp-fetch-option-form
 * langs: csharp
@@ -496,7 +517,7 @@ or as file-like object containing file name, mime-type and its content.
 
 ## python-fetch-option-multipart
 * langs: python
-- `multipart` <[Object]<[string], [string]|[float]|[boolean]|[ReadStream]|[Object]>>
+- `multipart` <[Object]<[string], [string]|[float]|[boolean]|[ReadStream]|[Object]>|[FormData]>
   - `name` <[string]> File name
   - `mimeType` <[string]> File type
   - `buffer` <[Buffer]> File content
@@ -504,6 +525,7 @@ or as file-like object containing file name, mime-type and its content.
 Provides an object that will be serialized as html form using `multipart/form-data` encoding and sent as
 this request body. If this parameter is specified `content-type` header will be set to `multipart/form-data`
 unless explicitly provided. File values can be passed as file-like object containing file name, mime-type and its content.
+Use [FormData] to send multiple files in the same field.
 
 ## csharp-fetch-option-multipart
 * langs: csharp
@@ -594,6 +616,7 @@ Does not enforce fixed viewport, allows resizing window in the headed mode.
 
 ## context-option-clientCertificates
 - `clientCertificates` <[Array]<[Object]>>
+  - alias-java: ClientCertificate
   - `origin` <[string]> Exact origin that the certificate is valid for. Origin includes `https` protocol, a hostname and optionally a port.
   - `certPath` ?<[path]> Path to the file with the certificate in PEM format.
   - `cert` ?<[Buffer]> Direct value of the certificate in PEM format.
@@ -648,6 +671,7 @@ for a list of supported timezone IDs. Defaults to the system timezone.
 
 ## context-option-geolocation
 - `geolocation` <[Object]>
+  - alias-java: Geolocation
   - `latitude` <[float]> Latitude between -90 and 90.
   - `longitude` <[float]> Longitude between -180 and 180.
   - `accuracy` ?<[float]> Non-negative accuracy value. Defaults to `0`.
@@ -675,6 +699,7 @@ Whether to emulate network being offline. Defaults to `false`. Learn more about 
 
 ## context-option-httpcredentials
 - `httpCredentials` <[Object]>
+  - alias-java: HttpCredentials
   - `username` <[string]>
   - `password` <[string]>
   - `origin` ?<[string]> Restrain sending http credentials on specific origin (scheme://host:port).
@@ -740,18 +765,6 @@ Emulates `'prefers-contrast'` media feature, supported values are `'no-preferenc
 
 Logger sink for Playwright logging.
 
-## context-option-videospath
-* langs: js
-* deprecated: Use [`option: recordVideo`] instead.
-- `videosPath` <[path]>
-
-## context-option-videosize
-* langs: js
-* deprecated: Use [`option: recordVideo`] instead.
-- `videoSize` <[Object]>
-  - `width` <[int]> Video frame width.
-  - `height` <[int]> Video frame height.
-
 ## context-option-recordhar
 * langs: js
 - `recordHar` <[Object]>
@@ -805,12 +818,14 @@ When set to `minimal`, only record information necessary for routing from HAR. T
 * langs: js
 - `recordVideo` <[Object]>
   - `dir` ?<[path]> Path to the directory to put videos into. If not specified, the videos will be stored in `artifactsDir` (see [`method: BrowserType.launch`] options).
-  - `size` ?<[Object=RecordVideoSize]> Optional dimensions of the recorded videos. If not specified the size will be equal to `viewport`
+  - `size` ?<[Object]> Optional dimensions of the recorded videos. If not specified the size will be equal to `viewport`
     scaled down to fit into 800x800. If `viewport` is not configured explicitly the video size defaults to 800x450.
     Actual picture of each page will be scaled down if necessary to fit the specified size.
+    - alias-csharp: RecordVideoSize
     - `width` <[int]> Video frame width.
     - `height` <[int]> Video frame height.
-  - `showActions` ?<[Object=ShowActionsOptions]> If specified, enables visual annotations on interacted elements during video recording.
+  - `showActions` ?<[Object]> If specified, enables visual annotations on interacted elements during video recording.
+    - alias-csharp: ShowActionsOptions
     - `duration` ?<[float]> How long each annotation is displayed in milliseconds. Defaults to `500`.
     - `position` ?<[AnnotatePosition]<"top-left"|"top"|"top-right"|"bottom-left"|"bottom"|"bottom-right">> Position of the action title overlay. Defaults to `"top-right"`.
     - `fontSize` ?<[int]> Font size of the action title in pixels. Defaults to `24`.
@@ -830,6 +845,7 @@ not recorded. Make sure to call [`method: BrowserContext.close`] for videos to b
 * langs: csharp, java, python
   - alias-python: record_video_size
 - `recordVideoSize` <[Object]>
+  - alias-java: RecordVideoSize
   - `width` <[int]> Video frame width.
   - `height` <[int]> Video frame height.
 
@@ -839,6 +855,7 @@ Actual picture of each page will be scaled down if necessary to fit the specifie
 
 ## context-option-proxy
 - `proxy` <[Object]>
+  - alias-java: Proxy
   - `server` <[string]> Proxy to be used for all requests. HTTP and SOCKS proxies are supported, for example
     `http://myproxy.com:3128` or `socks5://myproxy.com:3128`. Short form `myproxy.com:3128` is considered an HTTP proxy.
   - `bypass` ?<[string]> Optional comma-separated domains to bypass proxy, for example `".com, chromium.org, .domain.com"`.
@@ -886,6 +903,7 @@ Specifies whether to wait for already running handlers and what to do if they th
 ## select-options-values
 * langs: java, js, csharp
 - `values` <[null]|[string]|[ElementHandle]|[Array]<[string]>|[Object]|[Array]<[ElementHandle]>|[Array]<[Object]>>
+  - alias-java: SelectOption
   - `value` ?<[string]> Matches by `option.value`. Optional.
   - `label` ?<[string]> Matches by `option.label`. Optional.
   - `index` ?<[int]> Matches by the index. Optional.
@@ -1050,8 +1068,6 @@ between the same pixel in compared images, between zero (strict) and one (lax), 
 - %%-context-option-contrast-%%
 - %%-context-option-contrast-csharp-python-%%
 - %%-context-option-logger-%%
-- %%-context-option-videospath-%%
-- %%-context-option-videosize-%%
 - %%-context-option-recordhar-%%
 - %%-context-option-recordhar-path-%%
 - %%-context-option-recordhar-omit-content-%%
@@ -1290,6 +1306,7 @@ When true, takes a screenshot of the full scrollable page, instead of the curren
 
 ## screenshot-option-clip
 - `clip` <[Object]>
+  - alias-java: Clip
   - `x` <[float]> x-coordinate of top-left corner of clip area
   - `y` <[float]> y-coordinate of top-left corner of clip area
   - `width` <[float]> width of clipping area
@@ -1369,6 +1386,14 @@ An attribute that is usually set by `aria-checked` or native `<input type=checkb
 
 Learn more about [`aria-checked`](https://www.w3.org/TR/wai-aria-1.2/#aria-checked).
 
+## locator-get-by-role-option-description
+* since: v1.60
+- `description` <[string]|[RegExp]>
+
+Option to match the [accessible description](https://w3c.github.io/accname/#dfn-accessible-description). By default, matching is case-insensitive and searches for a substring, use [`option: exact`] to control this behavior.
+
+Learn more about [accessible description](https://w3c.github.io/accname/#dfn-accessible-description).
+
 ## locator-get-by-role-option-disabled
 * since: v1.27
 - `disabled` <[boolean]>
@@ -1416,7 +1441,7 @@ Learn more about [accessible name](https://w3c.github.io/accname/#dfn-accessible
 * since: v1.28
 - `exact` <[boolean]>
 
-Whether [`option: name`] is matched exactly: case-sensitive and whole-string. Defaults to false. Ignored when [`option: name`] is a regular expression. Note that exact match still trims whitespace.
+Whether [`option: name`] and [`option: description`] are matched exactly: case-sensitive and whole-string. Defaults to false. Ignored when the value is a regular expression. Note that exact match still trims whitespace.
 
 ## locator-get-by-role-option-pressed
 * since: v1.27
@@ -1910,6 +1935,8 @@ The list of supported tokens:
   * Value: `/home/playwright/tests` (absolute path since `testDir` is resolved relative to directory with config)
 * `{testFileDir}` - Directories in relative path from `testDir` to **test file**.
   * Value: `page`
+* `{testFileBaseName}` - Test file name without the last extension.
+  * Value: `page-click.spec`
 * `{testFileName}` - Test file name with extension.
   * Value: `page-click.spec.ts`
 * `{testFilePath}` - Relative path from `testDir` to **test file**.

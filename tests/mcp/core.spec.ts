@@ -81,7 +81,7 @@ test('browser_navigate can navigate to file:// URLs allowUnrestrictedFileAccess 
     name: 'browser_navigate',
     arguments: { url },
   })).toHaveResponse({
-    page: `- Page URL: ${url}`,
+    page: expect.stringContaining(`- Page URL: ${url}`),
     snapshot: `- generic [ref=e2]: Test file content`,
   });
 });
@@ -104,7 +104,7 @@ test('browser_select_option', async ({ client, server }) => {
     name: 'browser_select_option',
     arguments: {
       element: 'Select',
-      ref: 'e2',
+      target: 'e2',
       values: ['bar'],
     },
   })).toHaveResponse({
@@ -133,7 +133,7 @@ test('browser_select_option (multiple)', async ({ client, server }) => {
     name: 'browser_select_option',
     arguments: {
       element: 'Select',
-      ref: 'e2',
+      target: 'e2',
       values: ['bar', 'baz'],
     },
   })).toHaveResponse({
@@ -200,7 +200,7 @@ test('old locator error message', async ({ client, server }) => {
     name: 'browser_click',
     arguments: {
       element: 'Button 1',
-      ref: 'e2',
+      target: 'e2',
     },
   });
 
@@ -208,7 +208,7 @@ test('old locator error message', async ({ client, server }) => {
     name: 'browser_click',
     arguments: {
       element: 'Button 2',
-      ref: 'e3',
+      target: 'e3',
     },
   })).toHaveResponse({
     error: expect.stringContaining(`Ref e3 not found in the current page snapshot. Try capturing new snapshot.`),
@@ -273,5 +273,68 @@ test('snapshot depth', async ({ client, server }) => {
   - listitem [ref=e3]: text
   - listitem [ref=e4]:
     - button "Button" [ref=e5]`,
+  });
+});
+
+test('snapshot with boxes', async ({ client, server }) => {
+  server.setContent('/', `
+    <style>body { margin: 0; }</style>
+    <button style="position:absolute;left:100px;top:50px;width:80px;height:40px;margin:0;padding:0;border:0;">click</button>
+  `, 'text/html');
+
+  await client.callTool({
+    name: 'browser_navigate',
+    arguments: { url: server.PREFIX },
+  });
+
+  expect(await client.callTool({
+    name: 'browser_snapshot',
+    arguments: { boxes: true },
+  })).toHaveResponse({
+    inlineSnapshot: expect.stringContaining(`- button "click" [ref=e1] [box=100,50,80,40]`),
+  });
+
+  expect(await client.callTool({
+    name: 'browser_snapshot',
+  })).toHaveResponse({
+    inlineSnapshot: expect.not.stringMatching(/\[box=/),
+  });
+});
+
+test('snapshot by ref', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright-cli/issues/347' } }, async ({ client, server }) => {
+  server.setContent('/', `
+    <ul>
+      <li>text</li>
+      <li>
+        <button>Button</button>
+      </li>
+    </ul>
+  `, 'text/html');
+
+  await client.callTool({
+    name: 'browser_navigate',
+    arguments: { url: server.PREFIX },
+  });
+
+  expect(await client.callTool({
+    name: 'browser_snapshot',
+    arguments: {
+      target: 'e2',
+    }
+  })).toHaveResponse({
+    inlineSnapshot: `- list [ref=e2]:
+  - listitem [ref=e3]: text
+  - listitem [ref=e4]:
+    - button "Button" [ref=e5]`,
+  });
+
+  expect(await client.callTool({
+    name: 'browser_snapshot',
+    arguments: {
+      target: 'e999',
+    }
+  })).toHaveResponse({
+    error: expect.stringContaining(`Ref e999 not found in the current page snapshot. Try capturing new snapshot.`),
+    isError: true,
   });
 });

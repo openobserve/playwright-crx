@@ -58,12 +58,12 @@ class TraceViewerPage {
     this.actionTitles = page.locator('.action-title');
     this.actionsTree = page.getByTestId('actions-tree');
     this.callLines = page.locator('.call-tab .call-line');
-    this.logLines = page.getByRole('list', { name: 'Log entries' }).getByRole('listitem');
-    this.consoleLines = page.getByRole('tabpanel', { name: 'Console' }).getByRole('listitem');
+    this.logLines = page.getByRole('listbox', { name: 'Log entries' }).getByRole('option');
+    this.consoleLines = page.getByRole('tabpanel', { name: 'Console' }).getByRole('option');
     this.consoleLineMessages = page.locator('.console-line-message');
     this.errorMessages = page.locator('.error-message');
     this.consoleStacks = page.locator('.console-stack');
-    this.networkRequests = page.getByRole('list', { name: 'Network requests' }).getByRole('listitem');
+    this.networkRequests = page.getByRole('listbox', { name: 'Network requests' }).getByRole('option');
     this.snapshotContainer = page.locator('.snapshot-container iframe.snapshot-visible[name=snapshot]');
     this.metadataTab = page.getByRole('tabpanel', { name: 'Metadata' });
     this.sourceCodeTab = page.getByRole('tabpanel', { name: 'Source' });
@@ -84,10 +84,7 @@ class TraceViewerPage {
   }
 
   stackFrames(options: { selected?: boolean } = {}) {
-    const entry = this.page.getByRole('list', { name: 'Stack trace' }).getByRole('listitem');
-    if (options.selected)
-      return entry.locator(':scope.selected');
-    return entry;
+    return this.page.getByRole('listbox', { name: 'Stack trace' }).getByRole('option', options);
   }
 
   actionIconsText(action: string) {
@@ -153,8 +150,9 @@ class TraceViewerPage {
 }
 
 export const traceViewerFixtures: Fixtures<TraceViewerFixtures, {}, BaseTestFixtures, BaseWorkerFixtures> = {
-  showTraceViewer: async ({ playwright, childProcess, browserName }, use) => {
+  showTraceViewer: async ({ playwright, childProcess, browserName }, use, testInfo) => {
     const browsers: Browser[] = [];
+    const tracings: any[] = [];
     await use(async (trace: string | undefined, { host, port, stdin } = {}) => {
       const command = [
         'node',
@@ -176,10 +174,20 @@ export const traceViewerFixtures: Fixtures<TraceViewerFixtures, {}, BaseTestFixt
       });
       browsers.push(browser);
       const page = await browser.newPage();
+      if (process.env.PWTEST_DEBUG_TRACE_VIEWER) {
+        const tracing = page.context().tracing;
+        await tracing.start({ snapshots: true, screenshots: true });
+        tracings.push(tracing);
+      }
       const url = cp.output.match(/Listening on (http:\/\/[^\s]+)/)![1];
       await page.goto(url);
       return new TraceViewerPage(page, cp);
     });
+    for (const [index, tracing] of tracings.entries()) {
+      const path = testInfo.outputPath(`viewer-trace-${index}.zip`);
+      await tracing.stop({ path });
+      await testInfo.attach(`viewer-trace-${index}.zip`, { path, contentType: 'application/zip' });
+    }
     for (const browser of browsers)
       await browser.close();
   },
@@ -190,6 +198,8 @@ export const traceViewerFixtures: Fixtures<TraceViewerFixtures, {}, BaseTestFixt
       await context.tracing.start({ snapshots: true, screenshots: true, sources: true, ...optsOverrides });
       await body();
       await context.tracing.stop({ path: traceFile });
+      if (process.env.PWTEST_DEBUG_TRACE_VIEWER)
+        await testInfo.attach('recorded-trace.zip', { path: traceFile, contentType: 'application/zip' });
       return showTraceViewer(traceFile);
     });
   },

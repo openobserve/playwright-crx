@@ -15,9 +15,10 @@
  */
 
 import crypto from 'crypto';
-import { stripAnsiEscapes } from 'playwright-core/lib/utils';
 
-import type * as tools from 'playwright-core/lib/tools/exports';
+import { stripAnsiEscapes } from '@isomorphic/stringUtils';
+
+import type { tools } from 'playwright-core/lib/coreBundle';
 import type * as playwright from '../../../index';
 import type { TestInfoImpl } from '../../worker/testInfo';
 
@@ -37,11 +38,16 @@ export type BrowserMCPResponse = {
 export function createCustomMessageHandler(testInfo: TestInfoImpl, context: playwright.BrowserContext) {
   let backend: tools.BrowserBackend | undefined;
   const config: tools.ContextConfig = { capabilities: ['testing'] };
-  let tools: typeof import('playwright-core/lib/tools/exports') | undefined;
+  let tools: typeof import('playwright-core/lib/coreBundle').tools | undefined;
+
+  context.once('close', () => {
+    void backend?.dispose();
+    backend = undefined;
+  });
 
   return async (data: BrowserMCPRequest): Promise<BrowserMCPResponse> => {
     if (!tools)
-      tools = await import('playwright-core/lib/tools/exports');
+      ({ tools } = require('playwright-core/lib/coreBundle') as typeof import('playwright-core/lib/coreBundle'));
     const toolList = tools.filteredTools(config);
     if (data.initialize) {
       if (backend)
@@ -68,7 +74,7 @@ export function createCustomMessageHandler(testInfo: TestInfoImpl, context: play
   };
 }
 
-async function generatePausedMessage(tools: typeof import('playwright-core/lib/tools/exports'), testInfo: TestInfoImpl, context: playwright.BrowserContext) {
+async function generatePausedMessage(tools: typeof import('playwright-core/lib/coreBundle').tools, testInfo: TestInfoImpl, context: playwright.BrowserContext) {
   const lines: string[] = [];
 
   if (testInfo.errors.length) {

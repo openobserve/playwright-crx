@@ -17,7 +17,7 @@
 import { wrapObject } from './injected/serializers';
 import { Router } from './router';
 
-import type { ContextReuseMode, FullConfigInternal } from '../../playwright/src/common/config';
+import type { config, FullConfigInternal } from 'playwright/lib/common';
 import type { RouterFixture } from '../index';
 import type { ImportRef } from './injected/importRegistry';
 import type { Component, JsxComponent, MountOptions, ObjectComponentOptions } from '../types/component';
@@ -27,8 +27,8 @@ import type { Page as PageImpl } from 'playwright-core/lib/client/page';
 let boundCallbacksForMount: Function[] = [];
 
 interface MountResult extends Locator {
-  unmount(locator: Locator): Promise<void>;
-  update(options: Omit<MountOptions, 'hooksConfig'> | string | JsxComponent): Promise<void>;
+  unmount: () => Promise<void>;
+  update: (options: ObjectComponentOptions | JsxComponent) => Promise<void>;
 }
 
 type TestFixtures = PlaywrightTestArgs & PlaywrightTestOptions & {
@@ -37,7 +37,7 @@ type TestFixtures = PlaywrightTestArgs & PlaywrightTestOptions & {
 };
 type WorkerFixtures = PlaywrightWorkerArgs & PlaywrightWorkerOptions;
 type BaseTestFixtures = {
-  _optionContextReuseMode: ContextReuseMode
+  _optionContextReuseMode: config.ContextReuseMode
 };
 
 export const fixtures: Fixtures<TestFixtures, WorkerFixtures, BaseTestFixtures> = {

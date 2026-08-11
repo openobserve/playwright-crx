@@ -14,26 +14,36 @@
  * limitations under the License.
  */
 
-import * as playwright from '../../..';
-import { debug } from '../../utilsBundle';
-import { createHttpServer, startHttpServer } from '../../server/utils/network';
+import debug from 'debug';
+import { createHttpServer, startHttpServer } from '@utils/network';
+import { defaultUserDataDirForChannel } from '@utils/chromiumChannels';
+import { playwright } from '../../inprocess';
+import { isPlaywrightExtensionInstalled, playwrightExtensionInstallUrl } from '../utils/extension';
 import { CDPRelayServer } from './cdpRelay';
 
-import type { ClientInfo } from '../utils/mcp/server';
-import type { FullConfig } from './config';
+import type * as playwrightTypes from '../../..';
 
 const debugLogger = debug('pw:mcp:relay');
 
-export async function createExtensionBrowser(config: FullConfig, clientInfo: ClientInfo): Promise<playwright.Browser> {
+export async function createExtensionBrowser(channel: string, executablePath: string | undefined, clientName: string): Promise<playwrightTypes.Browser> {
+  // Custom executablePath may target a browser in a different filesystem (e.g. Windows chrome.exe from WSL2), so the local profile path is not meaningful.
+  if (!executablePath) {
+    const userDataDir = process.env.PWTEST_EXTENSION_USER_DATA_DIR ?? defaultUserDataDirForChannel(channel);
+    if (userDataDir && !await isPlaywrightExtensionInstalled(userDataDir))
+      throw new Error(`Playwright Extension not found in "${userDataDir}". Install it from ${playwrightExtensionInstallUrl}`);
+  }
+
   const httpServer = createHttpServer();
   await startHttpServer(httpServer, {});
-  const relay = new CDPRelayServer(
-      httpServer,
-      config.browser.launchOptions.channel || 'chrome',
-      config.browser.userDataDir,
-      config.browser.launchOptions.executablePath);
+  const relay = new CDPRelayServer(httpServer, channel, executablePath);
   debugLogger(`CDP relay server started, extension endpoint: ${relay.extensionEndpoint()}.`);
 
-  await relay.ensureExtensionConnectionForMCPContext(clientInfo);
-  return await playwright.chromium.connectOverCDP(relay.cdpEndpoint(), { isLocal: true });
+  try {
+    await relay.establishExtensionConnection(clientName);
+    return await playwright.chromium.connectOverCDP(relay.cdpEndpoint(), { isLocal: true, timeout: 0 });
+  } catch (error) {
+    relay.stop();
+    httpServer.close();
+    throw error;
+  }
 }

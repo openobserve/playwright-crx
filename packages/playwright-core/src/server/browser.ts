@@ -16,6 +16,8 @@
 
 import fs from 'fs';
 
+import { makeSocketPath } from '@utils/fileUtils';
+import { createGuid } from '@utils/crypto';
 import { BrowserContext, validateBrowserContextOptions } from './browserContext';
 import { Download } from './download';
 import { SdkObject } from './instrumentation';
@@ -24,15 +26,14 @@ import { ClientCertificatesProxy } from './socksClientCertificatesInterceptor';
 import { PlaywrightPipeServer } from '../remote/playwrightPipeServer';
 import { PlaywrightWebSocketServer } from '../remote/playwrightWebSocketServer';
 import { BrowserInfo, serverRegistry } from '../serverRegistry';
-import { makeSocketPath } from './utils/fileUtils';
-import { createGuid } from '../utils';
+import { nullProgress } from './progress';
 
 import type * as types from './types';
 import type { ProxySettings } from './types';
-import type { RecentLogsCollector } from './utils/debugLogger';
+import type { RecentLogsCollector } from '@utils/debugLogger';
 import type * as channels from '@protocol/channels';
 import type { ChildProcess } from 'child_process';
-import type { Language } from '../utils';
+import type { Language } from '@isomorphic/locatorGenerators';
 import type { Progress } from './progress';
 import type * as playwright from '../..';
 
@@ -58,10 +59,11 @@ export type BrowserOptions = {
   protocolLogger: types.ProtocolLogger,
   browserLogsCollector: RecentLogsCollector,
   slowMo?: number;
-  wsEndpoint?: string;  // Only there when connected over web socket.
+  wsEndpoint?: string;
   sdkLanguage?: Language;
   originalLaunchOptions: types.LaunchOptions;
   userDataDir?: string;
+  noDefaults?: boolean;
 };
 
 export abstract class Browser extends SdkObject {
@@ -117,7 +119,7 @@ export abstract class Browser extends SdkObject {
       this.emit(Browser.Events.Context, context);
       return context;
     } catch (error) {
-      await context?.close({ reason: 'Failed to create context' }).catch(() => {});
+      await context?.close(progress, { reason: 'Failed to create context' }).catch(() => {});
       await clientCertificatesProxy?.close().catch(() => {});
       throw error;
     }
@@ -127,7 +129,7 @@ export abstract class Browser extends SdkObject {
     const hash = BrowserContext.reusableContextHash(params);
     if (!this._contextForReuse || hash !== this._contextForReuse.hash || !this._contextForReuse.context.canResetForReuse()) {
       if (this._contextForReuse)
-        await this._contextForReuse.context.close({ reason: 'Context reused' });
+        await this._contextForReuse.context.close(progress, { reason: 'Context reused' });
       this._contextForReuse = { context: await this.newContext(progress, params), hash };
       return this._contextForReuse.context;
     }
@@ -139,19 +141,19 @@ export abstract class Browser extends SdkObject {
     return this._contextForReuse?.context;
   }
 
-  _downloadCreated(page: Page, uuid: string, url: string, suggestedFilename?: string, downloadFilename?: string) {
+  downloadCreated(page: Page, uuid: string, url: string, suggestedFilename?: string, downloadFilename?: string) {
     const download = new Download(page, this.options.downloadsPath || '', uuid, url, suggestedFilename, downloadFilename);
     this._downloads.set(uuid, download);
   }
 
-  _downloadFilenameSuggested(uuid: string, suggestedFilename: string) {
+  downloadFilenameSuggested(uuid: string, suggestedFilename: string) {
     const download = this._downloads.get(uuid);
     if (!download)
       return;
-    download._filenameSuggested(suggestedFilename);
+    download.filenameSuggested(suggestedFilename);
   }
 
-  _downloadFinished(uuid: string, error?: string) {
+  downloadFinished(uuid: string, error?: string) {
     const download = this._downloads.get(uuid);
     if (!download)
       return;
@@ -159,25 +161,29 @@ export abstract class Browser extends SdkObject {
     this._downloads.delete(uuid);
   }
 
-  async startServer(title: string, options: channels.BrowserStartServerOptions): Promise<{ endpoint: string }> {
-    return await this._server.start(title, options);
+  async startServer(progress: Progress, title: string, options: channels.BrowserStartServerOptions): Promise<{ endpoint: string }> {
+    return await progress.race(this._server.start(title, options));
   }
 
-  async stopServer() {
-    await this._server.stop();
+  async stopServer(progress: Progress): Promise<void> {
+    await progress.race(this._server.stop());
   }
 
-  _didClose() {
+  protected didClose() {
     for (const context of this.contexts())
-      context._browserClosed();
+      context.browserClosed();
     if (this._defaultContext)
-      this._defaultContext._browserClosed();
-    this.stopServer().catch(() => {});
+      this._defaultContext.browserClosed();
+    this.stopServer(nullProgress).catch(() => {});
     this.emit(Browser.Events.Disconnected);
     this.instrumentation.onBrowserClose(this);
   }
 
-  async close(options: { reason?: string }) {
+  async close(progress: Progress, options: { reason?: string }) {
+    return await progress.race(this._close(options));
+  }
+
+  private async _close(options: { reason?: string }) {
     if (!this._startedClosing) {
       if (options.reason)
         this._closeReason = options.reason;
@@ -188,8 +194,8 @@ export abstract class Browser extends SdkObject {
       await new Promise(x => this.once(Browser.Events.Disconnected, x));
   }
 
-  async killForTests() {
-    await this.options.browserProcess.kill();
+  async killForTests(progress: Progress) {
+    await progress.race(this.options.browserProcess.kill());
   }
 }
 
@@ -212,7 +218,7 @@ export class BrowserServer {
     let endpoint: string;
     if (options.host !== undefined || options.port !== undefined) {
       this._wsServer = new PlaywrightWebSocketServer(this._browser, '/');
-      endpoint = await this._wsServer.listen(options.port ?? 0, options.host, createGuid());
+      endpoint = await this._wsServer.listen(options.port ?? 0, options.host, '/' + createGuid());
     } else {
       this._pipeServer = new PlaywrightPipeServer(this._browser);
       this._pipeSocketPath = await this._socketPath();

@@ -17,12 +17,14 @@
 
 import { browserTest as it, expect } from '../config/browserTest';
 import fs from 'fs';
+import path from 'path';
 import type { BrowserContext, BrowserContextOptions } from 'playwright-core';
 import type { AddressInfo } from 'net';
 import type { Log } from '../../packages/trace/src/har';
 import { parseHar } from '../config/utils';
 import { TestServer } from '../config/testserver';
-const { createHttp2Server } = require('../../packages/playwright-core/lib/utils');
+import { utils } from '../../packages/playwright-core/lib/coreBundle';
+const { createHttp2Server } = utils;
 
 async function pageWithHar(contextFactory: (options?: BrowserContextOptions) => Promise<BrowserContext>, testInfo: any, options: { outputPath?: string } & Partial<Pick<BrowserContextOptions['recordHar'], 'content' | 'omitContent' | 'mode'>> = {}) {
   const harPath = testInfo.outputPath(options.outputPath || 'test.har');
@@ -824,6 +826,19 @@ it('should include API request', async ({ contextFactory, server }, testInfo) =>
   expect(entry._serverPort).toEqual(server.PORT);
 });
 
+it('should correctly record API request cookies with equals sign in value', async ({ contextFactory, server }, testInfo) => {
+  const { page, getLog } = await pageWithHar(contextFactory, testInfo);
+  const url = server.PREFIX + '/simple.json';
+  await page.request.get(url, {
+    headers: { cookie: 'token=abc=xyz; other=val' },
+  });
+  const log = await getLog();
+  expect(log.entries[0].request.cookies).toEqual([
+    { name: 'token', value: 'abc=xyz' },
+    { name: 'other', value: 'val' },
+  ]);
+});
+
 it('should respect minimal mode for API Requests', async ({ contextFactory, server }, testInfo) => {
   const { page, getLog } = await pageWithHar(contextFactory, testInfo, { mode: 'minimal' });
   const url = server.PREFIX + '/simple.json';
@@ -912,4 +927,97 @@ it('should not hang on slow chunked response', async ({ browserName, browser, co
 
   expect(log.browser!.name).toBe(browserName);
   expect(log.browser!.version).toBe(browser.version());
+});
+
+it('should support HAR larger than 512MB', async ({ contextFactory, server, browserName }, testInfo) => {
+  it.skip(browserName !== 'chromium', 'serializer is browser-agnostic; one browser is enough');
+  it.slow();
+  it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36707' });
+
+  const harPath = testInfo.outputPath('test.har');
+  const context = await contextFactory({ recordHar: { path: harPath } });
+
+  // 30 x 20MB textual responses push the HAR JSON past V8's ~512MB max
+  // string length. Each body still fits in a single string; only the
+  // aggregate would overflow the previous tokens.join('').
+  const body = 'a'.repeat(20 * 1024 * 1024);
+  server.setRoute('/large', (req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end(body);
+  });
+  for (let i = 0; i < 30; i++)
+    await context.request.get(`${server.PREFIX}/large`);
+  await context.close();
+
+  const stats = fs.statSync(harPath);
+  expect(stats.size).toBeGreaterThan(512 * 1024 * 1024);
+
+  // Reading the whole file as a string would re-hit V8's limit, so
+  // sample the head and tail to verify structural sanity.
+  const fd = fs.openSync(harPath, 'r');
+  const head = Buffer.alloc(64);
+  fs.readSync(fd, head, 0, 64, 0);
+  const tail = Buffer.alloc(64);
+  fs.readSync(fd, tail, 0, 64, stats.size - 64);
+  fs.closeSync(fd);
+  expect(head.toString()).toMatch(/^\{\s*"log"\s*:\s*\{/);
+  expect(tail.toString()).toMatch(/\}\s*\}\s*$/);
+});
+
+it.describe('tracing.startHar', () => {
+  it('should record a HAR with options', async ({ contextFactory, server }, testInfo) => {
+    const context = await contextFactory();
+    const harPath = testInfo.outputPath('tracing.har');
+    await context.tracing.startHar(harPath, { mode: 'minimal', urlFilter: '**/one-style.css' });
+    const page = await context.newPage();
+    await page.goto(server.PREFIX + '/one-style.html');
+    await context.tracing.stopHar();
+    await context.close();
+
+    const log = JSON.parse(fs.readFileSync(harPath).toString()).log as Log;
+    const urls = log.entries.map(e => e.request.url);
+    expect(urls).toEqual([server.PREFIX + '/one-style.css']);
+    // Minimal mode drops body sizes.
+    expect(log.entries[0].request.bodySize).toBe(-1);
+  });
+
+  it('should record a zipped HAR for APIRequestContext', async ({ playwright, server }, testInfo) => {
+    const request = await playwright.request.newContext();
+    const harPath = testInfo.outputPath('tracing.har.zip');
+    await request.tracing.startHar(harPath, { content: 'attach' });
+    await request.get(server.PREFIX + '/simple.json');
+    await request.tracing.stopHar();
+    await request.dispose();
+
+    const resources = await parseHar(harPath);
+    const log = JSON.parse(resources.get('har.har')!.toString()).log as Log;
+    expect(log.entries.some(e => e.request.url === server.PREFIX + '/simple.json')).toBe(true);
+  });
+
+  it('should record a HAR with resourcesDir', async ({ contextFactory, server }, testInfo) => {
+    const context = await contextFactory();
+    const harPath = testInfo.outputPath('tracing.har');
+    const resourcesDir = testInfo.outputPath('har-resources');
+    await context.tracing.startHar(harPath, { content: 'attach', resourcesDir });
+    const page = await context.newPage();
+    await page.goto(server.PREFIX + '/one-style.html');
+    await context.tracing.stopHar();
+    await context.close();
+
+    const log = JSON.parse(fs.readFileSync(harPath).toString()).log as Log;
+    const styleEntry = log.entries.find(e => e.request.url.endsWith('/one-style.css'))!;
+    const sha1 = (styleEntry.response.content as any)._file as string;
+    expect(sha1).toBeTruthy();
+    const resourcePath = path.join(resourcesDir, sha1);
+    expect(fs.existsSync(resourcePath)).toBe(true);
+    expect(fs.readFileSync(resourcePath).toString()).toContain('pink');
+  });
+
+  it('should reject resourcesDir together with a .zip har file', async ({ contextFactory }, testInfo) => {
+    const context = await contextFactory();
+    const harPath = testInfo.outputPath('tracing.har.zip');
+    const resourcesDir = testInfo.outputPath('har-resources');
+    await expect(context.tracing.startHar(harPath, { content: 'attach', resourcesDir })).rejects.toThrow(/resourcesDir option is not compatible with a \.zip har file/);
+    await context.close();
+  });
 });

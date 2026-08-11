@@ -14,21 +14,20 @@
  * limitations under the License.
  */
 
-import { scaleImageToSize } from '../../utils/isomorphic/imageUtils';
-import { jpegjs, PNG } from '../../utilsBundle';
-import { formatObject } from '../../utils/isomorphic/stringUtils';
+import jpegjs from 'jpeg-js';
+import { PNG } from 'pngjs';
+import * as z from 'zod';
+import { formatObject } from '@isomorphic/stringUtils';
 
-import { z } from '../../zodBundle';
+import { scaleImageToSize } from '@isomorphic/imageUtils';
 import { defineTabTool } from './tool';
+import { optionalElementSchema } from './snapshot';
 
 import type * as playwright from '../../..';
 
-const screenshotSchema = z.object({
+const screenshotSchema = optionalElementSchema.extend({
   type: z.enum(['png', 'jpeg']).default('png').describe('Image format for the screenshot. Default is png.'),
   filename: z.string().optional().describe('File name to save the screenshot to. Defaults to `page-{timestamp}.{png|jpeg}` if not specified. Prefer relative file names to stay within the output directory.'),
-  element: z.string().optional().describe('Human-readable element description used to obtain permission to screenshot the element. If not provided, the screenshot will be taken of viewport. If element is provided, ref must be provided too.'),
-  ref: z.string().optional().describe('Exact target element reference from the page snapshot. If not provided, the screenshot will be taken of viewport. If ref is provided, element must be provided too.'),
-  selector: z.string().optional().describe('CSS or role selector for the target element, when "ref" is not available.'),
   fullPage: z.boolean().optional().describe('When true, takes a screenshot of the full scrollable page, instead of the currently visible viewport. Cannot be used with element screenshots.'),
 });
 
@@ -43,7 +42,7 @@ const screenshot = defineTabTool({
   },
 
   handle: async (tab, params, response) => {
-    if (params.fullPage && params.ref)
+    if (params.fullPage && params.target)
       throw new Error('fullPage cannot be used with element screenshots.');
 
     const fileType = params.type || 'png';
@@ -55,20 +54,21 @@ const screenshot = defineTabTool({
       ...(params.fullPage !== undefined && { fullPage: params.fullPage })
     };
 
-    const screenshotTarget = params.ref ? params.element || 'element' : (params.fullPage ? 'full page' : 'viewport');
-    const ref = (params.ref || params.selector) ? await tab.refLocator({ element: params.element || '', ref: params.ref || '', selector: params.selector }) : null;
-    const data = ref ? await ref.locator.screenshot(options) : await tab.page.screenshot(options);
+    const screenshotTargetLabel = params.target ? params.element || 'element' : (params.fullPage ? 'full page' : 'viewport');
+    const target = params.target ? await tab.targetLocator({ element: params.element, target: params.target }) : null;
+    const data = target ? await target.locator.screenshot(options) : await tab.page.screenshot(options);
 
-    const resolvedFile = await response.resolveClientFile({ prefix: ref ? 'element' : 'page', ext: fileType, suggestedFilename: params.filename }, `Screenshot of ${screenshotTarget}`);
+    const resolvedFile = await response.resolveClientFile({ prefix: target ? 'element' : 'page', ext: fileType, suggestedFilename: params.filename }, `Screenshot of ${screenshotTargetLabel}`);
 
-    response.addCode(`// Screenshot ${screenshotTarget} and save it as ${resolvedFile.relativeName}`);
-    if (ref)
-      response.addCode(`await page.${ref.resolved}.screenshot(${formatObject({ ...options, path: resolvedFile.relativeName })});`);
+    response.addCode(`// Screenshot ${screenshotTargetLabel} and save it as ${resolvedFile.relativeName}`);
+    if (target)
+      response.addCode(`await page.${target.resolved}.screenshot(${formatObject({ ...options, path: resolvedFile.relativeName })});`);
     else
       response.addCode(`await page.screenshot(${formatObject({ ...options, path: resolvedFile.relativeName })});`);
 
     await response.addFileResult(resolvedFile, data);
-    await response.registerImageResult(data, fileType);
+    if (!params.filename)
+      await response.registerImageResult(data, fileType);
   }
 });
 

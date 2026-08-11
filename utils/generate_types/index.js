@@ -497,7 +497,9 @@ class TypesGenerator {
 }
 
 (async function () {
-  const coreDocumentation = parseApi(path.join(PROJECT_DIR, 'docs', 'src', 'api'));
+  const coreDocumentation = parseApi(path.join(PROJECT_DIR, 'docs', 'src', 'api'))
+      .mergeWith(parseApi(path.join(PROJECT_DIR, 'docs', 'src', 'electron-api'), path.join(PROJECT_DIR, 'docs', 'src', 'api', 'params.md')))
+      .mergeWith(parseApi(path.join(PROJECT_DIR, 'docs', 'src', 'mobile-api'), path.join(PROJECT_DIR, 'docs', 'src', 'api', 'params.md')));
   const testDocumentation = parseApi(path.join(PROJECT_DIR, 'docs', 'src', 'test-api'), path.join(PROJECT_DIR, 'docs', 'src', 'api', 'params.md'));
   const reporterDocumentation = parseApi(path.join(PROJECT_DIR, 'docs', 'src', 'test-reporter-api'));
   const assertionClasses = new Set([
@@ -516,7 +518,9 @@ class TypesGenerator {
     const documentation = coreDocumentation.clone();
     const generator = new TypesGenerator({
       documentation,
-      doNotGenerate: assertionClasses,
+      doNotGenerate: new Set([
+        ...assertionClasses,
+      ]),
     });
     let types = await generator.generateTypes(path.join(__dirname, 'overrides.d.ts'));
     const namedDevices = Object.keys(devices).map(name => `  ${JSON.stringify(name)}: DeviceDescriptor;`).join('\n');

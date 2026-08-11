@@ -16,8 +16,10 @@
  */
 
 import { test as it, expect } from './pageTest';
-import { globToRegexPattern, urlMatches } from '../../packages/playwright-core/lib/utils/isomorphic/urlMatch';
+import { iso } from '../../packages/playwright-core/lib/coreBundle';
 import vm from 'vm';
+
+const { globToRegexPattern, urlMatches } = iso;
 
 it('should work with navigation @smoke', async ({ page, server }) => {
   const requests = new Map();
@@ -162,6 +164,22 @@ it('should work with glob', async () => {
     expect(urlMatches(undefined, `${prefix}:blank`, `${prefix}:*`)).toBeTruthy();
     expect(urlMatches(undefined, `not${prefix}:blank`, `${prefix}:*`)).toBeFalsy();
   }
+});
+
+it('should throw on unbalanced glob braces', async () => {
+  expect(() => globToRegexPattern('{foo')).toThrow(`Invalid glob pattern "{foo": unmatched '{'`);
+  expect(() => globToRegexPattern('}foo')).toThrow(`Invalid glob pattern "}foo": unmatched '}'`);
+  expect(() => globToRegexPattern('http://*/foo{')).toThrow(`unmatched '{'`);
+  expect(() => globToRegexPattern('**/*.png?{')).toThrow(`unmatched '{'`);
+  expect(() => globToRegexPattern('https://example.com/{a')).toThrow(`unmatched '{'`);
+  expect(() => globToRegexPattern('{{foo}')).toThrow(`nested '{' is not supported`);
+  // Escaped braces remain literal and must not throw.
+  expect(() => globToRegexPattern('\\{foo')).not.toThrow();
+  expect(() => globToRegexPattern('foo\\}')).not.toThrow();
+});
+
+it('should throw on page.route with invalid glob', async ({ page }) => {
+  await expect(page.route('http://*/foo{', route => route.continue())).rejects.toThrow(`unmatched '{'`);
 });
 
 it('should intercept by glob', async function({ page, server, isAndroid }) {

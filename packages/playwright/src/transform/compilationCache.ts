@@ -18,9 +18,12 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { calculateSha1 } from 'playwright-core/lib/utils';
-import { isWorkerProcess } from '../common/globals';
-import { sourceMapSupport } from '../utilsBundle';
+import sourceMapSupport from 'source-map-support';
+import { calculateSha1 } from '@utils/crypto';
+import { isUnderTest } from '@utils/debug';
+
+import { isWorkerProcess } from '../globals';
+import { packageRoot } from '../package';
 
 export type MemoryCache = {
   codePath: string;
@@ -66,6 +69,8 @@ const fileDependencies = new Map<string, Set<string>>();
 // Dependencies resolved by the external bundler.
 const externalDependencies = new Map<string, Set<string>>();
 
+const devSourceInfix = path.sep + 'playwright' + path.sep + 'packages' + path.sep;
+
 export function installSourceMapSupport() {
   Error.stackTraceLimit = 200;
 
@@ -73,6 +78,8 @@ export function installSourceMapSupport() {
     environment: 'node',
     handleUncaughtExceptions: false,
     retrieveSourceMap(source) {
+      if (!process.env.PWDEBUGIMPL && isUnderTest() && source.includes(devSourceInfix))
+        return { map: identitySourceMap(source), url: source };
       if (!sourceMaps.has(source))
         return null;
       const sourceMapPath = sourceMaps.get(source)!;
@@ -86,6 +93,15 @@ export function installSourceMapSupport() {
       }
     }
   });
+}
+
+function identitySourceMap(source: string) {
+  const lineCount = fs.readFileSync(source, 'utf8').split('\n').length;
+  return {
+    version: 3,
+    sources: [source],
+    mappings: lineCount ? 'AAAA' + ';AACA'.repeat(lineCount - 1) : '',
+  };
 }
 
 function _innerAddToCompilationCacheAndSerialize(filename: string, entry: MemoryCache) {
@@ -224,7 +240,9 @@ export function setExternalDependencies(filename: string, deps: string[]) {
 }
 
 export function fileDependenciesForTest() {
-  return fileDependencies;
+  return Object.fromEntries([...fileDependencies.entries()].map(entry => (
+    [path.basename(entry[0]), [...entry[1]].map(f => path.basename(f)).sort()]
+  )));
 }
 
 export function collectAffectedTestFiles(changedFile: string, testFileCollector: Set<string>) {
@@ -277,7 +295,7 @@ export function dependenciesForTestFile(filename: string): Set<string> {
 // This is only used in the dev mode, specifically excluding
 // files from packages/playwright*. In production mode, node_modules covers
 // that.
-const kPlaywrightInternalPrefix = path.resolve(__dirname, '../../../playwright');
+const kPlaywrightInternalPrefix = packageRoot;
 
 export function belongsToNodeModules(file: string) {
   if (file.includes(`${path.sep}node_modules${path.sep}`))

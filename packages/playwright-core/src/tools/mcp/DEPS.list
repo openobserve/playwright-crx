@@ -2,19 +2,22 @@
 ../../..
 ../../
 ../utils/mcp/
+../utils/extension.ts
 ../backend/
-../../utils/
-../../utils/isomorphic/
-../../utilsBundle.ts
-../../mcpBundle.ts
+@utils/**
+@isomorphic/**
 ../../server/
 ../../server/registry/
-../../server/utils/
+@utils/**
 ../../serverRegistry.ts
+node_modules/commander
+node_modules/debug
+node_modules/dotenv
+node_modules/ini
+node_modules/ws
 
 [browserFactory.ts]
 ../../client/connect.ts
 ../utils/connect.ts
 
 [program.ts]
-../../cli/program.ts

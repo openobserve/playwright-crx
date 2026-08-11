@@ -18,34 +18,37 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { getMetainfo } from '@isomorphic/protocolMetainfo';
+import { assert } from '@isomorphic/assert';
+import { monotonicTime } from '@isomorphic/time';
+import { ManualPromise } from '@isomorphic/manualPromise';
+import { eventsHelper  } from '@utils/eventsHelper';
+import { createGuid  } from '@utils/crypto';
+import { removeFolders  } from '@utils/fileUtils';
+import { SerializedFS  } from '@utils/serializedFS';
+import { getPlaywrightVersion } from '../../userAgent';
 import { Snapshotter } from './snapshotter';
-import { getMetainfo } from '../../../utils/isomorphic/protocolMetainfo';
-import { assert } from '../../../utils/isomorphic/assert';
-import { monotonicTime } from '../../../utils/isomorphic/time';
-import { ManualPromise } from '../../../utils/isomorphic/manualPromise';
-import { eventsHelper  } from '../../utils/eventsHelper';
-import { createGuid  } from '../../utils/crypto';
-import { getPlaywrightVersion } from '../../utils/userAgent';
 import { Artifact } from '../../artifact';
 import { BrowserContext } from '../../browserContext';
 import { Dispatcher } from '../../dispatchers/dispatcher';
 import { serializeError } from '../../errors';
-import { SerializedFS, removeFolders  } from '../../utils/fileUtils';
+import { HarRecorder } from '../../har/harRecorder';
 import { HarTracer } from '../../har/harTracer';
 import { SdkObject } from '../../instrumentation';
 import { Page } from '../../page';
-import { isAbortError } from '../../progress';
+import { isAbortError, nullProgress } from '../../progress';
 
 import type { SnapshotterBlob, SnapshotterDelegate } from './snapshotter';
-import type { NameValue } from '../../../utils/isomorphic/types';
-import type { RegisteredListener } from '../../../utils';
+import type { NameValue } from '@isomorphic/types';
+import type { RegisteredListener } from '@utils/eventsHelper';
 import type { ConsoleMessage } from '../../console';
 import type { Dialog } from '../../dialog';
 import type { Download } from '../../download';
 import type { APIRequestContext } from '../../fetch';
 import type { HarTracerDelegate } from '../../har/harTracer';
 import type { CallMetadata, InstrumentationListener } from '../../instrumentation';
-import type { StackFrame, TracingTracingStopChunkParams } from '@protocol/channels';
+import type { PageError } from '../../page';
+import type { RecordHarOptions, StackFrame, TracingTracingStopChunkParams } from '@protocol/channels';
 import type * as har from '@trace/har';
 import type { FrameSnapshot } from '@trace/snapshot';
 import type * as trace from '@trace/trace';
@@ -93,6 +96,8 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
   private _allResources = new Set<string>();
   private _contextCreatedEvent: trace.ContextCreatedTraceEvent;
   private _pendingHarEntries = new Set<har.Entry>();
+  private _started = false;
+  readonly harRecorders = new Map<string, HarRecorder>();
 
   constructor(context: BrowserContext | APIRequestContext, tracesDir: string | undefined) {
     super(context, 'tracing');
@@ -135,12 +140,12 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
   async resetForReuse(progress: Progress) {
     // Discard previous chunk if any and ignore any errors there.
     await this.stopChunk(progress, { mode: 'discard' }).catch(() => {});
-    await this.stop(progress);
+    await progress.race(this._stop());
     if (this._snapshotter)
       await progress.race(this._snapshotter.resetForReuse());
   }
 
-  start(options: TracerOptions) {
+  start(progress: Progress, options: TracerOptions) {
     if (this._isStopping)
       throw new Error('Cannot start tracing while stopping');
     if (this._state)
@@ -175,6 +180,7 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
     // Tracing is 10x bigger if we include scripts in every trace.
     if (options.snapshots)
       this._harTracer.start({ omitScripts: !options.live });
+    this._started = true;
   }
 
   async startChunk(progress: Progress, options: { name?: string, title?: string } = {}): Promise<{ traceName: string }> {
@@ -217,7 +223,7 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
     if (this._state.options.screenshots)
       this._startScreencast();
     if (this._state.options.snapshots)
-      await this._snapshotter?.start();
+      await this._snapshotter?.start(progress);
     return { traceName: this._state.traceName };
   }
 
@@ -225,9 +231,10 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
     return this._state?.groupStack.length ? this._state.groupStack[this._state.groupStack.length - 1] : undefined;
   }
 
-  group(name: string, location: { file: string, line?: number, column?: number } | undefined, metadata: CallMetadata) {
+  group(progress: Progress, name: string, location: { file: string, line?: number, column?: number } | undefined) {
     if (!this._state)
       return;
+    const metadata = progress.metadata;
     const stackFrames: StackFrame[] = [];
     const { file, line, column } = location ?? metadata.location ?? {};
     if (file) {
@@ -254,7 +261,11 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
     this._appendTraceEvent(event);
   }
 
-  groupEnd() {
+  groupEnd(progress: Progress) {
+    this._groupEnd();
+  }
+
+  private _groupEnd() {
     if (!this._state)
       return;
     const callId = this._state.groupStack.pop();
@@ -302,7 +313,11 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
     state.networkFile = newNetworkFile;
   }
 
-  async stop(progress: Progress | undefined) {
+  async stop(progress: Progress) {
+    await progress.race(this._stop());
+  }
+
+  private async _stop() {
     if (!this._state)
       return;
     if (this._isStopping)
@@ -312,8 +327,7 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
     this._closeAllGroups();
     this._harTracer.stop();
     this.flushHarEntries();
-    const promise = progress ? progress.race(this._fs.syncAndGetError()) : this._fs.syncAndGetError();
-    await promise.finally(() => {
+    await this._fs.syncAndGetError().finally(() => {
       this._state = undefined;
     });
   }
@@ -337,15 +351,31 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
 
   async flush() {
     this.abort();
+    for (const harRecorder of this.harRecorders.values())
+      await harRecorder.flush();
     await this._fs.syncAndGetError();
+  }
+
+  harStart(page: Page | null, options: RecordHarOptions): string {
+    const harId = createGuid();
+    const artifactsDir = this._context instanceof BrowserContext ? this._context._browser.options.artifactsDir : this._createTracesDirIfNeeded();
+    this.harRecorders.set(harId, new HarRecorder(this._context, artifactsDir, harId, page, options));
+    return harId;
+  }
+
+  async harExport(progress: Progress, harId: string | undefined, mode: 'archive' | 'entries'): Promise<{ artifact?: Artifact, entries?: NameValue[] }> {
+    const recorder = this.harRecorders.get(harId || '')!;
+    const result = await progress.race(recorder.export(mode));
+    this.harRecorders.delete(harId || '');
+    return result;
   }
 
   private _closeAllGroups() {
     while (this._currentGroupId())
-      this.groupEnd();
+      this._groupEnd();
   }
 
-  async stopChunk(progress: Progress | undefined, params: TracingTracingStopChunkParams): Promise<{ artifact?: Artifact, entries?: NameValue[] }> {
+  async stopChunk(progress: Progress, params: TracingTracingStopChunkParams): Promise<{ artifact?: Artifact, entries?: NameValue[] }> {
     if (this._isStopping)
       throw new Error(`Tracing is already stopping`);
     this._isStopping = true;
@@ -399,8 +429,12 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
       this._fs.zip(entries, zipFileName);
 
     // Make sure all file operations complete.
-    const promise = progress ? progress.race(this._fs.syncAndGetError()) : this._fs.syncAndGetError();
-    const error = await promise.catch(e => e);
+    let error: Error | undefined;
+    try {
+      await progress.race(this._fs.syncAndGetError());
+    } catch (e) {
+      error = e as Error;
+    }
 
     this._isStopping = false;
     if (this._state)
@@ -591,13 +625,27 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
     this._appendTraceEvent(event);
   }
 
-  private _onPageError(error: Error, page: Page) {
+  dispose(params: TracingTracingStopChunkParams) {
+    // Avoid protocol calls for the closed context.
+    if (this._started)
+      this.stopChunk(nullProgress, params).then(() => this._stop()).catch(() => {});
+    this._started = false;
+  }
+
+  private _onPageError(pageError: PageError, page: Page) {
     const event: trace.EventTraceEvent = {
       type: 'event',
       time: monotonicTime(),
       class: 'BrowserContext',
       method: 'pageError',
-      params: { error: serializeError(error) },
+      params: {
+        error: serializeError(pageError.error),
+        location: {
+          url: pageError.location.url,
+          line: pageError.location.lineNumber,
+          column: pageError.location.columnNumber,
+        },
+      },
       pageId: page.guid,
     };
     this._appendTraceEvent(event);

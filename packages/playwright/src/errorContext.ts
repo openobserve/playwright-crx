@@ -17,7 +17,8 @@
 import fs from 'fs';
 import path from 'path';
 
-import { parseErrorStack, stripAnsiEscapes } from 'playwright-core/lib/utils';
+import { parseErrorStack } from '@isomorphic/stackTrace';
+import { stripAnsiEscapes } from '@isomorphic/stringUtils';
 
 import { relativeFilePath } from './util';
 
@@ -61,6 +62,14 @@ export function buildErrorContext(options: {
           stripAnsiEscapes(error.message || ''),
           '```',
       );
+      if (error.errorContext) {
+        lines.push(
+            '',
+            '```yaml',
+            error.errorContext,
+            '```',
+        );
+      }
     }
   }
 

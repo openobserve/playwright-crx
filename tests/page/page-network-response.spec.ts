@@ -17,6 +17,7 @@
 
 import fs from 'fs';
 import url from 'url';
+import zlib from 'zlib';
 import { expect, test as it } from './pageTest';
 
 it('should work @smoke', async ({ page, server }) => {
@@ -61,6 +62,24 @@ it('should return uncompressed text', async ({ page, server }) => {
   const response = await page.goto(server.PREFIX + '/simple.json');
   expect(response.headers()['content-encoding']).toBe('gzip');
   expect(await response.text()).toBe('{"foo": "bar"}\n');
+});
+
+it('should return uncompressed text for brotli encoding', async ({ page, server, browserName, isAndroid }) => {
+  it.fixme(browserName === 'firefox', 'https://github.com/microsoft/playwright/issues/39160');
+  it.fixme(isAndroid, 'net::ERR_CONTENT_DECODING_FAILED');
+
+  const text = '{"foo": "bar"}\n';
+  const compressed = zlib.brotliCompressSync(Buffer.from(text));
+  server.setRoute('/brotli.json', (req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Content-Encoding': 'br',
+    });
+    res.end(compressed);
+  });
+  const response = await page.goto(server.PREFIX + '/brotli.json');
+  expect(response.headers()['content-encoding']).toBe('br');
+  expect(await response.text()).toBe(text);
 });
 
 it('should throw when requesting body of redirected response', async ({ page, server }) => {
@@ -425,4 +444,37 @@ it('request.existingResponse should return the response after it is received', a
 it('should return http version', async ({ page, server }) => {
   const response = await page.goto(server.EMPTY_PAGE);
   expect(await response.httpVersion()).toBe('HTTP/1.1');
+});
+
+it('Response.formData() should parse multipart/form-data in page context', async ({ page, server, browserName }) => {
+  it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/40244' });
+  await page.goto(server.EMPTY_PAGE);
+  const result = await page.evaluate(async () => {
+    const boundary = '----WebKitFormBoundary1234';
+    const body = [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="field1"',
+      '',
+      'value1',
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="file1"; filename="test.txt"',
+      'Content-Type: text/plain',
+      '',
+      'hello',
+      `--${boundary}--`,
+    ].join('\r\n');
+    const response = new Response(body, {
+      headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+    });
+    const fd = await response.formData();
+    const file = fd.get('file1') as File;
+    return {
+      field1: fd.get('field1'),
+      filename: file instanceof File ? file.name : null,
+      fileContent: file instanceof File ? await file.text() : null,
+    };
+  });
+  expect(result.field1).toBe('value1');
+  expect(result.filename).toBe('test.txt');
+  expect(result.fileContent).toBe('hello');
 });

@@ -17,7 +17,7 @@
 import fs from 'fs';
 
 import { test, expect } from './fixtures';
-import { jpegjs, PNG } from 'packages/playwright-core/lib/utilsBundle';
+import { jpegjs, PNG } from '../../packages/playwright-core/lib/utilsBundle';
 
 test('browser_take_screenshot (viewport)', async ({ startClient, server }, testInfo) => {
   const { client } = await startClient({
@@ -57,7 +57,7 @@ test('browser_take_screenshot (element)', async ({ startClient, server }, testIn
     name: 'browser_take_screenshot',
     arguments: {
       element: 'hello button',
-      ref: 'e1',
+      target: 'e1',
     },
   })).toEqual({
     content: [
@@ -238,11 +238,6 @@ test('browser_take_screenshot (filename: "output.png")', async ({ client, server
         text: expect.stringContaining(`output.png`),
         type: 'text',
       },
-      {
-        data: expect.any(String),
-        mimeType: 'image/png',
-        type: 'image',
-      },
     ],
   });
 
@@ -365,7 +360,7 @@ test('browser_take_screenshot (fullPage with element should error)', async ({ st
     arguments: {
       fullPage: true,
       element: 'hello button',
-      ref: 'e1',
+      target: 'e1',
     },
   });
 

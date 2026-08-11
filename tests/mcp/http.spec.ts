@@ -24,7 +24,7 @@ import { test as baseTest, expect, mcpServerPath, formatLog } from './fixtures';
 import { inheritAndCleanEnv } from '../config/utils';
 
 import type { Config } from '../../packages/playwright-core/src/tools/mcp/config.d';
-import { ListRootsRequestSchema } from 'playwright-core/lib/mcpBundle';
+import { ListRootsRequestSchema } from 'playwright-core/lib/utilsBundle';
 
 const test = baseTest.extend<{ serverEndpoint: (options?: { args?: string[], noPort?: boolean }) => Promise<{ url: URL, stderr: () => string }> }>({
   serverEndpoint: async ({ mcpHeadless }, use, testInfo) => {
@@ -150,7 +150,7 @@ test('http transport browser sigint', async ({ serverEndpoint, server }) => {
     arguments: { url: server.HELLO_WORLD },
   });
 
-  await fetch(new URL('/killkillkill', url).href).catch(() => {});
+  await fetch(new URL('/killkillkill', url).href, { method: 'POST', headers: { 'x-pw-mcp-kill': '1' } }).catch(() => {});
 
   await expect.poll(() => formatLog(stderr())).toEqual({
     'create browser (isolated)': 1,

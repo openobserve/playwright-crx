@@ -16,16 +16,15 @@
 
 import { resolveConfig } from './config';
 import { filteredTools } from '../backend/tools';
-import { createBrowser } from './browserFactory';
+import { createBrowserWithInfo } from './browserFactory';
 import { BrowserBackend } from '../backend/browserBackend';
 import { createServer } from '../utils/mcp/server';
+import { packageJSON } from '../../package';
 
 import type { BrowserContext } from 'playwright';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { ClientInfo, ServerBackendFactory } from '../utils/mcp/server';
 import type { Config } from './config.d';
-
-const packageJSON = require('../../../package.json');
 
 export async function createConnection(userConfig: Config = {}, contextGetter?: () => Promise<BrowserContext>): Promise<Server> {
   const config = await resolveConfig(userConfig);
@@ -36,7 +35,9 @@ export async function createConnection(userConfig: Config = {}, contextGetter?: 
     version: packageJSON.version,
     toolSchemas: tools.map(tool => tool.schema),
     create: async (clientInfo: ClientInfo) => {
-      const browser = contextGetter ? new SimpleBrowser(await contextGetter()) : await createBrowser(config, clientInfo);
+      const browser = contextGetter
+        ? new SimpleBrowser(await contextGetter())
+        : (await createBrowserWithInfo(config, clientInfo, {})).browser;
       const context = config.browser.isolated ? await browser.newContext(config.browser.contextOptions) : browser.contexts()[0];
       return new BrowserBackend(config, context, tools);
     },

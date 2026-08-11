@@ -14,13 +14,14 @@
  * limitations under the License.
  */
 
+import { startProfiling, stopProfiling } from '@utils/profiler';
+import { debugLogger } from '@utils/debugLogger';
+import { monotonicTime } from '@isomorphic/time';
+import { Semaphore } from '@isomorphic/semaphore';
 import { DispatcherConnection, PlaywrightDispatcher, RootDispatcher } from '../server';
 import { AndroidDevice } from '../server/android/android';
 import { Browser } from '../server/browser';
 import { DebugControllerDispatcher } from '../server/dispatchers/debugControllerDispatcher';
-import { startProfiling, stopProfiling } from '../server/utils/profiler';
-import { monotonicTime, Semaphore } from '../utils';
-import { debugLogger } from '../server/utils/debugLogger';
 import { PlaywrightDispatcherOptions } from '../server/dispatchers/playwrightDispatcher';
 
 import type { DispatcherScope, Playwright } from '../server';
@@ -36,7 +37,7 @@ export class PlaywrightConnection {
   private _dispatcherConnection: DispatcherConnection;
   private _cleanups: (() => Promise<void>)[] = [];
   private _id: string;
-  private _disconnected = false;
+  private _onDisconnectPromise: Promise<void> | undefined;
   private _root: DispatcherScope;
   private _profileName: string;
 
@@ -109,10 +110,13 @@ export class PlaywrightConnection {
     });
   }
 
-  private async _onDisconnect(error?: Error) {
-    if (this._disconnected)
-      return;
-    this._disconnected = true;
+  private _onDisconnect(error?: Error): Promise<void> {
+    if (!this._onDisconnectPromise)
+      this._onDisconnectPromise = this._doDisconnect(error);
+    return this._onDisconnectPromise;
+  }
+
+  private async _doDisconnect(error?: Error) {
     debugLogger.log('server', `[${this._id}] disconnected. error: ${error}`);
     await this._root.stopPendingOperations(new Error('Disconnected')).catch(() => {});
     this._root._dispose();
@@ -136,12 +140,13 @@ export class PlaywrightConnection {
   }
 
   async close(reason?: { code: number, reason: string }) {
-    if (this._disconnected)
-      return;
-    debugLogger.log('server', `[${this._id}] force closing connection: ${reason?.reason || ''} (${reason?.code || 0})`);
-    try {
-      this._transport.close(reason);
-    } catch (e) {
+    if (!this._onDisconnectPromise) {
+      debugLogger.log('server', `[${this._id}] force closing connection: ${reason?.reason || ''} (${reason?.code || 0})`);
+      try {
+        this._transport.close(reason);
+      } catch (e) {
+      }
     }
+    await this._onDisconnect();
   }
 }

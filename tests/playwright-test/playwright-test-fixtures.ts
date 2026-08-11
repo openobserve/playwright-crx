@@ -147,7 +147,7 @@ async function runPlaywrightTest(childProcess: CommonFixtures['childProcess'], b
   const reportFile = path.join(baseDir, 'report.json');
   // When we have useIntermediateMergeReport, we want the JSON reporter only at the merge step.
   const envWithJsonReporter = {
-    PW_TEST_REPORTER: path.join(__dirname, '../../packages/playwright/lib/reporters/json.js'),
+    PW_TEST_REPORTER: 'json',
     PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile,
     ...env,
   };
@@ -359,8 +359,10 @@ const TSCONFIG = {
     'allowSyntheticDefaultImports': true,
     'rootDir': '.',
     'lib': ['esnext', 'dom', 'DOM.Iterable'],
+    'types': ['node'],
     'noEmit': true,
     'skipLibCheck': true,
+    'ignoreDeprecations': '6.0',
   },
   'exclude': [
     'node_modules'

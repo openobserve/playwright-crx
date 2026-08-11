@@ -164,7 +164,8 @@ playwright-cli tab-close [index]        # close a tab
 ### Network
 
 ```bash
-playwright-cli network                  # list network requests since page load
+playwright-cli requests                 # list network requests since page load
+playwright-cli request <num>            # show full details of a single request
 playwright-cli route <pattern> [opts]   # mock network requests
 playwright-cli route-list               # list active routes
 playwright-cli unroute [pattern]        # remove routes
@@ -280,10 +281,10 @@ The CLI also loads `.playwright/cli.config.json` automatically if present. The c
 Connect to your existing browser tabs instead of launching a new browser:
 
 ```bash
-playwright-cli open --extension
+playwright-cli attach --extension
 ```
 
-This requires the [Playwright MCP Bridge browser extension](https://github.com/user-attachments/packages/extension) to be installed.
+This requires the [Playwright Extension](https://github.com/microsoft/playwright/blob/main/packages/extension/README.md) to be installed.
 
 ## Quick Reference
 

@@ -16,11 +16,13 @@
 
 /* eslint-disable no-console */
 
-import { TraceLoader } from '../../utils/isomorphic/trace/traceLoader';
+import { TraceLoader } from '@isomorphic/trace/traceLoader';
+import { gracefullyCloseAll } from '@utils/processLauncher';
+import { HttpServer } from '@utils/httpServer';
+import { SnapshotServer } from '@isomorphic/trace/snapshotServer';
 import { BrowserBackend } from '../backend/browserBackend';
 import { browserTools } from '../backend/tools';
-import * as playwright from '../../..';
-import { gracefullyCloseAll } from '../../utils';
+import { playwright } from '../../inprocess';
 import { parseCommand } from '../cli-daemon/command';
 import { minimist } from '../cli-client/minimist';
 import { commands } from '../cli-daemon/commands';
@@ -82,17 +84,15 @@ export async function traceSnapshot(actionId: string, options: { name?: string, 
 }
 
 async function serveTraceSnapshot(storage: SnapshotStorage, loader: TraceLoader, pageId: string, snapshotKey: string): Promise<{ url: string, stop: () => Promise<void> }> {
-  const { SnapshotServer } = require('../../utils/isomorphic/trace/snapshotServer') as typeof import('../../utils/isomorphic/trace/snapshotServer');
-  const { HttpServer } = require('../../server/utils/httpServer') as typeof import('../../server/utils/httpServer');
-
   const snapshotServer = new SnapshotServer(storage, sha1 => loader.resourceForSha1(sha1));
   const httpServer = new HttpServer();
 
-  httpServer.routePrefix('/snapshot', (request: any, response: any) => {
+  httpServer.routePrefix('/snapshot/', (request: any, response: any) => {
     const url = new URL('http://localhost' + request.url!);
+    const pageOrFrameId = url.pathname.substring('/snapshot/'.length);
     const searchParams = url.searchParams;
     searchParams.set('name', snapshotKey);
-    const snapshotResponse = snapshotServer.serveSnapshot(pageId, searchParams, '/snapshot');
+    const snapshotResponse = snapshotServer.serveSnapshot(pageOrFrameId, searchParams, url.href);
     response.statusCode = snapshotResponse.status;
     snapshotResponse.headers.forEach((value: string, key: string) => response.setHeader(key, value));
     snapshotResponse.text().then((text: string) => response.end(text));
@@ -101,7 +101,7 @@ async function serveTraceSnapshot(storage: SnapshotStorage, loader: TraceLoader,
 
   httpServer.routePrefix('/', (_request: any, response: any) => {
     response.statusCode = 302;
-    response.setHeader('Location', '/snapshot');
+    response.setHeader('Location', `/snapshot/${pageId}?name=${encodeURIComponent(snapshotKey)}`);
     response.end();
     return true;
   });
@@ -121,7 +121,7 @@ async function runCommandOnSnapshot(server: { url: string, stop: () => Promise<v
     outputMode: 'file',
     skillMode: true,
   }, context, browserTools);
-  await backend.initialize({ cwd: process.cwd() });
+  await backend.initialize({ cwd: process.cwd(), clientName: 'playwright-cli' });
 
   try {
     if (!browserArgs.length)

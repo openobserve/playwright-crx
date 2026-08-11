@@ -392,6 +392,11 @@ export namespace Protocol {
       frameId: string;
       message: string;
       stack: string;
+      location: {
+        columnNumber: number;
+        lineNumber: number;
+        url: string;
+      };
     }
     export type frameAttachedPayload = {
       frameId: string;
@@ -515,6 +520,7 @@ export namespace Protocol {
         width: number;
         height: number;
       }|null;
+      deviceScaleFactor?: number;
     };
     export type setViewportSizeReturnValue = void;
     export type setZoomParameters = {

@@ -17,13 +17,18 @@
 import fs from 'fs';
 import path from 'path';
 
-import { ManualPromise, SerializedFS, calculateSha1, createGuid, getPlaywrightVersion, monotonicTime } from 'playwright-core/lib/utils';
+import * as yazl from 'yazl';
+import * as yauzl from '@utils/third_party/yauzl';
+import { ManualPromise } from '@isomorphic/manualPromise';
+import { monotonicTime } from '@isomorphic/time';
+import { calculateSha1, createGuid } from '@utils/crypto';
+import { SerializedFS } from '@utils/serializedFS';
+import { getPlaywrightVersion } from 'playwright-core/lib/coreBundle';
 
 import { filteredStackTrace } from '../util';
 
 import type { TestStepCategory, TestInfoImpl } from './testInfo';
-import type { PlaywrightWorkerOptions, TestInfo, TraceMode } from '../../types/test';
-import type { TestInfoErrorImpl } from '../common/ipc';
+import type { PlaywrightWorkerOptions, TestInfo, TestInfoError, TraceMode } from '../../types/test';
 import type { SerializedError, StackFrame } from '@protocol/channels';
 import type * as trace from '@trace/trace';
 import type EventEmitter from 'events';
@@ -182,7 +187,6 @@ export class TestTracing {
       return;
     }
 
-    const { yazl } = await import('playwright-core/lib/zipBundle');
     const zipFile = new yazl.ZipFile();
 
     if (!this._options?.attachments) {
@@ -245,7 +249,7 @@ export class TestTracing {
     this._testInfo.attachments.push({ name: 'trace', path: tracePath, contentType: 'application/zip' });
   }
 
-  appendForError(error: TestInfoErrorImpl) {
+  appendForError(error: TestInfoError) {
     const rawStack = error.stack?.split('\n') || [];
     const stack = rawStack ? filteredStackTrace(rawStack) : [];
     this._appendTraceEvent({
@@ -255,7 +259,7 @@ export class TestTracing {
     });
   }
 
-  _formatError(error: TestInfoErrorImpl) {
+  _formatError(error: TestInfoError) {
     const parts: string[] = [error.message || String(error.value)];
     if (error.cause)
       parts.push('[cause]: ' + this._formatError(error.cause));
@@ -347,7 +351,6 @@ async function mergeTraceFiles(fileName: string, temporaryTraceFiles: string[]) 
   }
 
   const mergePromise = new ManualPromise();
-  const { yazl, yauzl } = await import('playwright-core/lib/zipBundle');
   const zipFile = new yazl.ZipFile();
   const entryNames = new Set<string>();
   (zipFile as any as EventEmitter).on('error', error => mergePromise.reject(error));
