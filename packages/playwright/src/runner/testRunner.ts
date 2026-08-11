@@ -69,6 +69,7 @@ export type RunTestsParams = {
   testIds?: string[];
   headed?: boolean;
   workers?: number | string;
+  maxFailures?: number;
   updateSnapshots?: 'all' | 'changed' | 'missing' | 'none';
   updateSourceMethod?: 'overwrite' | 'patch' | '3way';
   reporters?: string[],
@@ -103,6 +104,7 @@ export class TestRunner extends EventEmitter<TestRunnerEventMap> {
   private _watchTestDirs = false;
   private _populateDependenciesOnList = false;
   private _startingEnv: NodeJS.ProcessEnv = {};
+  private _lastLoadedConfig: FullConfigInternal | undefined;
 
   constructor(configLocation: ConfigLocation, configCLIOverrides: ipc.ConfigCLIOverrides) {
     super();
@@ -309,6 +311,7 @@ export class TestRunner extends EventEmitter<TestRunnerEventMap> {
       ...(params.updateSnapshots ? { updateSnapshots: params.updateSnapshots } : {}),
       ...(params.updateSourceMethod ? { updateSourceMethod: params.updateSourceMethod } : {}),
       ...(params.workers ? { workers: params.workers } : {}),
+      ...(params.maxFailures ? { maxFailures: params.maxFailures } : {}),
     };
 
     const config = await this._loadConfigOrReportError(new InternalReporter([userReporter]), overrides);
@@ -396,10 +399,15 @@ export class TestRunner extends EventEmitter<TestRunnerEventMap> {
       } else {
         config.plugins.splice(0, config.plugins.length, ...this._plugins);
       }
+      this._lastLoadedConfig = config;
       return { config };
     } catch (e) {
       return { config: null, error: serializeError(e) };
     }
+  }
+
+  lastLoadedConfig(): FullConfigInternal | undefined {
+    return this._lastLoadedConfig;
   }
 
   private async _loadConfigOrReportError(reporter: InternalReporter, overrides?: ipc.ConfigCLIOverrides): Promise<FullConfigInternal | null> {
@@ -444,7 +452,7 @@ export async function runAllTestsWithConfig(config: FullConfigInternal, options:
 
   const filteredProjects = filterProjects(config.projects, options.projectFilter);
   const reporters = await createReporters(config, options.listMode ? 'list' : 'test', undefined, options);
-  const lastRun = new LastRunReporter(filteredProjects, options.listMode);
+  const lastRun = new LastRunReporter(filteredProjects, options.listMode, options.lastFailedFile);
   if (options.lastFailed) {
     const lastFailedTestIds = await lastRun.filterLastFailed();
     if (lastFailedTestIds.length)

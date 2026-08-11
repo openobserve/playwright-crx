@@ -18,9 +18,11 @@ import { ManualPromise } from '@isomorphic/manualPromise';
 import { renderTitleForCall } from '@isomorphic/protocolFormatter';
 import { debugLogger } from '@utils/debugLogger';
 import { Page } from './page';
+import { nullProgress } from './progress';
+import { ElementHandle } from './dom';
 
-import type * as types from './types';
 import type { CallMetadata, InstrumentationListener, SdkObject } from './instrumentation';
+import type * as types from './types';
 
 export type ScreencastClient = {
   onFrame: (frame: types.ScreencastFrame) => Promise<void> | void;
@@ -36,6 +38,7 @@ type ActionOptions = {
   duration?: number,
   position?: AnnotatePosition,
   fontSize?: number,
+  cursor?: 'none' | 'pointer',
 };
 
 export class Screencast implements InstrumentationListener {
@@ -47,7 +50,7 @@ export class Screencast implements InstrumentationListener {
 
   constructor(page: Page) {
     this.page = page;
-    this.page.instrumentation.addListener(this, page.browserContext);
+    this.page.instrumentation.addListener(this, this.page.browserContext);
   }
 
   async handlePageOrContextClose() {
@@ -152,19 +155,16 @@ export class Screencast implements InstrumentationListener {
     }
   }
 
-  async onBeforeCall(sdkObject: SdkObject, metadata: CallMetadata, parentId?: string): Promise<void> {
-    if (!this._actions)
-      return;
-    metadata.annotate = true;
-  }
-
-  async onBeforeInputAction(sdkObject: SdkObject, metadata: CallMetadata): Promise<void> {
+  async onBeforeInputAction(sdkObject: SdkObject, metadata: CallMetadata, point?: types.Point, box?: types.Rect): Promise<void> {
     if (!this._actions)
       return;
 
     const page = sdkObject.attribution.page;
-    if (!page)
+    if (page !== this.page)
       return;
+
+    if (!box && (sdkObject instanceof ElementHandle))
+      box = await sdkObject.boundingBox(nullProgress) || undefined;
 
     const actionTitle = renderTitleForCall(metadata);
     const utility = await page.mainFrame().utilityContext();
@@ -178,11 +178,12 @@ export class Screencast implements InstrumentationListener {
     }, {
       injected: await utility.injectedScript(),
       duration: this._actions?.duration ?? 500,
-      point: metadata.point,
-      box: metadata.box,
+      point,
+      box,
       actionTitle,
       position: this._actions?.position,
       fontSize: this._actions?.fontSize,
+      cursor: this._actions?.cursor ?? 'pointer',
     }).catch(e => debugLogger.log('error', e));
   }
 }

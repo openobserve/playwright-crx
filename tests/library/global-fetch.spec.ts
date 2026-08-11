@@ -18,7 +18,6 @@ import os from 'os';
 import * as util from 'util';
 import { getPlaywrightVersion } from '../../packages/playwright-core/lib/coreBundle';
 import { expect, playwrightTest as base } from '../config/browserTest';
-import { kTargetClosedErrorMessage } from '../config/errors';
 
 const it = base.extend({
   context: async ({}, use) => {
@@ -235,6 +234,35 @@ it('should propagate ignoreHTTPSErrors on redirects', async ({ playwright, https
   await request.dispose();
 });
 
+it('should return server address from response', async ({ playwright, server }) => {
+  const request = await playwright.request.newContext();
+  // The second request reuses the keep-alive socket and should report the address as well.
+  for (let i = 0; i < 2; i++) {
+    const response = await request.get(server.EMPTY_PAGE);
+    const addr = await response.serverAddr();
+    expect(addr!.ipAddress).toMatch(/^(127\.0\.0\.1|::1)$/);
+    expect(addr!.port).toBe(server.PORT);
+  }
+  await request.dispose();
+});
+
+it('should return security details from response', async ({ playwright, httpsServer }) => {
+  const request = await playwright.request.newContext({ ignoreHTTPSErrors: true });
+  // The second request reuses the keep-alive socket and should report the details as well.
+  for (let i = 0; i < 2; i++) {
+    const response = await request.get(httpsServer.EMPTY_PAGE);
+    expect(await response.securityDetails()).toEqual({ issuer: 'playwright-test', protocol: 'TLSv1.3', subjectName: 'playwright-test', validFrom: 1691708270, validTo: 2007068270 });
+  }
+  await request.dispose();
+});
+
+it('should return null security details for http response', async ({ playwright, server }) => {
+  const request = await playwright.request.newContext();
+  const response = await request.get(server.EMPTY_PAGE);
+  expect(await response.securityDetails()).toBeNull();
+  await request.dispose();
+});
+
 it('should resolve url relative to global baseURL option', async ({ playwright, server }) => {
   const request = await playwright.request.newContext({ baseURL: server.PREFIX });
   const response = await request.get('/empty.html');
@@ -324,7 +352,7 @@ it('should abort redirected requests when context is disposed', async ({ playwri
     server.waitForRequest('/test').then(() => request.dispose())
   ]);
   expect(result instanceof Error).toBeTruthy();
-  expect(result.message).toContain(kTargetClosedErrorMessage);
+  expect(result.message).toMatch(/Request context disposed|Target page, context or browser has been closed/);
   await connectionClosed;
   await request.dispose();
 });

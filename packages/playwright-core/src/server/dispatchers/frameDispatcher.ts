@@ -14,9 +14,8 @@
  * limitations under the License.
  */
 
-import yaml from 'yaml';
-import { parseAriaSnapshotUnsafe } from '@isomorphic/ariaSnapshot';
-import { Frame } from '../frames';
+import { renderTitleForCall } from '@isomorphic/protocolFormatter';
+import { ExpectError, Frame } from '../frames';
 import { Dispatcher } from './dispatcher';
 import { ElementHandleDispatcher } from './elementHandlerDispatcher';
 import { parseArgument, serializeResult } from './jsHandleDispatcher';
@@ -140,7 +139,6 @@ export class FrameDispatcher extends Dispatcher<Frame, channels.FrameChannel, Br
   }
 
   async click(params: channels.FrameClickParams, progress: Progress): Promise<void> {
-    progress.metadata.potentiallyClosesScope = true;
     return await this._frame.click(progress, params.selector, params);
   }
 
@@ -273,23 +271,14 @@ export class FrameDispatcher extends Dispatcher<Frame, channels.FrameChannel, Br
   }
 
   async expect(params: channels.FrameExpectParams, progress: Progress): Promise<channels.FrameExpectResult> {
-    progress.metadata.potentiallyClosesScope = true;
-    let expectedValue = params.expectedValue ? parseArgument(params.expectedValue) : undefined;
-    if (params.expression === 'to.match.aria' && expectedValue)
-      expectedValue = parseAriaSnapshotUnsafe(yaml, expectedValue);
-    const result = await this._frame.expect(progress, params.selector, { ...params, expectedValue, timeoutForLogs: params.timeout });
-    const channelResult: channels.FrameExpectResult = {
-      matches: result.matches,
-      log: result.log,
-      timedOut: result.timedOut,
-      errorMessage: result.errorMessage,
-    };
-    if (result.received !== undefined) {
-      channelResult.received = {
-        value: result.received.value !== undefined ? serializeResult(result.received.value) : undefined,
-        ariaSnapshot: result.received.ariaSnapshot,
-      };
+    progress.log(`${renderTitleForCall(progress.metadata)}${params.timeout ? ` with timeout ${params.timeout}ms` : ''}`);
+    const expectedValue = params.expectedValue ? parseArgument(params.expectedValue) : undefined;
+    try {
+      await this._frame.expect(progress, params.selector, { ...params, expectedValue });
+    } catch (e) {
+      if (e instanceof ExpectError && e.details.received && 'value' in e.details.received)
+        e.details.received.value = serializeResult(e.details.received.value);
+      throw e;
     }
-    return channelResult;
   }
 }

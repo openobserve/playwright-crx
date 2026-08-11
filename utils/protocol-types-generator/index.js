@@ -1,7 +1,7 @@
 // @ts-check
 const path = require('path');
 const fs = require('fs');
-const yauzl = require('../../packages/utils/third_party/yauzl');
+const yauzl = require('yauzl');
 const vm = require('vm');
 const os = require('os');
 
@@ -254,4 +254,4 @@ function firefoxTypeToString(type, indent='    ') {
   return type['$type'];
 }
 
-module.exports = { generateProtocol };
+module.exports = { generateProtocol, jsonToTS };

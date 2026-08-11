@@ -57,7 +57,7 @@ export class BrowserTypeDispatcher extends Dispatcher<BrowserType, channels.Brow
     if (this._denyLaunch)
       throw new Error(`Launching more browsers is not allowed.`);
 
-    const browser = await this._object.connectOverCDP(progress, params.endpointURL, params);
+    const browser = await this._object.connectOverCDP(progress, params);
     const browserDispatcher = new BrowserDispatcher(this, browser);
     return {
       browser: browserDispatcher,

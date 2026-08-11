@@ -15,10 +15,11 @@
  */
 
 import mime from 'mime';
+import { base64ByteLength } from '@isomorphic/base64';
 import { ManualPromise } from '@isomorphic/manualPromise';
 import { eventsHelper } from '@utils/eventsHelper';
 import { assert } from '@isomorphic/assert';
-import { calculateSha1 } from '@utils/crypto';
+import { calculateSha1, createGuid } from '@utils/crypto';
 import { monotonicTime } from '@isomorphic/time';
 import { isTextualMimeType } from '@isomorphic/mimeType';
 import { urlMatches } from '@isomorphic/urlMatch';
@@ -30,9 +31,10 @@ import { helper } from '../helper';
 import * as network from '../network';
 import { nullProgress } from '../progress';
 
+import { Page } from '../page';
+
 import type { RegisteredListener } from '@utils/eventsHelper';
 import type { APIRequestEvent, APIRequestFinishedEvent } from '../fetch';
-import type { Page } from '../page';
 import type { Worker } from '../page';
 import type { HeadersArray, LifecycleEvent } from '../types';
 import type * as har from '@trace/har';
@@ -43,6 +45,7 @@ export interface HarTracerDelegate {
   onEntryStarted(entry: har.Entry): void;
   onEntryFinished(entry: har.Entry): void;
   onContentBlob(sha1: string, buffer: Buffer): void;
+  onContentBlobAppend(sha1: string, text: string): void;
 }
 
 type HarTracerOptions = {
@@ -59,6 +62,7 @@ type HarTracerOptions = {
   omitPages?: boolean;
   omitSizes?: boolean;
   omitScripts?: boolean;
+  omitWebSocketFrames?: boolean;
 };
 
 export class HarTracer {
@@ -66,10 +70,11 @@ export class HarTracer {
   private _barrierPromises = new Set<Promise<void>>();
   private _delegate: HarTracerDelegate;
   private _options: HarTracerOptions;
-  private _pageEntries = new Map<Page, har.Page>();
+  private _pageEntries: har.Page[] = [];
   private _eventListeners: RegisteredListener[] = [];
   private _started = false;
   private _entrySymbol: symbol;
+  private _pageEntrySymbol: symbol;
   private _baseURL: string | undefined;
   private _page: Page | null;
 
@@ -87,6 +92,7 @@ export class HarTracer {
       options.omitPages = true;
     }
     this._entrySymbol = Symbol('requestHarEntry');
+    this._pageEntrySymbol = Symbol('pageHarEntry');
     this._baseURL = context instanceof APIRequestContext ? context._defaultOptions().baseURL : context._options.baseURL;
   }
 
@@ -110,6 +116,7 @@ export class HarTracer {
           eventsHelper.addEventListener(this._context, BrowserContext.Events.RequestAborted, request => this._onRequestAborted(request)),
           eventsHelper.addEventListener(this._context, BrowserContext.Events.RequestFulfilled, request => this._onRequestFulfilled(request)),
           eventsHelper.addEventListener(this._context, BrowserContext.Events.RequestContinued, request => this._onRequestContinued(request)),
+          eventsHelper.addEventListener(this._context, BrowserContext.Events.WebSocket, (webSocket: network.WebSocket, page: Page) => this._onWebSocket(page, webSocket)),
       );
       for (const page of this._context.pages())
         this._createPageEntryIfNeeded(page);
@@ -131,7 +138,7 @@ export class HarTracer {
       return;
     if (this._page && page !== this._page)
       return;
-    let pageEntry = this._pageEntries.get(page);
+    let pageEntry = (page as any)[this._pageEntrySymbol] as har.Page | undefined;
     if (!pageEntry) {
       const date = new Date();
       pageEntry = {
@@ -152,7 +159,8 @@ export class HarTracer {
           this._onDOMContentLoaded(page, pageEntry!);
       });
 
-      this._pageEntries.set(page, pageEntry);
+      (page as any)[this._pageEntrySymbol] = pageEntry;
+      this._pageEntries.push(pageEntry);
     }
     return pageEntry;
   }
@@ -270,7 +278,8 @@ export class HarTracer {
       return;
 
     const pageEntry = this._createPageEntryIfNeeded(page);
-    const harEntry = createHarEntry(pageEntry?.id, request.method(), url, request.frame()?.guid, this._options);
+    const harEntry = createHarEntry(pageEntry?.id, request.method(), url, request.frame()?.guid, this._options, request.wallTimeMs());
+    harEntry._resourceType = request.resourceType();
     this._recordRequestHeadersAndCookies(harEntry, request.headers());
     harEntry.request.postData = this._postDataForRequest(request, this._options.content);
     if (!this._options.omitSizes)
@@ -314,7 +323,7 @@ export class HarTracer {
     // In WebKit security details and server ip are reported in Network.loadingFinished, so we populate
     // it here to not hang in case of long chunked responses, see https://github.com/microsoft/playwright/issues/21182.
     if (!this._options.omitServerIP) {
-      this._addBarrier(page || request.serviceWorker(), response.serverAddr(nullProgress).then(server => {
+      this._addBarrier(page || request.serviceWorker(), response.internalServerAddr().then(server => {
         if (server?.ipAddress)
           harEntry.serverIPAddress = server.ipAddress;
         if (server?.port)
@@ -322,7 +331,7 @@ export class HarTracer {
       }));
     }
     if (!this._options.omitSecurityDetails) {
-      this._addBarrier(page || request.serviceWorker(), response.securityDetails(nullProgress).then(details => {
+      this._addBarrier(page || request.serviceWorker(), response.internalSecurityDetails().then(details => {
         if (details)
           harEntry._securityDetails = details;
       }));
@@ -367,7 +376,7 @@ export class HarTracer {
     });
     this._addBarrier(page || request.serviceWorker(), promise);
 
-    this._addBarrier(page || request.serviceWorker(), response.httpVersion(nullProgress).then(httpVersion => {
+    this._addBarrier(page || request.serviceWorker(), response.internalHttpVersion().then(httpVersion => {
       harEntry.request.httpVersion = httpVersion;
       harEntry.response.httpVersion = httpVersion;
     }));
@@ -378,7 +387,7 @@ export class HarTracer {
     this._computeHarEntryTotalTime(harEntry);
 
     if (!this._options.omitSizes) {
-      this._addBarrier(page || request.serviceWorker(), response.sizes(nullProgress).then(sizes => {
+      this._addBarrier(page || request.serviceWorker(), response.internalSizes().then(sizes => {
         harEntry.response.bodySize = sizes.responseBodySize;
         harEntry.response.headersSize = sizes.responseHeadersSize;
         harEntry.response._transferSize = sizes.transferSize;
@@ -416,6 +425,116 @@ export class HarTracer {
     const harEntry = this._entryForRequest(request);
     if (harEntry)
       harEntry._wasContinued = true;
+  }
+
+  private _onWebSocket(page: Page, webSocket: network.WebSocket) {
+    if (this._page && page !== this._page)
+      return;
+    if (!this._shouldIncludeEntryWithUrl(webSocket.url()))
+      return;
+    const url = network.parseURL(webSocket.url());
+    if (!url)
+      return;
+
+    const method = 'GET';
+    const pageEntry = this._createPageEntryIfNeeded(page);
+    const harEntry = createHarEntry(pageEntry?.id, method, url, page.mainFrame().guid, this._options, webSocket.wallTimeMs());
+    harEntry._resourceType = 'websocket';
+
+    let sha1: string | undefined = undefined;
+    const recordMessage = (type: 'send' | 'receive', opcode: number, data: string, wallTimeMs: number) => {
+      if (this._options.omitWebSocketFrames)
+        return;
+      const message = { type, time: this._options.omitTiming ? -1 : wallTimeMs, opcode, data };
+      if (this._options.content === 'embed') {
+        harEntry._webSocketMessages ??= [];
+        harEntry._webSocketMessages.push(message);
+      } else if (this._options.content === 'attach') {
+        if (!sha1) {
+          sha1 = createGuid() + '.jsonl';
+          if (this._options.includeTraceInfo)
+            harEntry.response.content._sha1 = sha1;
+          else
+            harEntry.response.content._file = sha1;
+        }
+
+        if (this._started)
+          this._delegate.onContentBlobAppend(sha1, JSON.stringify(message) + '\n');
+      }
+    };
+
+    let oldestWallTimeMs = Infinity;
+    let newestWallTimeMs = -Infinity;
+    const updateTime = (wallTimeMs: number) => {
+      if (this._options.omitTiming)
+        return;
+
+      if (wallTimeMs >= oldestWallTimeMs && wallTimeMs <= newestWallTimeMs)
+        return;
+
+      if (wallTimeMs < oldestWallTimeMs)
+        oldestWallTimeMs = wallTimeMs;
+      if (wallTimeMs > newestWallTimeMs)
+        newestWallTimeMs = wallTimeMs;
+      if (oldestWallTimeMs === newestWallTimeMs)
+        return;
+
+      harEntry.time = newestWallTimeMs - oldestWallTimeMs;
+    };
+
+    const eventListeners = [
+      eventsHelper.addEventListener(webSocket, network.WebSocket.Events.Request, ({ headers }: { headers: HeadersArray }) => {
+        this._recordRequestHeadersAndCookies(harEntry, headers);
+        if (!this._options.omitSizes)
+          harEntry.request.headersSize = network.requestHeadersSize(headers, webSocket.url(), method);
+      }),
+      eventsHelper.addEventListener(webSocket, network.WebSocket.Events.Response, ({ status, statusText, headers }: { status: number, statusText: string, headers: HeadersArray }) => {
+        harEntry.response.status = status;
+        harEntry.response.statusText = statusText;
+        this._recordResponseHeaders(harEntry, headers);
+        if (!this._options.omitSizes) {
+          harEntry.response.headersSize = network.responseHeadersSize(headers, statusText);
+          harEntry.response._transferSize = Math.max(0, harEntry.response._transferSize!) + harEntry.response.headersSize;
+        }
+      }),
+      eventsHelper.addEventListener(webSocket, network.WebSocket.Events.FrameSent, ({ opcode, data, wallTimeMs }: { opcode: number, data: string, wallTimeMs: number }) => {
+        recordMessage('send', opcode, data, wallTimeMs);
+        updateTime(wallTimeMs);
+      }),
+      eventsHelper.addEventListener(webSocket, network.WebSocket.Events.FrameReceived, ({ opcode, data, wallTimeMs }: { opcode: number, data: string, wallTimeMs: number }) => {
+        recordMessage('receive', opcode, data, wallTimeMs);
+        updateTime(wallTimeMs);
+
+        if (!this._options.omitSizes) {
+          const length = (opcode === 1) ? Buffer.byteLength(data, 'utf8') : base64ByteLength(data);
+
+          // According to <https://www.rfc-editor.org/info/rfc6455/#section-5.2>:
+          // - there are always 16 bits at the beginning of every frame: FIN RSV1 RSV2 RSV3 opcode(4) mask length(7)
+          // - there are always 4 bytes for the masking key (see <https://www.rfc-editor.org/info/rfc6455/#section-5.1>)
+          // - there may be an additional 16 or 64 bits for payload length if it's too long to fit in the above 7 bits (or if it also can't fit in 16 bits)
+          let headerSize = 6;
+          if (length >= 2 ** 16)
+            headerSize += 8;
+          else if (length > 125)
+            headerSize += 2;
+
+          harEntry.response._transferSize = Math.max(0, harEntry.response._transferSize!) + headerSize + length;
+        }
+      }),
+      eventsHelper.addEventListener(webSocket, network.WebSocket.Events.SocketError, (errorMessage: string) => {
+        harEntry.response._failureText = errorMessage;
+      }),
+      eventsHelper.addEventListener(webSocket, network.WebSocket.Events.Close, () => {
+        eventsHelper.removeEventListeners(eventListeners);
+
+        if (this._started)
+          this._delegate.onEntryFinished(harEntry);
+      }),
+    ];
+    this._eventListeners.push(...eventListeners);
+
+    if (this._started)
+      this._delegate.onEntryStarted(harEntry);
   }
 
   private _storeResponseContent(buffer: Buffer | undefined, content: har.Content, resourceType: string) {
@@ -477,6 +596,11 @@ export class HarTracer {
       const timing = response.timing();
       if (pageEntry && startDateTime > timing.startTime)
         pageEntry.startedDateTime = new Date(timing.startTime).toISOString();
+      if (request.wallTimeMs() === undefined && timing.startTime > 0) {
+        const startedDateTime = safeDateToISOString(timing.startTime);
+        if (startedDateTime)
+          harEntry.startedDateTime = startedDateTime;
+      }
       const dns = timing.domainLookupEnd !== -1 ? helper.millisToRoundishMillis(timing.domainLookupEnd - timing.domainLookupStart) : -1;
       const connect = timing.connectEnd !== -1 ? helper.millisToRoundishMillis(timing.connectEnd - timing.connectStart) : -1;
       const ssl = timing.connectEnd !== -1 ? helper.millisToRoundishMillis(timing.connectEnd - timing.secureConnectionStart) : -1;
@@ -495,13 +619,13 @@ export class HarTracer {
     }
 
     this._recordRequestOverrides(harEntry, request);
-    this._addBarrier(page || request.serviceWorker(), request.rawRequestHeaders(nullProgress).then(headers => {
+    this._addBarrier(page || request.serviceWorker(), request.internalRawRequestHeaders().then(headers => {
       this._recordRequestHeadersAndCookies(harEntry, headers);
     }));
     // Record available headers including redirect location in case the tracing is stopped before
     // response extra info is received (in Chromium).
     this._recordResponseHeaders(harEntry, response.headers());
-    this._addBarrier(page || request.serviceWorker(), response.rawResponseHeaders(nullProgress).then(headers => {
+    this._addBarrier(page || request.serviceWorker(), response.internalRawResponseHeaders().then(headers => {
       this._recordResponseHeaders(harEntry, headers);
     }));
   }
@@ -548,7 +672,7 @@ export class HarTracer {
         name: context?._browser.options.name || '',
         version: context?._browser.version() || ''
       },
-      pages: this._pageEntries.size ? Array.from(this._pageEntries.values()) : undefined,
+      pages: this._pageEntries.length ? this._pageEntries.slice() : undefined,
       entries: [],
     };
     if (!this._options.omitTiming) {
@@ -564,7 +688,7 @@ export class HarTracer {
           pageEntry.pageTimings.onLoad = -1;
       }
     }
-    this._pageEntries.clear();
+    this._pageEntries = [];
     return log;
   }
 
@@ -612,10 +736,11 @@ export class HarTracer {
 
 }
 
-function createHarEntry(pageRef: string | undefined, method: string, url: URL, frameref: string | undefined, options: HarTracerOptions): har.Entry {
+function createHarEntry(pageRef: string | undefined, method: string, url: URL, frameref: string | undefined, options: HarTracerOptions, wallTime?: number): har.Entry {
+  const startedDateTime = (wallTime && safeDateToISOString(wallTime)) || new Date().toISOString();
   const harEntry: har.Entry = {
     pageref: pageRef,
-    startedDateTime: new Date().toISOString(),
+    startedDateTime,
     time: -1,
     request: {
       method: method,

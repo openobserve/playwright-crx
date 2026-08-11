@@ -521,6 +521,9 @@ class TypesGenerator {
       doNotGenerate: new Set([
         ...assertionClasses,
       ]),
+      ignoreMissing: new Set([
+        'ConnectOverCDPTransport',
+      ]),
     });
     let types = await generator.generateTypes(path.join(__dirname, 'overrides.d.ts'));
     const namedDevices = Object.keys(devices).map(name => `  ${JSON.stringify(name)}: DeviceDescriptor;`).join('\n');

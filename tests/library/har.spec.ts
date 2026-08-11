@@ -106,6 +106,39 @@ it('should include request', async ({ contextFactory, server }, testInfo) => {
   expect(entry.request.bodySize).toBe(0);
 });
 
+it('should populate entry startedDateTime from the browser', async ({ contextFactory, server }, testInfo) => {
+  const { page, getLog } = await pageWithHar(contextFactory, testInfo);
+  await page.goto(server.EMPTY_PAGE);
+
+  // The browser issues a request after a short delay, then we deliberately
+  // block Node's event loop. The protocol event for the request therefore
+  // queues up while Node is busy and is only processed by the harTracer after
+  // the block ends. If `startedDateTime` is populated from Node's clock at
+  // observation time it will land inside the busy-loop window (i.e. close to
+  // `unblockedAt`); if it comes from the browser via the debugging protocol
+  // it will be tied to when the browser actually sent the request.
+  await page.evaluate(() => {
+    window.builtins.setTimeout(() => { void fetch('/delayed-fetch'); }, 50);
+  });
+
+  const blockUntil = Date.now() + 300;
+  while (Date.now() < blockUntil) {
+    // Busy loop to prevent Node from processing protocol events.
+  }
+  const unblockedAt = Date.now();
+
+  await page.waitForResponse('**/delayed-fetch');
+  const log = await getLog();
+
+  const entry = log.entries.find(e => e.request.url.endsWith('/delayed-fetch'))!;
+  const startedAt = new Date(entry.startedDateTime).valueOf();
+  expect(Number.isFinite(startedAt)).toBe(true);
+  // The recorded time should be tied to when the browser actually sent the
+  // request (during the busy loop), not to when Node observed the protocol
+  // event (after the busy loop).
+  expect(startedAt).toBeLessThan(unblockedAt - 100);
+});
+
 it('should include response', async ({ contextFactory, server }, testInfo) => {
   const { page, getLog } = await pageWithHar(contextFactory, testInfo);
   await page.goto(server.EMPTY_PAGE);
@@ -586,27 +619,23 @@ it('should have connection details', async ({ contextFactory, server, browserNam
   await page.goto(server.EMPTY_PAGE);
   const log = await getLog();
   const { serverIPAddress, _serverPort: port, _securityDetails: securityDetails } = log.entries[0];
-  if (!mode.startsWith('service')) {
-    expect(serverIPAddress).toMatch(/^127\.0\.0\.1|\[::1\]/);
-    expect(port).toBe(server.PORT);
-  }
+  expect(serverIPAddress).toMatch(/^127\.0\.0\.1|\[::1\]/);
+  expect(port).toBe(server.PORT);
   expect(securityDetails).toEqual({});
 });
 
-it('should have security details', async ({ contextFactory, httpsServer, browserName, platform, mode }, testInfo) => {
-  it.fail(browserName === 'webkit' && platform === 'linux', 'https://github.com/microsoft/playwright/issues/6759');
+it('should have security details', async ({ contextFactory, httpsServer, browserName, platform, mode, isFrozenWebkit }, testInfo) => {
   it.fail(browserName === 'webkit' && platform === 'win32');
+  it.skip(isFrozenWebkit);
 
   const { page, getLog } = await pageWithHar(contextFactory, testInfo);
   await page.goto(httpsServer.EMPTY_PAGE);
   await page.request.get(httpsServer.EMPTY_PAGE);
   const log = await getLog();
   const { serverIPAddress, _serverPort: port, _securityDetails: securityDetails } = log.entries[0];
-  if (!mode.startsWith('service')) {
-    expect(serverIPAddress).toMatch(/^127\.0\.0\.1|\[::1\]/);
-    expect(port).toBe(httpsServer.PORT);
-  }
-  if (browserName === 'webkit' && platform === 'darwin')
+  expect(serverIPAddress).toMatch(/^127\.0\.0\.1|\[::1\]/);
+  expect(port).toBe(httpsServer.PORT);
+  if (browserName === 'webkit')
     expect(securityDetails).toEqual({ protocol: 'TLS 1.3', subjectName: 'playwright-test', validFrom: 1691708270, validTo: 2007068270 });
   else
     expect(securityDetails).toEqual({ issuer: 'playwright-test', protocol: 'TLS 1.3', subjectName: 'playwright-test', validFrom: 1691708270, validTo: 2007068270 });
@@ -626,16 +655,14 @@ it('should have connection details for redirects', async ({ contextFactory, serv
   if (browserName === 'webkit') {
     expect(detailsFoo.serverIPAddress).toBeUndefined();
     expect(detailsFoo._serverPort).toBeUndefined();
-  } else if (!mode.startsWith('service')) {
+  } else {
     expect(detailsFoo.serverIPAddress).toMatch(/^127\.0\.0\.1|\[::1\]/);
     expect(detailsFoo._serverPort).toBe(server.PORT);
   }
 
-  if (!mode.startsWith('service')) {
-    const detailsEmpty = log.entries[1];
-    expect(detailsEmpty.serverIPAddress).toMatch(/^127\.0\.0\.1|\[::1\]/);
-    expect(detailsEmpty._serverPort).toBe(server.PORT);
-  }
+  const detailsEmpty = log.entries[1];
+  expect(detailsEmpty.serverIPAddress).toMatch(/^127\.0\.0\.1|\[::1\]/);
+  expect(detailsEmpty._serverPort).toBe(server.PORT);
 });
 
 it('should have connection details for failed requests', async ({ contextFactory, server, browserName, platform, mode }, testInfo) => {
@@ -646,24 +673,20 @@ it('should have connection details for failed requests', async ({ contextFactory
   const { page, getLog } = await pageWithHar(contextFactory, testInfo);
   await page.goto(server.PREFIX + '/one-style.html');
   const log = await getLog();
-  if (!mode.startsWith('service')) {
-    const { serverIPAddress, _serverPort: port } = log.entries[0];
-    expect(serverIPAddress).toMatch(/^127\.0\.0\.1|\[::1\]/);
-    expect(port).toBe(server.PORT);
-  }
+  const { serverIPAddress, _serverPort: port } = log.entries[0];
+  expect(serverIPAddress).toMatch(/^127\.0\.0\.1|\[::1\]/);
+  expect(port).toBe(server.PORT);
 });
 
 it('should return server address directly from response', async ({ page, server, mode }) => {
   const response = await page.goto(server.EMPTY_PAGE);
-  if (!mode.startsWith('service')) {
-    const { ipAddress, port } = (await response!.serverAddr())!;
-    expect(ipAddress).toMatch(/^127\.0\.0\.1|\[::1\]/);
-    expect(port).toBe(server.PORT);
-  }
+  const { ipAddress, port } = (await response!.serverAddr())!;
+  expect(ipAddress).toMatch(/^127\.0\.0\.1|\[::1\]/);
+  expect(port).toBe(server.PORT);
 });
 
-it('should return security details directly from response', async ({ contextFactory, httpsServer, browserName, platform, channel }) => {
-  it.fail(browserName === 'webkit' && (platform === 'linux' || channel === 'webkit-wsl'), 'https://github.com/microsoft/playwright/issues/6759');
+it('should return security details directly from response', async ({ contextFactory, httpsServer, browserName, platform, channel, isFrozenWebkit }) => {
+  it.skip(isFrozenWebkit);
 
   const context = await contextFactory({ ignoreHTTPSErrors: true });
   const page = await context.newPage();
@@ -964,6 +987,62 @@ it('should support HAR larger than 512MB', async ({ contextFactory, server, brow
   expect(tail.toString()).toMatch(/\}\s*\}\s*$/);
 });
 
+it('should record resource type', async ({ contextFactory, server, asset }, testInfo) => {
+  server.setRoute('/resource-types.html', (req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(`
+      <link rel="stylesheet" href="/resource-type-stylesheet.css">
+      <script src="/resource-type-script.js"></script>
+      <img src="/resource-type-image.png">
+    `);
+  });
+  server.setRoute('/resource-type-stylesheet.css', (req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/css' });
+    res.end(`
+      @font-face {
+        font-family: 'iconfont';
+        src: url('/resource-type-font.woff2') format('woff2');
+      }
+      body { font-family: 'iconfont'; }
+    `);
+  });
+  server.setRoute('/resource-type-font.woff2', (req, res) => {
+    server.serveFile(req, res, asset('webfont/iconfont.woff2'));
+  });
+  server.setRoute('/resource-type-script.js', (req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/javascript' });
+    res.end('window.__loaded = true;');
+  });
+  server.setRoute('/resource-type-image.png', (req, res) => {
+    server.serveFile(req, res, asset('pptr.png'));
+  });
+
+  const { page, getLog } = await pageWithHar(contextFactory, testInfo);
+  await page.goto(server.PREFIX + '/resource-types.html');
+  await page.evaluate(() => fetch('/resource-type-fetch').catch(() => {}));
+  await page.evaluate(() => new Promise<void>(resolve => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', '/resource-type-xhr');
+    xhr.onloadend = () => resolve();
+    xhr.send();
+  }));
+  const log = await getLog();
+
+  const typeForURL = log.entries.reduce((accumulator, entry) => {
+    accumulator[entry.request.url] = entry._resourceType;
+    return accumulator;
+  }, {});
+  expect(typeForURL).toMatchObject({
+    [server.PREFIX + '/resource-types.html']: 'document',
+    [server.PREFIX + '/resource-type-stylesheet.css']: 'stylesheet',
+    [server.PREFIX + '/resource-type-script.js']: 'script',
+    [server.PREFIX + '/resource-type-image.png']: 'image',
+    [server.PREFIX + '/resource-type-font.woff2']: 'font',
+    [server.PREFIX + '/resource-type-fetch']: 'fetch',
+    [server.PREFIX + '/resource-type-xhr']: 'xhr',
+  });
+});
+
 it.describe('tracing.startHar', () => {
   it('should record a HAR with options', async ({ contextFactory, server }, testInfo) => {
     const context = await contextFactory();
@@ -979,6 +1058,24 @@ it.describe('tracing.startHar', () => {
     expect(urls).toEqual([server.PREFIX + '/one-style.css']);
     // Minimal mode drops body sizes.
     expect(log.entries[0].request.bodySize).toBe(-1);
+  });
+
+  it('should include pages', async ({ contextFactory, server }, testInfo) => {
+    const context = await contextFactory();
+    const harPath = testInfo.outputPath('tracing.har');
+    await context.tracing.startHar(harPath);
+    const page = await context.newPage();
+    await page.goto(server.PREFIX + '/title.html');
+    const page2 = await context.newPage();
+    await page2.goto(server.PREFIX + '/empty.html');
+    await page.close(); // Close the page before stopping - it should still be in the har.
+    await context.tracing.stopHar();
+    await context.close();
+
+    const log = JSON.parse(fs.readFileSync(harPath).toString()).log as Log;
+    expect(log.pages.length).toBe(2);
+    expect(log.pages[0].title).toBe('Woof-Woof');
+    expect(log.pages[1].title).toBe('');
   });
 
   it('should record a zipped HAR for APIRequestContext', async ({ playwright, server }, testInfo) => {

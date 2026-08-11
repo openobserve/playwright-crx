@@ -609,17 +609,30 @@ test('should report error in YAML', async ({ page }) => {
     const error = await expect(page).toMatchAriaSnapshot(`
       heading "title"
     `).catch(e => e);
-    expect.soft(error.message).toBe(`expect.toMatchAriaSnapshot: Aria snapshot must be a YAML sequence, elements starting with " -"`);
+    expect.soft(stripAnsi(error.message)).toBe(`expect(page).toMatchAriaSnapshot(expected) failed
+
+Expected: "heading \\"title\\""
+Error: Aria snapshot must be a YAML sequence, elements starting with " -"
+
+Call log:
+  - Expect "toMatchAriaSnapshot" with timeout 10000ms
+`);
   }
 
   {
     const error = await expect(page).toMatchAriaSnapshot(`
       - heading: a:
     `).catch(e => e);
-    expect.soft(error.message).toBe(`expect.toMatchAriaSnapshot: Nested mappings are not allowed in compact mappings at line 1, column 12:
+    expect.soft(stripAnsi(error.message)).toBe(`expect(page).toMatchAriaSnapshot(expected) failed
+
+Expected: "- heading: a:"
+Error: Nested mappings are not allowed in compact mappings at line 1, column 12:
 
 - heading: a:
            ^
+
+Call log:
+  - Expect "toMatchAriaSnapshot" with timeout 10000ms
 `);
   }
 });
@@ -631,10 +644,16 @@ test('should report error in YAML keys', async ({ page }) => {
     const error = await expect(page).toMatchAriaSnapshot(`
       - heading "title
     `).catch(e => e);
-    expect.soft(error.message).toBe(`expect.toMatchAriaSnapshot: Unterminated string:
+    expect.soft(stripAnsi(error.message)).toBe(`expect(page).toMatchAriaSnapshot(expected) failed
+
+Expected: "- heading \\"title"
+Error: Unterminated string:
 
 heading "title
               ^
+
+Call log:
+  - Expect "toMatchAriaSnapshot" with timeout 10000ms
 `);
   }
 
@@ -642,10 +661,16 @@ heading "title
     const error = await expect(page).toMatchAriaSnapshot(`
       - heading /title
     `).catch(e => e);
-    expect.soft(error.message).toBe(`expect.toMatchAriaSnapshot: Unterminated regex:
+    expect.soft(stripAnsi(error.message)).toBe(`expect(page).toMatchAriaSnapshot(expected) failed
+
+Expected: "- heading /title"
+Error: Unterminated regex:
 
 heading /title
               ^
+
+Call log:
+  - Expect "toMatchAriaSnapshot" with timeout 10000ms
 `);
   }
 
@@ -653,10 +678,16 @@ heading /title
     const error = await expect(page).toMatchAriaSnapshot(`
       - heading [level=a]
     `).catch(e => e);
-    expect.soft(error.message).toBe(`expect.toMatchAriaSnapshot: Value of "level" attribute must be a number:
+    expect.soft(stripAnsi(error.message)).toBe(`expect(page).toMatchAriaSnapshot(expected) failed
+
+Expected: "- heading [level=a]"
+Error: Value of "level" attribute must be a number:
 
 heading [level=a]
                ^
+
+Call log:
+  - Expect "toMatchAriaSnapshot" with timeout 10000ms
 `);
   }
 
@@ -664,10 +695,16 @@ heading [level=a]
     const error = await expect(page).toMatchAriaSnapshot(`
       - heading [expanded=FALSE]
     `).catch(e => e);
-    expect.soft(error.message).toBe(`expect.toMatchAriaSnapshot: Value of "expanded" attribute must be a boolean:
+    expect.soft(stripAnsi(error.message)).toBe(`expect(page).toMatchAriaSnapshot(expected) failed
+
+Expected: "- heading [expanded=FALSE]"
+Error: Value of "expanded" attribute must be a boolean:
 
 heading [expanded=FALSE]
                   ^
+
+Call log:
+  - Expect "toMatchAriaSnapshot" with timeout 10000ms
 `);
   }
 
@@ -675,10 +712,16 @@ heading [expanded=FALSE]
     const error = await expect(page).toMatchAriaSnapshot(`
       - heading [checked=foo]
     `).catch(e => e);
-    expect.soft(error.message).toBe(`expect.toMatchAriaSnapshot: Value of "checked" attribute must be a boolean or "mixed":
+    expect.soft(stripAnsi(error.message)).toBe(`expect(page).toMatchAriaSnapshot(expected) failed
+
+Expected: "- heading [checked=foo]"
+Error: Value of "checked" attribute must be a boolean or "mixed":
 
 heading [checked=foo]
                  ^
+
+Call log:
+  - Expect "toMatchAriaSnapshot" with timeout 10000ms
 `);
   }
 
@@ -686,10 +729,16 @@ heading [checked=foo]
     const error = await expect(page).toMatchAriaSnapshot(`
       - heading [level=]
     `).catch(e => e);
-    expect.soft(error.message).toBe(`expect.toMatchAriaSnapshot: Value of "level" attribute must be a number:
+    expect.soft(stripAnsi(error.message)).toBe(`expect(page).toMatchAriaSnapshot(expected) failed
+
+Expected: "- heading [level=]"
+Error: Value of "level" attribute must be a number:
 
 heading [level=]
                ^
+
+Call log:
+  - Expect "toMatchAriaSnapshot" with timeout 10000ms
 `);
   }
 
@@ -697,10 +746,16 @@ heading [level=]
     const error = await expect(page).toMatchAriaSnapshot(`
       - heading [bogus]
     `).catch(e => e);
-    expect.soft(error.message).toBe(`expect.toMatchAriaSnapshot: Unsupported attribute [bogus]:
+    expect.soft(stripAnsi(error.message)).toBe(`expect(page).toMatchAriaSnapshot(expected) failed
+
+Expected: "- heading [bogus]"
+Error: Unsupported attribute [bogus]:
 
 heading [bogus]
          ^
+
+Call log:
+  - Expect "toMatchAriaSnapshot" with timeout 10000ms
 `);
   }
 
@@ -708,10 +763,16 @@ heading [bogus]
     const error = await expect(page).toMatchAriaSnapshot(`
       - heading invalid
     `).catch(e => e);
-    expect.soft(error.message).toBe(`expect.toMatchAriaSnapshot: Unexpected input:
+    expect.soft(stripAnsi(error.message)).toBe(`expect(page).toMatchAriaSnapshot(expected) failed
+
+Expected: "- heading invalid"
+Error: Unexpected input:
 
 heading invalid
         ^
+
+Call log:
+  - Expect "toMatchAriaSnapshot" with timeout 10000ms
 `);
   }
 });
@@ -933,4 +994,43 @@ test('treat bad regex as a string', async ({ page }) => {
   expect(stripAnsi(error.message)).toContain('expect(page).toMatchAriaSnapshot(expected) failed');
   expect(stripAnsi(error.message)).toContain('-   - /url: /[a/');
   expect(stripAnsi(error.message)).toContain('+   - /url: /foo');
+});
+
+test('invalid attribute', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/34839' } }, async ({ page }) => {
+  await page.setContent(`
+    <input type="text" aria-label="Email" aria-invalid="true" value="not-an-email">
+    <input type="text" aria-label="Name" value="Alice">
+  `);
+
+  await expect(page).toMatchAriaSnapshot(`
+    - textbox "Email" [invalid]: not-an-email
+    - textbox "Name": Alice
+  `);
+
+  await expect(page).toMatchAriaSnapshot(`
+    - textbox "Email" [invalid=true]: not-an-email
+    - textbox "Name" [invalid=false]: Alice
+  `);
+
+  // `aria-invalid="grammar"` and `aria-invalid="spelling"` surface their underlying value.
+  await page.setContent(`
+    <input type="text" aria-label="Bio" aria-invalid="grammar">
+    <input type="text" aria-label="Note" aria-invalid="spelling">
+  `);
+  await expect(page).toMatchAriaSnapshot(`
+    - textbox "Bio" [invalid=grammar]
+    - textbox "Note" [invalid=spelling]
+  `);
+
+  // A `grammar` value is distinct from a plain `true` invalid state.
+  const error = await expect(page).toMatchAriaSnapshot(`
+    - textbox "Bio" [invalid]
+  `, { timeout: 1 }).catch(e => e);
+  expect(stripAnsi(error.message)).toContain('[invalid=grammar]');
+
+  // Any other non-false value falls back to `true`.
+  await page.setContent(`<input type="text" aria-label="Zip" aria-invalid="garbage">`);
+  await expect(page).toMatchAriaSnapshot(`
+    - textbox "Zip" [invalid]
+  `);
 });

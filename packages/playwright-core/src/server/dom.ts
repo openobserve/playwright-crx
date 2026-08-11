@@ -54,7 +54,7 @@ export class FrameExecutionContext extends js.ExecutionContext {
   readonly world: types.World | null;
 
   constructor(delegate: js.ExecutionContextDelegate, frame: frames.Frame, world: types.World|null) {
-    super(frame, delegate, world || 'content-script');
+    super(frame, delegate, world || 'content-script', { noUtilityWorld: frame._page.delegate.noUtilityWorld?.() });
     this.frame = frame;
     this.world = world;
   }
@@ -98,8 +98,10 @@ export class FrameExecutionContext extends js.ExecutionContext {
         isUtilityWorld: this.world === 'utility',
         customEngines,
       };
+      const globalsSnapshot = this.frame._page.delegate.noUtilityWorld?.() ? js.mainWorldGlobalsSnapshotSource : '';
       const source = `
         (() => {
+        ${globalsSnapshot}
         const module = {};
         ${rawInjectedScriptSource.source}
         return new (module.exports.InjectedScript())(globalThis, ${JSON.stringify(options)});
@@ -449,9 +451,7 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
     if (typeof maybeResult === 'string')
       return maybeResult;
     const point = roundPoint(maybeResult.point);
-    progress.metadata.point = point;
-    progress.metadata.box = maybeResult.box;
-    await progress.race(this.instrumentation.onBeforeInputAction(this, progress.metadata));
+    await progress.race(this.instrumentation.onBeforeInputAction(this, progress.metadata, point, maybeResult.box));
 
     let hitTargetInterceptionHandle: js.JSHandle<HitTargetInterceptionResult> | undefined;
     if (force) {
@@ -519,12 +519,10 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
   }
 
   private async _markAsTargetElement(progress: Progress) {
-    if (!progress.metadata.id)
-      return;
-    await progress.race(this.evaluateInUtility(([injected, node, callId]) => {
+    await progress.race(this.evaluateInUtility(([injected, node]) => {
       if (node.nodeType === 1 /* Node.ELEMENT_NODE */)
-        injected.markTargetElements(new Set([node as Node as Element]), callId);
-    }, progress.metadata.id));
+        injected.markTargetElements(new Set([node as Node as Element]));
+    }, {}));
   }
 
   async hover(progress: Progress, options: types.PointerActionOptions & types.PointerActionWaitOptions): Promise<void> {
@@ -573,16 +571,10 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
     return throwRetargetableDOMError(result);
   }
 
-  private async _beforeNonPointerAction(progress: Progress) {
-    if (progress.metadata.annotate)
-      progress.metadata.box = await this.boundingBox(progress) || undefined;
-    await progress.race(this.instrumentation.onBeforeInputAction(this, progress.metadata));
-  }
-
   async _selectOption(progress: Progress, elements: ElementHandle[], values: types.SelectOption[], options: types.CommonActionOptions): Promise<string[] | 'error:notconnected'> {
     let resultingOptions: string[] = [];
     const result = await this._retryAction(progress, 'select option', async progress => {
-      await this._beforeNonPointerAction(progress);
+      await progress.race(this.instrumentation.onBeforeInputAction(this, progress.metadata));
       if (!options.force)
         progress.log(`  waiting for element to be visible and enabled`);
       const optionsToSelect = [...elements, ...values];
@@ -615,7 +607,7 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
   async _fill(progress: Progress, value: string, options: types.CommonActionOptions): Promise<'error:notconnected' | 'done'> {
     progress.log(`  fill("${value}")`);
     return await this._retryAction(progress, 'fill', async progress => {
-      await this._beforeNonPointerAction(progress);
+      await progress.race(this.instrumentation.onBeforeInputAction(this, progress.metadata));
       if (!options.force)
         progress.log('  waiting for element to be visible, enabled and editable');
       const result = await progress.race(this.evaluateInUtility(async ([injected, node, { value, force }]) => {
@@ -749,7 +741,7 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
     if (result === 'error:notconnected' || !result.asElement())
       return 'error:notconnected';
     const retargeted = result.asElement() as ElementHandle<HTMLInputElement>;
-    await this._beforeNonPointerAction(progress);
+    await progress.race(this.instrumentation.onBeforeInputAction(this, progress.metadata));
     if (localPaths || localDirectory) {
       const localPathsOrDirectory = localDirectory ? [localDirectory] : localPaths!;
       await progress.race(Promise.all((localPathsOrDirectory).map(localPath => (
@@ -790,7 +782,7 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
 
   async _type(progress: Progress, text: string, options: { delay?: number } & types.StrictOptions): Promise<'error:notconnected' | 'done'> {
     progress.log(`elementHandle.type("${text}")`);
-    await this._beforeNonPointerAction(progress);
+    await progress.race(this.instrumentation.onBeforeInputAction(this, progress.metadata));
     const result = await this._focus(progress, true /* resetSelectionIfNotFocused */);
     if (result !== 'done')
       return result;
@@ -806,7 +798,7 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
 
   async _press(progress: Progress, key: string, options: { delay?: number, noWaitAfter?: boolean } & types.StrictOptions): Promise<'error:notconnected' | 'done'> {
     progress.log(`elementHandle.press("${key}")`);
-    await this._beforeNonPointerAction(progress);
+    await progress.race(this.instrumentation.onBeforeInputAction(this, progress.metadata));
     return this._page.frameManager.waitForSignalsCreatedBy(progress, !options.noWaitAfter, async progress => {
       const result = await this._focus(progress, true /* resetSelectionIfNotFocused */);
       if (result !== 'done')

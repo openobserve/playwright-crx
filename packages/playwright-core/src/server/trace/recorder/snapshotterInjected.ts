@@ -73,6 +73,8 @@ export function frameSnapshotStreamer(snapshotStreamer: string, removeNoScript: 
     return obj[kCachedData];
   }
 
+  const kObserverConfig: MutationObserverInit = { attributes: true, subtree: true };
+
   function removeHash(url: string) {
     try {
       const u = new URL(url);
@@ -90,6 +92,8 @@ export function frameSnapshotStreamer(snapshotStreamer: string, removeNoScript: 
     private _readingStyleSheet = false;  // To avoid invalidating due to our own reads.
     private _fakeBase: HTMLBaseElement;
     private _observer: MutationObserver;
+    private _observedDocument: Document | undefined;
+    private _targetGeneration = 0;
 
     constructor() {
       const invalidateCSSGroupingRule = (rule: CSSGroupingRule) => {
@@ -115,9 +119,7 @@ export function frameSnapshotStreamer(snapshotStreamer: string, removeNoScript: 
       this._fakeBase = document.createElement('base');
 
       this._observer = new MutationObserver(list => this._handleMutations(list));
-      const observerConfig = { attributes: true, subtree: true };
-      this._observer.observe(document, observerConfig);
-      this._refreshListenersWhenNeeded();
+      this._ensureObservingCurrentDocument();
     }
 
     private _refreshListenersWhenNeeded() {
@@ -148,17 +150,13 @@ export function frameSnapshotStreamer(snapshotStreamer: string, removeNoScript: 
 
     private _refreshListeners() {
       (document as any).addEventListener('__playwright_mark_target__', (event: CustomEvent) => {
-        if (!event.detail)
+        const target = event.composedPath()[0] as Element;
+        if (target?.nodeType !== Node.ELEMENT_NODE)
           return;
-        const callId = event.detail as string;
-        (event.composedPath()[0] as any).__playwright_target__ = callId;
+        (target as any).__playwright_target__ = this._targetGeneration;
       });
-      (document as any).addEventListener('__playwright_unmark_target__', (event: CustomEvent) => {
-        if (!event.detail)
-          return;
-        const callId = event.detail as string;
-        if ((event.composedPath()[0] as any).__playwright_target__ === callId)
-          delete (event.composedPath()[0] as any).__playwright_target__;
+      (document as any).addEventListener('__playwright_reset_targets__', () => {
+        ++this._targetGeneration;
       });
     }
 
@@ -213,6 +211,19 @@ export function frameSnapshotStreamer(snapshotStreamer: string, removeNoScript: 
         ensureCachedData(mutation.target).attributesCached = undefined;
     }
 
+    private _ensureObservingCurrentDocument() {
+      // A window can swap its document without re-running the init script (e.g.
+      // a popup reusing its initial about:blank document), leaving our observers
+      // and listeners bound to the stale one. Re-attach on swap.
+      // https://github.com/microsoft/playwright/issues/40895
+      if (this._observedDocument === document)
+        return;
+      this._observedDocument = document;
+      this._observer.disconnect();
+      this._observer.observe(document, kObserverConfig);
+      this._refreshListenersWhenNeeded();
+    }
+
     private _invalidateStyleSheet(sheet: CSSStyleSheet) {
       if (this._readingStyleSheet)
         return;
@@ -255,7 +266,7 @@ export function frameSnapshotStreamer(snapshotStreamer: string, removeNoScript: 
       (iframeElement as any)[kSnapshotFrameId] = frameId;
     }
 
-    reset() {
+    resetHistory() {
       this._staleStyleSheets.clear();
 
       const visitNode = (node: Node | ShadowRoot) => {
@@ -339,15 +350,18 @@ export function frameSnapshotStreamer(snapshotStreamer: string, removeNoScript: 
       }
     }
 
-    captureSnapshot(needsReset: boolean): SnapshotData | undefined {
+    captureSnapshot(reset?: 'history' | 'targets'): SnapshotData | undefined {
       const timestamp = performance.now();
       const snapshotNumber = ++this._lastSnapshotNumber;
-      if (needsReset)
-        this.reset();
+      if (reset === 'history')
+        this.resetHistory();
+      if (reset)
+        ++this._targetGeneration;
       let nodeCounter = 0;
       let shadowDomNesting = 0;
       let headNesting = 0;
 
+      this._ensureObservingCurrentDocument();
       // Ensure we are up to date.
       this._handleMutations(this._observer.takeRecords());
 
@@ -506,10 +520,9 @@ export function frameSnapshotStreamer(snapshotStreamer: string, removeNoScript: 
             visitChild(element.shadowRoot);
             --shadowDomNesting;
           }
-          if ('__playwright_target__' in element) {
+          if ((element as any).__playwright_target__ === this._targetGeneration) {
             expectValue(kTargetAttribute);
-            expectValue(element['__playwright_target__']);
-            attrs[kTargetAttribute] = element['__playwright_target__'] as string;
+            attrs[kTargetAttribute] = '';
           }
         }
 

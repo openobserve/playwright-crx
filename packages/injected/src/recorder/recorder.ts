@@ -412,9 +412,15 @@ class RecordActionTool implements RecorderTool {
     const target = this._recorder.deepEventTarget(event);
 
     if (target.nodeName === 'INPUT' && (target as HTMLInputElement).type.toLowerCase() === 'file') {
+      // When the file input is hidden and triggered by another element (e.g. a button with
+      // onclick="input.click()"), the hover model points to the trigger, not the input.
+      // Derive the selector from the actual target element in that case.
+      const selector = target === this._hoveredElement
+        ? this._hoveredModel!.selector
+        : this._recorder.injectedScript.generateSelector(target, { testIdAttributeName: this._recorder.state.testIdAttributeName }).selector;
       this._recordAction({
         name: 'setInputFiles',
-        selector: this._activeModel!.selector,
+        selector,
         signals: [],
         files: [...((target as HTMLInputElement).files || [])].map(file => file.name),
       });
@@ -614,13 +620,7 @@ class RecordActionTool implements RecorderTool {
   }
 
   private _shouldIgnoreMouseEvent(event: MouseEvent): boolean {
-    const target = this._recorder.deepEventTarget(event);
-    const nodeName = target.nodeName;
-    if (nodeName === 'SELECT' || nodeName === 'OPTION')
-      return true;
-    if (nodeName === 'INPUT' && ['date', 'range'].includes((target as HTMLInputElement).type))
-      return true;
-    return false;
+    return shouldIgnoreMouseEvent(this._recorder.deepEventTarget(event));
   }
 
   private _actionInProgress(event: Event): boolean {
@@ -891,13 +891,7 @@ class JsonRecordActionTool implements RecorderTool {
   }
 
   private _shouldIgnoreMouseEvent(event: MouseEvent): boolean {
-    const target = this._recorder.deepEventTarget(event);
-    const nodeName = target.nodeName;
-    if (nodeName === 'SELECT' || nodeName === 'OPTION')
-      return true;
-    if (nodeName === 'INPUT' && ['date', 'range'].includes((target as HTMLInputElement).type))
-      return true;
-    return false;
+    return shouldIgnoreMouseEvent(this._recorder.deepEventTarget(event));
   }
 
   private _shouldGenerateKeyPressFor(event: KeyboardEvent): boolean {
@@ -1884,6 +1878,18 @@ function isRangeInput(node: Node | null): node is HTMLInputElement {
     return false;
   const inputElement = node as HTMLInputElement;
   return inputElement.type.toLowerCase() === 'range';
+}
+
+// Non-text input types that open native pickers.
+const kNativePickerInputTypes = new Set(['color', 'date', 'datetime-local', 'file', 'month', 'range', 'time', 'week']);
+
+function shouldIgnoreMouseEvent(target: Node): boolean {
+  const nodeName = target.nodeName;
+  if (nodeName === 'SELECT' || nodeName === 'OPTION')
+    return true;
+  if (nodeName === 'INPUT' && kNativePickerInputTypes.has((target as HTMLInputElement).type))
+    return true;
+  return false;
 }
 
 function addEventListener(target: EventTarget, eventName: string, listener: EventListener, useCapture?: boolean): () => void {

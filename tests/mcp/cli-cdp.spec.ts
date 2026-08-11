@@ -57,6 +57,18 @@ test('attach via cdp URL keeps the default session', async ({ cdpServer, cli, se
   expect(listOutput).toContain('(attached)');
 });
 
+test('attach via cdp URL honors PLAYWRIGHT_CLI_SESSION as session name', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright-cli/issues/414' } }, async ({ cdpServer, cli }) => {
+  await cdpServer.start();
+  const { exitCode } = await cli('attach', `--cdp=${cdpServer.endpoint}`, { env: { PLAYWRIGHT_CLI_SESSION: 'myname' } });
+  expect(exitCode).toBe(0);
+});
+
+test('attach rejects combining --cdp, --endpoint, or --extension', async ({ cli }) => {
+  const { error, exitCode } = await cli('attach', '--cdp=chrome-dev', '--endpoint=/tmp/foo');
+  expect(exitCode).toBe(1);
+  expect(error).toContain('only one of [name], --cdp, --endpoint, or --extension can be specified');
+});
+
 test('detach tears down an attached session', async ({ cdpServer, cli }) => {
   await cdpServer.start();
 
@@ -108,4 +120,24 @@ test('attach via cdp', async ({ cdpServer, cli, server }) => {
   await cli('attach', `--cdp=${cdpServer.endpoint}`);
   const { inlineSnapshot } = await cli('snapshot');
   expect(inlineSnapshot).toContain(`- generic [active] [ref=e1]: Hello, world!`);
+});
+
+test('tracing-start-stop over cdp', async ({ cdpServer, cli, server }, testInfo) => {
+  const browserContext = await cdpServer.start();
+  const [page] = browserContext.pages();
+  await page.goto(server.HELLO_WORLD);
+
+  await cli('attach', `--cdp=${cdpServer.endpoint}`);
+
+  const { output } = await cli('tracing-start');
+  expect(output).toContain('Trace recording started');
+  await cli('eval', '() => fetch("/hello-world")');
+
+  const { output: tracingStopOutput } = await cli('tracing-stop');
+  expect(tracingStopOutput).toContain('Trace recording stopped');
+  const [, timestamp] = tracingStopOutput.match(/trace-(\d+)\.trace/);
+
+  expect(fs.existsSync(testInfo.outputPath('.playwright-cli', 'traces', 'resources'))).toBeTruthy();
+  expect(fs.existsSync(testInfo.outputPath('.playwright-cli', 'traces', `trace-${timestamp}.trace`))).toBeTruthy();
+  expect(fs.existsSync(testInfo.outputPath('.playwright-cli', 'traces', `trace-${timestamp}.network`))).toBeTruthy();
 });

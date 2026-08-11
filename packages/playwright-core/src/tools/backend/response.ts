@@ -21,6 +21,8 @@ import debug from 'debug';
 import { renderModalStates } from './tab';
 import { scaleImageToFitMessage } from './screenshot';
 
+import { outputDir as resolveOutputDir } from './context';
+
 import type * as playwright from '../../..';
 import type { TabHeader } from './tab';
 import type { CallToolResult, ImageContent, TextContent } from '@modelcontextprotocol/sdk/types.js';
@@ -59,6 +61,7 @@ export class Response {
   private _imageResults: { data: Buffer, imageType: 'png' | 'jpeg' }[] = [];
   private _raw: boolean;
   private _json: boolean;
+  private _writtenFiles = new Set<string>();
 
   constructor(context: Context, toolName: string, toolArgs: Record<string, any>, options?: { relativeTo?: string, raw?: boolean, json?: boolean }) {
     this._context = context;
@@ -111,6 +114,7 @@ export class Response {
       await fs.promises.writeFile(resolvedFile.fileName, this._redactSecrets(data), 'utf-8');
     else if (data)
       await fs.promises.writeFile(resolvedFile.fileName, data);
+    this._writtenFiles.add(path.resolve(resolvedFile.fileName));
   }
 
   async addFileResult(resolvedFile: ResolvedFile, data: Buffer | string | null) {
@@ -163,6 +167,7 @@ export class Response {
 
   async serialize(): Promise<CallToolResult> {
     const allSections = await this._build();
+    await this._enforceOutputBudget();
     const rawSections = ['Error', 'Result', 'Snapshot'] as const;
     const sections = this._raw ? allSections.filter(section => rawSections.includes(section.title as typeof rawSections[number])) : allSections;
 
@@ -225,6 +230,37 @@ export class Response {
     };
   }
 
+  private async _enforceOutputBudget(): Promise<void> {
+    const maxSize = this._context.config.outputMaxSize;
+    if (!maxSize)
+      return;
+    const dir = resolveOutputDir(this._context.options);
+    let entries: { path: string, size: number, mtimeMs: number }[];
+    try {
+      entries = await listFilesRecursive(dir);
+    } catch {
+      return;
+    }
+    let total = 0;
+    for (const e of entries)
+      total += e.size;
+    if (total <= maxSize)
+      return;
+    entries.sort((a, b) => a.mtimeMs - b.mtimeMs);
+    for (const entry of entries) {
+      if (total <= maxSize)
+        break;
+      if (this._writtenFiles.has(entry.path))
+        continue;
+      try {
+        await fs.promises.unlink(entry.path);
+        total -= entry.size;
+      } catch (error) {
+        requestDebug('output-budget unlink failed %s: %s', entry.path, error);
+      }
+    }
+  }
+
   private async _build(): Promise<Section[]> {
     const sections: Section[] = [];
     const addSection = (title: string, content: string[], codeframe?: 'yaml' | 'js') => {
@@ -251,8 +287,6 @@ export class Response {
         addSection('Open tabs', renderTabsMarkdown(tabHeaders));
       addSection('Page', renderTabMarkdown(tabHeaders.find(h => h.current) ?? tabHeaders[0]));
     }
-    if (this._context.tabs().length === 0)
-      this._isClose = true;
 
     // Handle modal states.
     if (tabSnapshot?.modalStates.length)
@@ -327,6 +361,16 @@ export function renderTabsMarkdown(tabs: TabHeader[]): string[] {
  */
 function sanitizeUnicode(text: string): string {
   return text.toWellFormed?.() ?? text;
+}
+
+async function listFilesRecursive(dir: string): Promise<{ path: string, size: number, mtimeMs: number }[]> {
+  const entries = await fs.promises.readdir(dir, { recursive: true, withFileTypes: true });
+  const files = entries.filter(e => e.isFile());
+  return Promise.all(files.map(async e => {
+    const full = path.join(e.parentPath, e.name);
+    const { size, mtimeMs } = await fs.promises.stat(full);
+    return { path: full, size, mtimeMs };
+  }));
 }
 
 function parseSections(text: string): Map<string, string> {

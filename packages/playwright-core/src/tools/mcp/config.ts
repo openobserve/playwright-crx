@@ -60,9 +60,11 @@ export type CLIOptions = {
   imageResponses?: 'allow' | 'omit';
   sandbox?: boolean;
   outputDir?: string;
+  outputMaxSize?: number;
   port?: number;
   proxyBypass?: string;
   proxyServer?: string;
+  remoteHeader?: Record<string, string>;
   saveSession?: boolean;
   secrets?: Record<string, string>;
   sharedBrowserContext?: boolean;
@@ -263,6 +265,10 @@ function resolveBrowserParam(browserOption: string | undefined): { browserName?:
       return { browserName: 'chromium', channel: 'chrome-for-testing' };
     case 'firefox':
       return { browserName: 'firefox' };
+    case 'moz-firefox':
+    case 'moz-firefox-beta':
+    case 'moz-firefox-nightly':
+      return { browserName: 'firefox', channel: browserOption };
     case 'webkit':
       return { browserName: 'webkit' };
     default:
@@ -354,6 +360,7 @@ function configFromCLIOptions(cliOptions: CLIOptions): Config & { configFile?: s
     sharedBrowserContext: cliOptions.sharedBrowserContext,
     snapshot: cliOptions.snapshotMode ? { mode: cliOptions.snapshotMode } : undefined,
     outputDir: cliOptions.outputDir,
+    outputMaxSize: cliOptions.outputMaxSize,
     imageResponses: cliOptions.imageResponses,
     testIdAttribute: cliOptions.testIdAttribute,
     timeouts: {
@@ -361,6 +368,11 @@ function configFromCLIOptions(cliOptions: CLIOptions): Config & { configFile?: s
       navigation: cliOptions.timeoutNavigation,
     },
   };
+
+  // `remoteHeaders` is for back-compat, assign it here so it survives config merging.
+  if (cliOptions.remoteHeader)
+    // eslint-disable-next-line no-restricted-syntax
+    (config.browser as any).remoteHeaders = cliOptions.remoteHeader;
 
   return { ...config, configFile: cliOptions.config };
 }
@@ -399,9 +411,11 @@ export function configFromEnv(env?: NodeJS.ProcessEnv): Config & { configFile?: 
     options.imageResponses = enumParser<'allow' | 'omit'>('--image-responses', ['allow', 'omit'], e.PLAYWRIGHT_MCP_IMAGE_RESPONSES);
   options.sandbox = envToBoolean(e.PLAYWRIGHT_MCP_SANDBOX);
   options.outputDir = envToString(e.PLAYWRIGHT_MCP_OUTPUT_DIR);
+  options.outputMaxSize = numberParser(e.PLAYWRIGHT_MCP_OUTPUT_MAX_SIZE);
   options.port = numberParser(e.PLAYWRIGHT_MCP_PORT);
   options.proxyBypass = envToString(e.PLAYWRIGHT_MCP_PROXY_BYPASS);
   options.proxyServer = envToString(e.PLAYWRIGHT_MCP_PROXY_SERVER);
+  options.remoteHeader = headerParser(envToString(e.PLAYWRIGHT_MCP_REMOTE_HEADERS));
   options.secrets = dotenvFileLoader(e.PLAYWRIGHT_MCP_SECRETS_FILE);
   options.storageState = envToString(e.PLAYWRIGHT_MCP_STORAGE_STATE);
   options.testIdAttribute = envToString(e.PLAYWRIGHT_MCP_TEST_ID_ATTRIBUTE);
@@ -462,7 +476,9 @@ function mergeConfig(base: MergedConfig, overrides: Config): MergedConfig {
     },
   };
 
-  if (browser.browserName !== 'chromium' && browser.launchOptions)
+  // Firefox supports the `moz-firefox*` channels via WebDriver BiDi, so keep
+  // those; otherwise channels are a Chromium-only concept and should be dropped.
+  if (browser.browserName !== 'chromium' && browser.launchOptions && !browser.launchOptions.channel?.startsWith('moz-'))
     delete browser.launchOptions.channel;
 
   return {

@@ -396,6 +396,8 @@ CDPSession:
     detach:
       title: Detach CDP session
       group: configuration
+      flags:
+        potentiallyClosesScope: true
 
   events:
 
@@ -430,8 +432,6 @@ BindingCall:
 
 Debugger:
   type: interface
-
-  extends: EventTarget
 
   commands:
 

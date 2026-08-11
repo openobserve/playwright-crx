@@ -28,7 +28,6 @@ concurrency:
 env:
   # Force terminal colors. @see https://www.npmjs.com/package/colors
   FORCE_COLOR: 1
-  ELECTRON_SKIP_BINARY_DOWNLOAD: 1
 
 jobs:
   test_linux:
@@ -66,30 +65,6 @@ jobs:
         flakiness-tenant-id: ${{ secrets.AZURE_FLAKINESS_DASHBOARD_TENANT_ID }}
         flakiness-subscription-id: ${{ secrets.AZURE_FLAKINESS_DASHBOARD_SUBSCRIPTION_ID }}
 
-  test_linux_chromium_tot:
-    name: ${{ matrix.os }} (chromium tip-of-tree)
-    environment: ${{ github.event_name == 'push' && 'allow-uploading-flakiness-results' || null }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-22.04]
-    runs-on: ${{ matrix.os }}
-    permissions:
-      id-token: write   # This is required for OIDC login (azure/login) to succeed
-      contents: read    # This is required for actions/checkout to succeed
-    steps:
-    - uses: actions/checkout@v6
-    - uses: ./.github/actions/run-test
-      with:
-        browsers-to-install: chromium-tip-of-tree
-        command: npm run test -- --project=chromium-*
-        bot-name: "${{ matrix.os }}-chromium-tip-of-tree"
-        flakiness-client-id: ${{ secrets.AZURE_FLAKINESS_DASHBOARD_CLIENT_ID }}
-        flakiness-tenant-id: ${{ secrets.AZURE_FLAKINESS_DASHBOARD_TENANT_ID }}
-        flakiness-subscription-id: ${{ secrets.AZURE_FLAKINESS_DASHBOARD_SUBSCRIPTION_ID }}
-      env:
-        PWTEST_CHANNEL: chromium-tip-of-tree
-
   test_test_runner:
     name: Test Runner
     environment: ${{ github.event_name == 'push' && 'allow-uploading-flakiness-results' || null }}
@@ -97,33 +72,33 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node-version: [20]
+        node-version: [22]
         shardIndex: [1, 2]
         shardTotal: [2]
         shardWeights: ['58:42']
         include:
           - os: windows-latest
-            node-version: 20
+            node-version: 22
             shardIndex: 1
             shardTotal: 3
             shardWeights: '44:33:23'
           - os: windows-latest
-            node-version: 20
+            node-version: 22
             shardIndex: 2
             shardTotal: 3
             shardWeights: '44:33:23'
           - os: windows-latest
-            node-version: 20
+            node-version: 22
             shardIndex: 3
             shardTotal: 3
             shardWeights: '44:33:23'
           - os: ubuntu-latest
-            node-version: 22
+            node-version: 20
             shardIndex: 1
             shardTotal: 2
             shardWeights: '58:42'
           - os: ubuntu-latest
-            node-version: 22
+            node-version: 20
             shardIndex: 2
             shardTotal: 2
             shardWeights: '58:42'
@@ -134,6 +109,16 @@ jobs:
             shardWeights: '58:42'
           - os: ubuntu-latest
             node-version: 24
+            shardIndex: 2
+            shardTotal: 2
+            shardWeights: '58:42'
+          - os: ubuntu-latest
+            node-version: 26
+            shardIndex: 1
+            shardTotal: 2
+            shardWeights: '58:42'
+          - os: ubuntu-latest
+            node-version: 26
             shardIndex: 2
             shardTotal: 2
             shardWeights: '58:42'
@@ -153,7 +138,6 @@ jobs:
         flakiness-tenant-id: ${{ secrets.AZURE_FLAKINESS_DASHBOARD_TENANT_ID }}
         flakiness-subscription-id: ${{ secrets.AZURE_FLAKINESS_DASHBOARD_SUBSCRIPTION_ID }}
       env:
-        PWTEST_CHANNEL: firefox-beta
         PWTEST_SHARD_WEIGHTS: ${{ matrix.shardWeights }}
 
   test_vscode_extension:
@@ -221,6 +205,7 @@ jobs:
     - uses: ./.github/actions/run-test
       with:
         command: npm run itest
+        node-version: 22
         bot-name: "package-installations-${{ matrix.os }}"
         shell: ${{ matrix.os == 'windows-latest' && 'pwsh' || 'bash' }}
         flakiness-client-id: ${{ secrets.AZURE_FLAKINESS_DASHBOARD_CLIENT_ID }}

@@ -60,7 +60,7 @@ export const test = baseTest.extend<{
       return page;
     });
   },
-  connectToDashboard: [async ({ cli, playwright }, use) => {
+  connectToDashboard: async ({ cli, playwright }, use) => {
     await use(async (bindTitle: string) => {
       let endpoint = '';
       await expect(async () => {
@@ -72,7 +72,7 @@ export const test = baseTest.extend<{
       return await playwright.chromium.connect(endpoint);
     });
     await cli('show', '--kill');
-  }, { timeout: 60000 }],
+  },
 
   cli: async ({ mcpBrowser, mcpHeadless, childProcess }, use) => {
     await fs.promises.mkdir(test.info().outputPath('.playwright'), { recursive: true });
@@ -81,7 +81,10 @@ export const test = baseTest.extend<{
     await use(async (...args: string[]) => {
       const cliArgs = args.filter(arg => typeof arg === 'string');
       const cliOptions = args.findLast(arg => typeof arg === 'object') || {};
-      const result = await runCli(childProcess, cliArgs, cliOptions, { mcpBrowser, mcpHeadless });
+      const result = await test.step(
+          `cli ${cliArgs.join(' ')}`,
+          () => runCli(childProcess, cliArgs, cliOptions, { mcpBrowser, mcpHeadless })
+      );
       if (result.daemonPid)
         allPids.push(result.daemonPid);
       if (result.dashboardPid)
@@ -116,14 +119,10 @@ export const test = baseTest.extend<{
 
 function cliEnv() {
   return {
-    PLAYWRIGHT_SERVER_REGISTRY: test.info().outputPath('registry'),
+    PWTEST_SERVER_REGISTRY: test.info().outputPath('registry'),
     PWTEST_DASHBOARD_SETTINGS_FILE: test.info().outputPath('dashboard.settings.json'),
-    PLAYWRIGHT_DAEMON_SESSION_DIR: test.info().outputPath('daemon'),
-    // Include a short hash of outputDir so that concurrent runs from different
-    // checkouts use different socket directories, while runs within the same
-    // checkout share them (which helps surface race conditions and cleanup
-    // issues). The hash is kept short to stay clear of socket path length limits.
-    PLAYWRIGHT_SOCKETS_DIR: path.join(os.tmpdir(), 'ds' + String(test.info().workerIndex) + '-' + crypto.createHash('sha1').update(test.info().outputDir).digest('hex').slice(0, 8)),
+    PWTEST_DAEMON_SESSION_DIR: test.info().outputPath('daemon'),
+    PWTEST_SOCKETS_DIR: path.join(os.tmpdir(), 'ds-' + crypto.createHash('sha1').update(test.info().outputDir).digest('hex').slice(0, 16)),
     PWTEST_CLI_CHANNEL_SCAN_DISABLED_FOR_TEST: '1',
   };
 }

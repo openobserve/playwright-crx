@@ -17,7 +17,7 @@
 import * as React from 'react';
 import type { Boundaries } from './geometry';
 import './networkTab.css';
-import { NetworkResourceDetails } from './networkResourceDetails';
+import { NetworkResourceDetails, WebSocketResourceDetails } from './networkResourceDetails';
 import { bytesToString, msToString } from '@isomorphic/formatUtils';
 import { PlaceholderPanel } from './placeholderPanel';
 import { context, type ResourceEntry } from '@isomorphic/trace/traceModel';
@@ -68,7 +68,7 @@ export function useNetworkTabModel(model: TraceModel | undefined, selectedTime: 
 export const NetworkTab: React.FunctionComponent<{
   boundaries: Boundaries,
   networkModel: NetworkTabModel,
-  onResourceHovered?: (key: string | undefined) => void,
+  onResourceHovered?: (time: Boundaries | undefined) => void,
   sdkLanguage: Language,
 }> = ({ boundaries, networkModel, onResourceHovered, sdkLanguage }) => {
   const [sorting, setSorting] = React.useState<Sorting | undefined>(undefined);
@@ -102,7 +102,7 @@ export const NetworkTab: React.FunctionComponent<{
     items={renderedEntries}
     selectedItem={visibleSelectedEntry}
     onSelected={item => setSelectedResourceKey(item.resource.id)}
-    onHighlighted={item => onResourceHovered?.(item?.resource.id)}
+    onHighlighted={item => onResourceHovered?.(item ? resourceTimeRange(item.resource) : undefined)}
     columns={visibleColumns(!!visibleSelectedEntry, renderedEntries)}
     columnTitle={columnTitle}
     columnWidths={columnWidths}
@@ -122,7 +122,9 @@ export const NetworkTab: React.FunctionComponent<{
         sidebarIsFirst={true}
         orientation='horizontal'
         settingName='networkResourceDetails'
-        main={<NetworkResourceDetails resource={visibleSelectedEntry.resource} sdkLanguage={sdkLanguage} startTimeOffset={visibleSelectedEntry.start} onClose={() => setSelectedResourceKey(undefined)} />}
+        main={visibleSelectedEntry.resource._resourceType === 'websocket'
+          ? <WebSocketResourceDetails resource={visibleSelectedEntry.resource} startTimeOffset={visibleSelectedEntry.start} onClose={() => setSelectedResourceKey(undefined)} />
+          : <NetworkResourceDetails resource={visibleSelectedEntry.resource} sdkLanguage={sdkLanguage} startTimeOffset={visibleSelectedEntry.start} onClose={() => setSelectedResourceKey(undefined)} />}
         sidebar={grid}
       />}
   </>;
@@ -278,10 +280,15 @@ const renderEntry = (resource: ResourceEntry, boundaries: Boundaries, contextIdG
   } catch {
     resourceName = resource.request.url;
   }
-  let contentType = resource.response.content.mimeType;
-  const charset = contentType.match(/^(.*);\s*charset=.*$/);
-  if (charset)
-    contentType = charset[1];
+  let contentType: string;
+  if (resource._resourceType === 'websocket') {
+    contentType = 'websocket';
+  } else {
+    contentType = resource.response.content.mimeType;
+    const charset = contentType.match(/^(.*);\s*charset=.*$/);
+    if (charset)
+      contentType = charset[1];
+  }
 
   return {
     name: { name: resourceName, url: resource.request.url },
@@ -296,6 +303,12 @@ const renderEntry = (resource: ResourceEntry, boundaries: Boundaries, contextIdG
     contextId: contextIdGenerator.contextId(resource),
   };
 };
+
+function resourceTimeRange(resource: ResourceEntry): Boundaries | undefined {
+  if (!resource._monotonicTime)
+    return undefined;
+  return { minimum: resource._monotonicTime, maximum: resource._monotonicTime + resource.time };
+}
 
 function formatRouteStatus(request: ResourceEntry): string {
   if (request._wasAborted)
@@ -363,18 +376,19 @@ function comparator(sortBy: ColumnName) {
     return (a: RenderedEntry, b: RenderedEntry) => a.contextId.localeCompare(b.contextId);
 }
 
-const resourceTypePredicates: Record<ResourceType, (contentType: string) => boolean> = {
-  'Fetch': contentType => contentType === 'application/json',
-  'HTML': contentType => contentType === 'text/html',
-  'CSS': contentType => contentType === 'text/css',
-  'JS': contentType => contentType.includes('javascript'),
-  'Font': contentType => contentType.includes('font'),
-  'Image': contentType => contentType.includes('image'),
+const resourceTypePredicates: Record<ResourceType, (entry: RenderedEntry) => boolean> = {
+  'Fetch': entry => entry.contentType === 'application/json',
+  'HTML': entry => entry.contentType === 'text/html',
+  'CSS': entry => entry.contentType === 'text/css',
+  'JS': entry => entry.contentType.includes('javascript'),
+  'Font': entry => entry.contentType.includes('font'),
+  'Image': entry => entry.contentType.includes('image'),
+  'WS': entry => entry.resource._resourceType === 'websocket',
 };
 
 function filterEntry({ searchValue, resourceTypes }: FilterState) {
   return (entry: RenderedEntry) => {
-    const isRightType = resourceTypes.size === 0 || Array.from(resourceTypes).some(type => resourceTypePredicates[type](entry.contentType));
+    const isRightType = resourceTypes.size === 0 || Array.from(resourceTypes).some(type => resourceTypePredicates[type](entry));
     return isRightType && entry.name.url.toLowerCase().includes(searchValue.toLowerCase());
   };
 }
