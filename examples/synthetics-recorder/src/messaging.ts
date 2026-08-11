@@ -3,7 +3,7 @@
  */
 
 import type { Mode, Source, ElementInfo } from '@recorder/recorderTypes';
-import type { ActionInContext } from '@recorder/actions';
+import type { ActionInContext } from '@isomorphic/codegen/actions';
 import type { BrowserStep, StructuredError } from 'playwright-crx';
 
 // Auth config for basic HTTP authentication during replay.

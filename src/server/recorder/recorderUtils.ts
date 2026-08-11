@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-import type * as recorderActions from '@recorder/actions';
-import type * as channels from '@protocol/channels';
-import { toKeyboardModifiers } from 'playwright-core/lib/server/codegen/language';
+import type * as recorderActions from '@isomorphic/codegen/actions';
+import type * as channels from 'playwright-core/lib/server/channels';
+import { toKeyboardModifiers } from '@isomorphic/codegen/language';
 import { buildFullSelector } from 'playwright-core/lib/server/recorder/recorderUtils';
-import type { Language } from 'playwright-core/lib/server/codegen/types';
+import type { Language } from '@isomorphic/codegen/types';
 
 const kDefaultTimeout = 5_000;
 

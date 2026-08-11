@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
-import type { BrowserContextChannel, Channel, PageChannel, PlaywrightInitializer } from '@protocol/channels';
+// 1.62 split channels per side (playwright#41321). crx is in-process, so both sides
+// meet here; the server shapes are the ones our dispatchers implement.
+import type { BrowserContextChannel, Channel, PageChannel, PlaywrightInitializer } from 'playwright-core/lib/server/channels';
 import type { Mode } from '@recorder/recorderTypes';
 import type { CallMetadata } from 'playwright-core/lib/server/instrumentation';
 import type { CrxBrowserContextOptions } from 'src/types/types';

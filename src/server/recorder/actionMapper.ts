@@ -17,7 +17,7 @@
  * Maps Playwright's ActionInContext[] to BrowserStep[] for the synthetics recorder.
  */
 
-import type { ActionInContext, Action } from '@recorder/actions';
+import type { ActionInContext, Action } from '@isomorphic/codegen/actions';
 import { buildLocatorBundle, effectiveSelector } from './locatorBundle';
 import type { StepLocator } from './locatorBundle';
 import { generalizeUrlPattern } from './urlPattern';

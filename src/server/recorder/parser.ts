@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-import type { Action, ActionInContext, AssertAction, AssertCheckedAction } from '@recorder/actions';
+import type { Action, ActionInContext, AssertAction, AssertCheckedAction } from '@isomorphic/codegen/actions';
 import * as acorn from 'acorn';
 import type { AwaitExpression, Expression, ExpressionStatement } from 'acorn';
 import * as walk from 'acorn-walk';
-import { fromKeyboardModifiers } from 'playwright-core/lib/server/codegen/language';
+import { fromKeyboardModifiers } from '@isomorphic/codegen/language';
 import type { BrowserContextOptions, SmartKeyboardModifier } from 'playwright-core/lib/server/types';
 import { locatorOrSelectorAsSelector } from '@isomorphic/locatorParser';
-import type { CallMetadata } from '@protocol/callMetadata';
+import type { CallMetadata } from 'playwright-core/lib/server/instrumentation';
 
 export type Location = CallMetadata['location'];
 export type ActionInContextWithLocation = ActionInContext & { location?: Location };

@@ -17,12 +17,13 @@
 import { Connection } from 'playwright-core/lib/client/connection';
 import { Crx, CrxApplication } from './crx';
 import { CrxPlaywright } from './crxPlaywright';
-import { findValidator } from 'playwright-core/lib/protocol/validatorPrimitives';
-import type { Platform } from '@isomorphic/platform';
+import { findValidator } from '@protocol/validatorPrimitives';
+import { isUnderTest } from '@utils/debug';
 
 export class CrxConnection extends Connection {
-  constructor(platform: Platform) {
-    super(platform, undefined, undefined);
+  constructor() {
+    // 1.62 removed Connection's Platform parameter.
+    super();
     this.useRawBuffers();
   }
 
@@ -38,7 +39,7 @@ export class CrxConnection extends Connection {
       initializer = validator(initializer, '', {
         tChannelImpl: (this as any)._tChannelImplFromWire.bind(this),
         binary: 'buffer',
-        isUnderTest: () => this._platform.isUnderTest()
+        isUnderTest,
       });
 
       switch (type) {

@@ -27,7 +27,6 @@ import { CrxPlaywrightDispatcher } from './server/dispatchers/crxPlaywrightDispa
 import { PageBinding } from 'playwright-core/lib/server/page';
 
 import { wrapClientApis } from './client/crxZone';
-import { nodePlatform } from '@utils/nodePlatform';
 
 export { debug as _debug } from 'debug';
 export { setUnderTest as _setUnderTest, isUnderTest as _isUnderTest } from '@utils/debug';
@@ -41,7 +40,7 @@ const playwright = new CrxPlaywright();
 // to strip that prefix from boxed stack traces. There is no package root in an
 // extension — the bundle is one file served from a chrome-extension:// origin — so it
 // gets the empty string, which strips nothing.
-const clientConnection = new CrxConnection(nodePlatform(''));
+const clientConnection = new CrxConnection();
 const dispatcherConnection = new DispatcherConnection(true /* local */);
 
 // Dispatch synchronously at first.

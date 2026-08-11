@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import type * as channels from '@protocol/channels';
+import type * as channels from 'playwright-core/lib/server/channels';
 import { AndroidDispatcher } from 'playwright-core/lib/server/dispatchers/androidDispatcher';
 import { BrowserTypeDispatcher } from 'playwright-core/lib/server/dispatchers/browserTypeDispatcher';
 import type { RootDispatcher } from 'playwright-core/lib/server/dispatchers/dispatcher';

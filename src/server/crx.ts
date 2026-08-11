@@ -15,7 +15,7 @@
  */
 
 import type { EventEmitter } from 'events';
-import type * as channels from '@protocol/channels';
+import type * as channels from 'playwright-core/lib/server/channels';
 import { RecentLogsCollector } from '@utils/debugLogger';
 import type { BrowserOptions, BrowserProcess } from 'playwright-core/lib/server/browser';
 import { CRBrowser, CRBrowserContext } from 'playwright-core/lib/server/chromium/crBrowser';
@@ -36,11 +36,11 @@ import type { Mode } from '@recorder/recorderTypes';
 import CrxPlayer from './recorder/crxPlayer';
 import { createTab } from './utils';
 import { parse } from './recorder/parser';
-import { generateCode } from 'playwright-core/lib/server/codegen/language';
-import { languageSet } from 'playwright-core/lib/server/codegen/languages';
-import { deviceDescriptors } from 'playwright-core/lib/server/deviceDescriptors';
+import { generateCode } from '@isomorphic/codegen/language';
+import { languageSet } from '@isomorphic/codegen/languages';
+import { deviceDescriptors } from '@isomorphic/deviceDescriptors';
 import type { DeviceDescriptor } from 'playwright-core/lib/server/types';
-import type { LanguageGeneratorOptions } from 'playwright-core/lib/server/codegen/types';
+import type { LanguageGeneratorOptions } from '@isomorphic/codegen/types';
 
 // The recorder app used by CrxApplication.
 //

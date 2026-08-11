@@ -21,16 +21,16 @@ import type * as channels from '../../protocol/channels';
 import type { ActionInContextWithLocation } from './parser';
 import { PopupRecorderWindow } from './popupRecorderWindow';
 import { SidepanelRecorderWindow } from './sidepanelRecorderWindow';
-import type { ActionInContext, ActionWithSelector } from '@recorder/actions';
-import type * as actions from '@recorder/actions';
+import type { ActionInContext, ActionWithSelector } from '@isomorphic/codegen/actions';
+import type * as actions from '@isomorphic/codegen/actions';
 import { parse } from './parser';
-import { generateCode } from 'playwright-core/lib/server/codegen/language';
-import { languageSet } from 'playwright-core/lib/server/codegen/languages';
+import { generateCode } from '@isomorphic/codegen/language';
+import { languageSet } from '@isomorphic/codegen/languages';
 import { collapseActions, metadataToCallLog } from 'playwright-core/lib/server/recorder/recorderUtils';
 import { monotonicTime } from '@isomorphic/time';
-import type { CallMetadata } from '@protocol/callMetadata';
+import type { CallMetadata } from 'playwright-core/lib/server/instrumentation';
 import type { Crx } from '../crx';
-import type { LanguageGeneratorOptions } from 'playwright-core/lib/server/codegen/types';
+import type { LanguageGeneratorOptions } from '@isomorphic/codegen/types';
 import { toLanguage, traceParamsForAction } from './recorderUtils';
 
 export type RecorderMessage = { type: 'recorder' } & (
