@@ -20,16 +20,26 @@ import { monotonicTime } from '@isomorphic/time';
 import { debugLogger } from '@utils/debugLogger';
 import { TimeoutError } from './errors';
 
-import type { Progress } from '@protocol/progress';
 import type { CallMetadata, SdkObject } from './instrumentation';
 
-export type { Progress } from '@protocol/progress';
+export interface Progress {
+  timeout: number;
+  deadline: number;
+  disableTimeout(): void;
+  log(message: string): void;
+  race<T>(promise: Promise<T> | Promise<T>[]): Promise<T>;
+  wait(timeout: number): Promise<void>; // timeout = 0 here means "wait 0 ms", not forever.
+  signal: AbortSignal;
+  metadata: CallMetadata;
+  setAllowConcurrentOrNestedRaces(allow: boolean): void;
+}
 
 export class ProgressController {
   private _forceAbortPromise = new ManualPromise<any>();
   private _donePromise = new ManualPromise<void>();
   private _state: 'before' | 'running' | { error: Error } | 'finished' = 'before';
   private _onCallLog?: (message: string) => void;
+  private _pendingAbortError?: Error;
 
   readonly metadata: CallMetadata;
   private _controller: AbortController;
@@ -52,13 +62,18 @@ export class ProgressController {
     });
   }
 
-
   async abort(error: Error) {
+    const logMessage = `operation was aborted: ${error.message}`;
     if (this._state === 'running') {
+      this.metadata.log.push(logMessage);
       (error as any)[kAbortErrorSymbol] = true;
       this._state = { error };
       this._forceAbortPromise.reject(error);
       this._controller.abort(error);
+    } else if (this._state === 'before') {
+      this.metadata.log.push(logMessage);
+      (error as any)[kAbortErrorSymbol] = true;
+      this._pendingAbortError = error;
     }
     await this._donePromise;
   }
@@ -67,6 +82,7 @@ export class ProgressController {
     const deadline = timeout ? monotonicTime() + timeout : 0;
     assert(this._state === 'before');
     this._state = 'running';
+
     let timer: NodeJS.Timeout | undefined;
 
     let outerProgress: string | undefined;
@@ -130,6 +146,8 @@ export class ProgressController {
     }
 
     try {
+      if (this._pendingAbortError)
+        throw this._pendingAbortError;
       const result = await task(progress);
       this._state = 'finished';
       return result;

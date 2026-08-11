@@ -30,7 +30,7 @@ import type { ConnectionTransport } from '../transport';
 import type * as types from '../types';
 import type { Protocol } from './protocol';
 import type { PageProxyMessageReceivedPayload } from './wkConnection';
-import type * as channels from '@protocol/channels';
+import type * as channels from '../channels';
 
 const BROWSER_VERSION = '26.5';
 const DEFAULT_USER_AGENT = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/${BROWSER_VERSION} Safari/605.1.15`;
@@ -251,7 +251,7 @@ export class WKBrowserContext extends BrowserContext {
   async doGetCookies(urls: string[]): Promise<channels.NetworkCookie[]> {
     const { cookies } = await this._browser._browserSession.send('Playwright.getAllCookies', { browserContextId: this._browserContextId });
     return network.filterCookies(cookies.map((c: channels.NetworkCookie) => {
-      const { name, value, domain, path, expires, httpOnly, secure, sameSite } = c;
+      const { name, value, domain, path, expires, httpOnly, secure, sameSite, partitionKey } = c;
       const copy: channels.NetworkCookie = {
         name,
         value,
@@ -262,13 +262,15 @@ export class WKBrowserContext extends BrowserContext {
         secure,
         sameSite,
       };
+      if (partitionKey)
+        copy.partitionKey = partitionKey;
       return copy;
     }), urls);
   }
 
   async addCookies(cookies: channels.SetNetworkCookie[]) {
     const cc = network.rewriteCookies(cookies).map(c => {
-      const { name, value, domain, path, expires, httpOnly, secure, sameSite } = c;
+      const { name, value, domain, path, expires, httpOnly, secure, sameSite, partitionKey } = c;
       const copy: Protocol.Playwright.SetCookieParam = {
         name,
         value,
@@ -280,6 +282,8 @@ export class WKBrowserContext extends BrowserContext {
         sameSite,
         session: expires === -1 || expires === undefined,
       };
+      if (partitionKey)
+        copy.partitionKey = partitionKey;
       return copy;
     });
     await this._browser._browserSession.send('Playwright.setCookies', { cookies: cc, browserContextId: this._browserContextId });
@@ -353,8 +357,6 @@ export class WKBrowserContext extends BrowserContext {
     for (const page of this.pages())
       await (page.delegate as WKPage).exposePlaywrightBinding();
   }
-
-  onClosePersistent() {}
 
   override async clearCache(): Promise<void> {
     // We use ephemeral contexts so there is no disk cache.

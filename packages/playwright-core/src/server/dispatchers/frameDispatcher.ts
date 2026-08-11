@@ -25,7 +25,7 @@ import type { Progress } from '../progress';
 import type { BrowserContextDispatcher } from './browserContextDispatcher';
 import type { PageDispatcher } from './pageDispatcher';
 import type { NavigationEvent } from '../frames';
-import type * as channels from '@protocol/channels';
+import type * as channels from '../channels';
 
 export class FrameDispatcher extends Dispatcher<Frame, channels.FrameChannel, BrowserContextDispatcher | PageDispatcher> implements channels.FrameChannel {
   _type_Frame = true;
@@ -115,7 +115,7 @@ export class FrameDispatcher extends Dispatcher<Frame, channels.FrameChannel, Br
   }
 
   async queryCount(params: channels.FrameQueryCountParams, progress: Progress): Promise<channels.FrameQueryCountResult> {
-    return { value: await this._frame.queryCount(progress, params.selector, params) };
+    return { value: await this._frame.queryCount(progress, params.selector) };
   }
 
   async content(params: channels.FrameContentParams, progress: Progress): Promise<channels.FrameContentResult> {
@@ -255,7 +255,12 @@ export class FrameDispatcher extends Dispatcher<Frame, channels.FrameChannel, Br
   }
 
   async waitForFunction(params: channels.FrameWaitForFunctionParams, progress: Progress): Promise<channels.FrameWaitForFunctionResult> {
-    return { handle: ElementHandleDispatcher.fromJSOrElementHandle(this, await this._frame.waitForFunctionExpression(progress, params.expression, params.isFunction, parseArgument(params.arg), params)) };
+    if (params.selector !== undefined) {
+      await this._frame.waitForFunctionExpressionOnElement(progress, params.selector, params.expression, params.isFunction, parseArgument(params.arg), { strict: params.strict });
+      return {};
+    }
+    const handle = await this._frame.waitForFunctionExpression(progress, params.expression, params.isFunction, parseArgument(params.arg), params);
+    return { handle: ElementHandleDispatcher.fromJSOrElementHandle(this, handle) };
   }
 
   async title(params: channels.FrameTitleParams, progress: Progress): Promise<channels.FrameTitleResult> {
@@ -271,7 +276,7 @@ export class FrameDispatcher extends Dispatcher<Frame, channels.FrameChannel, Br
   }
 
   async expect(params: channels.FrameExpectParams, progress: Progress): Promise<channels.FrameExpectResult> {
-    progress.log(`${renderTitleForCall(progress.metadata)}${params.timeout ? ` with timeout ${params.timeout}ms` : ''}`);
+    progress.log(`${renderTitleForCall(progress.metadata)}${progress.timeout ? ` with timeout ${progress.timeout}ms` : ''}`);
     const expectedValue = params.expectedValue ? parseArgument(params.expectedValue) : undefined;
     try {
       await this._frame.expect(progress, params.selector, { ...params, expectedValue });

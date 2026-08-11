@@ -130,6 +130,25 @@ it.describe('screencast', () => {
     expectRedFrames(videoFile, size);
   });
 
+  it('should pad a short frame to the video size', async ({ browser }, testInfo) => {
+    const videoSize = { width: 800, height: 600 };
+    const context = await browser.newContext({
+      recordVideo: {
+        dir: testInfo.outputPath(''),
+        size: videoSize,
+      },
+      viewport: { width: 800, height: 396 },
+    });
+    const page = await context.newPage();
+    await ensureSomeFrames(page);
+    await context.close();
+
+    const videoFile = await page.video().path();
+    const videoPlayer = new VideoPlayer(videoFile);
+    expect(videoPlayer.videoWidth).toBe(videoSize.width);
+    expect(videoPlayer.videoHeight).toBe(videoSize.height);
+  });
+
   it('should continue recording main page after popup closes', async ({ browser, browserName }, testInfo) => {
     it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/30837' });
     // Firefox does not have a mobile variant and has a large minimum size (500 on windows and 450 elsewhere).
@@ -334,8 +353,8 @@ it.describe('screencast', () => {
     }
   });
 
-  it('should work for popups', async ({ browser, server, browserName, trace }, testInfo) => {
-    it.fixme(browserName === 'firefox', 'https://github.com/microsoft/playwright/issues/14557');
+  it('should work for popups', async ({ browser, server, browserName, isBidi }, testInfo) => {
+    it.fixme(browserName === 'firefox' && !isBidi, 'https://github.com/microsoft/playwright/issues/14557');
     const videosPath = testInfo.outputPath('');
     const size = { width: 600, height: 400 };
     const context = await browser.newContext({
@@ -453,8 +472,8 @@ it.describe('screencast', () => {
     expect(videoPlayer.videoHeight).toBe(450);
   });
 
-  it('should be 800x600 with null viewport', async ({ browser, headless, browserName }, testInfo) => {
-    it.fixme(browserName === 'firefox' && headless, 'Fails in headless on bots');
+  it('should be 800x600 with null viewport', async ({ browser, headless, browserName, isBidi }, testInfo) => {
+    it.fixme(browserName === 'firefox' && headless && !isBidi, 'Fails in headless on bots');
 
     const context = await browser.newContext({
       recordVideo: {

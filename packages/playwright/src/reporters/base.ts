@@ -20,7 +20,7 @@ import { Writable } from 'stream';
 import realColors from 'colors/safe';
 import { noColors } from '@isomorphic/colors';
 import { msToString } from '@isomorphic/formatUtils';
-import { parseErrorStack } from '@isomorphic/stackTrace';
+import { parseErrorStack } from '@utils/stackTrace';
 import { getPackageManagerExecCommand } from '@utils/env';
 import { fitToWidth } from '@utils/stringWidth';
 
@@ -86,8 +86,9 @@ class StripAnsiStream extends Writable {
     this._target = target;
   }
 
-  override _write(chunk: any, encoding: any, callback: any) {
-    this._target.write(stripAnsiEscapes(chunk.toString()), callback);
+  override write(chunk: any, encodingOrCallback?: any, callback?: any): boolean {
+    const cb = typeof encodingOrCallback === 'function' ? encodingOrCallback : callback;
+    return this._target.write(stripAnsiEscapes(chunk.toString()), cb);
   }
 }
 
@@ -630,7 +631,7 @@ export function prepareErrorStack(stack: string): {
   stackLines: string[];
   location?: Location;
 } {
-  return parseErrorStack(stack, path.sep, !!process.env.PWDEBUGIMPL);
+  return parseErrorStack(stack);
 }
 
 function resolveFromEnv(name: string): string | undefined {

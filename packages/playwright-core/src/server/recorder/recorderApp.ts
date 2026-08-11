@@ -19,22 +19,22 @@ import path from 'path';
 
 import mime from 'mime';
 import { isUnderTest } from '@utils/debug';
+import { languageSet } from '@isomorphic/codegen/languages';
+import { generateCode } from '@isomorphic/codegen/language';
 import { libPath } from '../../package';
 import { syncLocalStorageWithSettings } from '../launchApp';
 import { launchApp } from '../launchApp';
 import { nullProgress, ProgressController } from '../progress';
 import { ThrottledFile } from './throttledFile';
-import { languageSet } from '../codegen/languages';
 import { collapseActions, shouldMergeAction } from './recorderUtils';
-import { generateCode } from '../codegen/language';
 import { Recorder, RecorderEvent } from '../recorder';
 import { BrowserContext } from '../browserContext';
 
 import type { Page } from '../page';
-import type * as actions from '@recorder/actions';
+import type * as actions from '@isomorphic/codegen/actions';
 import type { CallLog, ElementInfo, Mode, RecorderBackend, RecorderFrontend, Source } from '@recorder/recorderTypes';
-import type { Language, LanguageGeneratorOptions } from '../codegen/types';
-import type * as channels from '@protocol/channels';
+import type { Language, LanguageGeneratorOptions } from '@isomorphic/codegen/types';
+import type * as channels from '../channels';
 import type { Progress } from '../progress';
 import type { AriaTemplateNode } from '@isomorphic/ariaSnapshot';
 
@@ -147,7 +147,7 @@ export class RecorderApp {
         }
       },
       setAutoExpect: async (params: { autoExpect: boolean }) => {
-        this._languageGeneratorOptions.generateAutoExpect = params.autoExpect;
+        this._languageGeneratorOptions.generateExpectSignal = params.autoExpect;
         this._updateActions();
       },
       setMode: async (params: { mode: Mode }) => {
@@ -288,7 +288,7 @@ export class RecorderApp {
   }
 
   private _onSignalAdded(signal: actions.SignalInContext) {
-    const lastAction = this._actions.findLast(a => a.frame.pageGuid === signal.frame.pageGuid);
+    const lastAction = this._actions.findLast(a => a.pageGuid === signal.pageGuid);
     if (lastAction)
       lastAction.action.signals.push(signal.signal);
     this._updateActions();
@@ -370,18 +370,18 @@ export class ProgrammaticRecorderApp {
     const languageGenerator = languages.find(l => l.id === params.language) ?? languages.find(l => l.id === 'playwright-test')!;
 
     recorder.on(RecorderEvent.ActionAdded, action => {
-      const page = findPageByGuid(inspectedContext, action.frame.pageGuid);
+      const page = findPageByGuid(inspectedContext, action.pageGuid);
       if (!page)
         return;
-      const { actionTexts } = generateCode([action], languageGenerator, languageGeneratorOptions);
+      const code = languageGenerator.generateAction(action, languageGeneratorOptions);
       if (!lastAction || !shouldMergeAction(action, lastAction))
-        inspectedContext.emit(BrowserContext.Events.RecorderEvent, { event: 'actionAdded', data: action, page, code: actionTexts.join('\n') });
+        inspectedContext.emit(BrowserContext.Events.RecorderEvent, { event: 'actionAdded', data: action, page, code });
       else
-        inspectedContext.emit(BrowserContext.Events.RecorderEvent, { event: 'actionUpdated', data: action, page, code: actionTexts.join('\n') });
+        inspectedContext.emit(BrowserContext.Events.RecorderEvent, { event: 'actionUpdated', data: action, page, code });
       lastAction = action;
     });
     recorder.on(RecorderEvent.SignalAdded, signal => {
-      const page = findPageByGuid(inspectedContext, signal.frame.pageGuid);
+      const page = findPageByGuid(inspectedContext, signal.pageGuid);
       if (!page)
         return;
       inspectedContext.emit(BrowserContext.Events.RecorderEvent, { event: 'signalAdded', data: signal, page, code: '' });

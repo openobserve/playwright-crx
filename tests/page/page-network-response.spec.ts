@@ -149,6 +149,32 @@ it('should return body with compression', async ({ page, server, asset }) => {
   expect(responseBuffer.equals(imageBuffer)).toBe(true);
 });
 
+it('should return non-utf8 body even when content-type says utf8', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/40510' },
+}, async ({ page, server, browserName, browserMajorVersion }) => {
+  it.fixme(browserName === 'webkit', 'webkit encodes the response body');
+  it.fixme(browserName === 'chromium' && browserMajorVersion < 151, 'older chromium re-encodes the non-utf8 response body and lacks Response.bytes()');
+
+  // Binary data with bytes that are invalid UTF-8.
+  const bytes = [0x80, 0x81, 0x82, 0xFF, 0xFE, 0x00, 0x01, 0x02];
+  const buffer = Buffer.from(bytes);
+  server.setRoute('/binary-as-text', (req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/plain;charset=UTF-8',
+      'Content-Length': buffer.length,
+    });
+    res.end(buffer);
+  });
+  await page.goto(server.EMPTY_PAGE);
+  const [response, bytesReceived] = await Promise.all([
+    page.waitForResponse(server.PREFIX + '/binary-as-text'),
+    page.evaluate(url => fetch(url).then(r => r.bytes()), server.PREFIX + '/binary-as-text'),
+  ]);
+  const body = await response.body();
+  expect(body.equals(buffer)).toBe(true);
+  expect(Array.from(bytesReceived)).toEqual(bytes);
+});
+
 it('should return status text', async ({ page, server }) => {
   server.setRoute('/cool', (req, res) => {
     res.writeHead(200, 'cool!');
@@ -449,4 +475,20 @@ it('Response.formData() should parse multipart/form-data in page context', async
   expect(result.field1).toBe('value1');
   expect(result.filename).toBe('test.txt');
   expect(result.fileContent).toBe('hello');
+});
+
+it('should give a readable error when response.body() races with navigation', async ({ page, server, browserName, trace }) => {
+  it.skip(browserName === 'firefox', 'Firefox keeps the response body available after navigating away, so it never throws');
+  it.skip(trace === 'on', 'Tracing fetches response bodies eagerly, so the body is already cached before navigation');
+  it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41512' });
+  const [response] = await Promise.all([
+    page.waitForResponse(server.PREFIX + '/title.html'),
+    page.goto(server.PREFIX + '/title.html'),
+  ]);
+  // Navigate away — the browser frees the network resource from the first page load.
+  // The first page must have a non-empty body, otherwise WebKit returns an empty buffer instead of throwing.
+  await page.goto(server.PREFIX + '/grid.html');
+  const error = await response.body().catch(e => e);
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message).toContain('navigated away');
 });

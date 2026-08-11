@@ -17,12 +17,13 @@
 export { Browser } from './browser';
 export { BrowserContext } from './browserContext';
 export { findRepeatedSubsequencesForTest } from './callLog';
-export { deviceDescriptors } from './deviceDescriptors';
+export { deviceDescriptors } from '@isomorphic/deviceDescriptors';
 export { DispatcherConnection, RootDispatcher, setMaxDispatchersForTest } from './dispatchers/dispatcher';
 export { RequestDispatcher, ResponseDispatcher } from './dispatchers/networkDispatchers';
 export { PlaywrightDispatcher } from './dispatchers/playwrightDispatcher';
+export { PageDispatcher, WorkerDispatcher } from './dispatchers/pageDispatcher';
 export { Request, Response } from './network';
-export { Page } from './page';
+export { Page, Worker } from './page';
 export { createPlaywright } from './playwright';
 export { nullProgress } from './progress';
 export { WebSocketTransport } from './transport';

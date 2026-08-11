@@ -17,7 +17,7 @@
 
 import fs from 'fs';
 
-import { rewriteErrorMessage } from '@isomorphic/stackTrace';
+import { rewriteErrorMessage } from '@utils/stackTrace';
 import { debugMode, isUnderTest } from '@utils/debug';
 import { Clock } from './clock';
 import { Credentials } from './credentials';
@@ -44,7 +44,7 @@ import type { Progress } from './progress';
 import type { ClientCertificatesProxy } from './socksClientCertificatesInterceptor';
 import type { SerializedStorage } from '@injected/storageScript';
 import type * as types from './types';
-import type * as channels from '@protocol/channels';
+import type * as channels from './channels';
 
 const BrowserContextEvent = {
   Console: 'console',
@@ -234,7 +234,7 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
     const otherPages = this.possiblyUninitializedPages().filter(p => p !== page);
     for (const p of otherPages)
       await p.close(progress);
-    if (page && page.hasCrashed()) {
+    if (page && page.isClosedOrClosingOrCrashed()) {
       await page.close(progress);
       page = undefined;
     }
@@ -245,7 +245,6 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
     // Note: we only need to reset properties from the "paramsThatAllowContextReuse" list.
     // All other properties force a new context.
     await this.clock.uninstall(progress);
-    await this.credentials.dispose(progress);
     await progress.race(this.setUserAgent(this._options.userAgent));
     await progress.race(this.doUpdateDefaultEmulatedMedia());
     await progress.race(this.doUpdateDefaultViewport());
@@ -266,10 +265,9 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
       // at the same time.
       return;
     }
+    this._closedStatus = 'closed';
     this._clientCertificatesProxy?.close().catch(() => {});
     this.tracing.abort();
-    if (this._isPersistentContext)
-      this.onClosePersistent();
     this._closePromiseFulfill!(new Error('Context closed'));
     this.emit(BrowserContext.Events.Close);
   }
@@ -300,7 +298,6 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
   protected abstract doUpdateDefaultEmulatedMedia(): Promise<void>;
   protected abstract doExposePlaywrightBinding(): Promise<void>;
   protected abstract doClose(reason: string | undefined): Promise<void | 'close-browser'>;
-  protected abstract onClosePersistent(): void;
 
   async cookies(progress: Progress, urls: string | string[] | undefined = []): Promise<channels.NetworkCookie[]> {
     return await progress.race(this._cookies(urls));
@@ -374,7 +371,7 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
     return this._playwrightBindingExposed !== undefined;
   }
 
-  async exposeBinding(progress: Progress, name: string, playwrightBinding: frames.FunctionWithSource, forClient?: unknown): Promise<PageBinding> {
+  async exposeBinding(progress: Progress, name: string, playwrightBinding: frames.FunctionWithSource, forClient?: unknown, noGlobal?: boolean): Promise<PageBinding> {
     if (this._pageBindings.has(name))
       throw new Error(`Function "${name}" has been already registered`);
     for (const page of this.pages()) {
@@ -382,7 +379,7 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
         throw new Error(`Function "${name}" has been already registered in one of the pages`);
     }
     await progress.race(this.exposePlaywrightBindingIfNeeded());
-    const binding = new PageBinding(this, name, playwrightBinding);
+    const binding = new PageBinding(this, name, playwrightBinding, noGlobal);
     binding.forClient = forClient;
     this._pageBindings.set(name, binding);
     try {
@@ -610,11 +607,13 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
     this._origins.add(origin);
   }
 
-  async storageState(progress: Progress, indexedDB = false): Promise<channels.BrowserContextStorageStateResult> {
+  async storageState(progress: Progress, indexedDB = false, credentials = false): Promise<channels.BrowserContextStorageStateResult> {
     const result: channels.BrowserContextStorageStateResult = {
       cookies: await this.cookies(progress),
       origins: []
     };
+    if (credentials)
+      result.credentials = await progress.race(this.credentials.get());
     const originsToSave = new Set(this._origins);
 
     const collectScript = `(() => {
@@ -671,10 +670,20 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
       if (mode !== 'initial') {
         await progress.race(this.clearCache());
         await progress.race(this.doClearCookies());
+        if (state?.credentials?.length)
+          this.credentials.clear();
+        else
+          await this.credentials.dispose(progress);
       }
 
       if (state?.cookies)
         await progress.race(this.addCookies(state.cookies));
+
+      if (state?.credentials?.length) {
+        for (const credential of state.credentials)
+          await progress.race(this.credentials.create(credential));
+        await this.credentials.install(progress);
+      }
 
       const newOrigins = new Map(state?.origins?.map(p => [p.origin, p]) || []);
       const allOrigins = new Set([...this._origins, ...newOrigins.keys()]);

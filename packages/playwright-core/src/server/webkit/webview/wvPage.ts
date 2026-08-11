@@ -20,9 +20,10 @@ import jpegjs from 'jpeg-js';
 import { assert } from '@isomorphic/assert';
 import { headersArrayToObject, headersObjectToArray } from '@isomorphic/headers';
 import { ManualPromise } from '@isomorphic/manualPromise';
-import { splitErrorMessage } from '@isomorphic/stackTrace';
+import { splitErrorMessage } from '@utils/stackTrace';
 import { debugLogger } from '@utils/debugLogger';
 import { eventsHelper } from '@utils/eventsHelper';
+import { encodeWebp } from '@utils/webp/webp';
 import * as dialog from '../../dialog';
 import * as dom from '../../dom';
 import { TargetClosedError } from '../../errors';
@@ -39,6 +40,7 @@ import { WVWorkers } from './wvWorkers';
 import { WVInterceptableRequest, WVRouteImpl } from './wvInterceptableRequest';
 import { WVProvisionalPage } from './wvProvisionalPage';
 
+import type { SyncHandlerRegistration, SyncServer } from './syncServer';
 import type { Protocol } from './protocol';
 import type { WVBrowserContext } from './wvBrowser';
 import type { RegisteredListener } from '@utils/eventsHelper';
@@ -47,13 +49,14 @@ import type { JSHandle } from '../../javascript';
 import type { InitScript, PageDelegate } from '../../page';
 import type { Progress } from '../../progress';
 import type * as types from '../../types';
-import type { PagePdfParams } from '@protocol/channels';
+import type { PagePdfParams } from '../../channels';
 
 export class WVPage implements PageDelegate {
   readonly rawMouse: RawMouseImpl;
   readonly rawKeyboard: RawKeyboardImpl;
   readonly rawTouchscreen: RawTouchscreenImpl;
   private _session!: WVSession;
+  private _sentPauseOnStart = false;
   private readonly _outerSession: WVSession;
   private _provisionalPage: WVProvisionalPage | null = null;
   readonly _page: Page;
@@ -73,14 +76,13 @@ export class WVPage implements PageDelegate {
   private readonly _requestIdToResponseReceivedPayloadEvent = new Map<string, Protocol.Network.responseReceivedPayload>();
   private _timestampBaselineForWebSocket = new Map<string, number>();
 
-  private readonly _dialogEndpoint: string | undefined;
+  private readonly _dialogHandler: SyncHandlerRegistration | undefined;
 
-  constructor(browserContext: WVBrowserContext, outerSession: WVSession, dialogEndpoint?: string) {
+  constructor(browserContext: WVBrowserContext, outerSession: WVSession, syncServer?: SyncServer) {
     this._outerSession = outerSession;
-    this._dialogEndpoint = dialogEndpoint;
-    this.rawKeyboard = new RawKeyboardImpl();
-    this.rawMouse = new RawMouseImpl();
-    this.rawTouchscreen = new RawTouchscreenImpl();
+    this.rawKeyboard = new RawKeyboardImpl(this);
+    this.rawMouse = new RawMouseImpl(this);
+    this.rawTouchscreen = new RawTouchscreenImpl(this);
     this._contextIdToContext = new Map();
     this._page = new Page(this, browserContext);
     this._workers = new WVWorkers(this._page, outerSession);
@@ -98,6 +100,8 @@ export class WVPage implements PageDelegate {
     });
     // Avoid unhandled rejection on disconnect in the middle of initialization.
     this._firstNonInitialNavigationCommittedPromise.catch(() => {});
+
+    this._dialogHandler = syncServer?.addHandler(body => this._onBridgeDialog(body));
   }
 
   waitForInitialized(): Promise<void> {
@@ -108,20 +112,64 @@ export class WVPage implements PageDelegate {
     throw new Error('Method not implemented.');
   }
 
-  updateEmulateMedia(): Promise<void> {
-    throw new Error('Method not implemented.');
+  private static async _setEmulateMedia(session: WVSession, mediaType: types.MediaType, colorScheme: types.ColorScheme, reducedMotion: types.ReducedMotion, contrast: types.Contrast): Promise<void> {
+    const promises = [];
+    promises.push(session.send('Page.setEmulatedMedia', { media: mediaType === 'no-override' ? '' : mediaType }));
+    let appearance: any = undefined;
+    switch (colorScheme) {
+      case 'light': appearance = 'Light'; break;
+      case 'dark': appearance = 'Dark'; break;
+      case 'no-override': appearance = undefined; break;
+    }
+    promises.push(session.send('Page.overrideUserPreference', { name: 'PrefersColorScheme', value: appearance }));
+    let reducedMotionWk: any = undefined;
+    switch (reducedMotion) {
+      case 'reduce': reducedMotionWk = 'Reduce'; break;
+      case 'no-preference': reducedMotionWk = 'NoPreference'; break;
+      case 'no-override': reducedMotionWk = undefined; break;
+    }
+    promises.push(session.send('Page.overrideUserPreference', { name: 'PrefersReducedMotion', value: reducedMotionWk }));
+    let contrastWk: any = undefined;
+    switch (contrast) {
+      case 'more': contrastWk = 'More'; break;
+      case 'no-preference': contrastWk = 'NoPreference'; break;
+      case 'no-override': contrastWk = undefined; break;
+    }
+    promises.push(session.send('Page.overrideUserPreference', { name: 'PrefersContrast', value: contrastWk }));
+    await Promise.all(promises);
+  }
+
+  async updateEmulateMedia(): Promise<void> {
+    const emulatedMedia = this._page.emulatedMedia();
+    const colorScheme = emulatedMedia.colorScheme;
+    const reducedMotion = emulatedMedia.reducedMotion;
+    const contrast = emulatedMedia.contrast;
+    await this._forAllSessions(session => WVPage._setEmulateMedia(session, emulatedMedia.media, colorScheme, reducedMotion, contrast));
   }
 
   goBack(): Promise<boolean> {
-    throw new Error('Method not implemented.');
+    return this._navigateHistory(false);
   }
 
   goForward(): Promise<boolean> {
-    throw new Error('Method not implemented.');
+    return this._navigateHistory(true);
   }
 
-  requestGC(): Promise<void> {
-    throw new Error('Method not implemented.');
+  private async _navigateHistory(forward: boolean): Promise<boolean> {
+    const response = await this._session.sendMayFail('Runtime.evaluate', {
+      expression: `(function() {
+        const canNavigate = window.navigation?.${forward ? 'canGoForward' : 'canGoBack'} ?? window.history.length > 1;
+        if (canNavigate)
+          window.history.${forward ? 'forward' : 'back'}();
+        return canNavigate;
+      })()`,
+      returnByValue: true,
+    } as any);
+    return !!response?.result?.value;
+  }
+
+  async requestGC(): Promise<void> {
+    await this._session.send('Heap.gc');
   }
 
   updateFileChooserInterception(): Promise<void> {
@@ -147,9 +195,6 @@ export class WVPage implements PageDelegate {
   private _setSession(session: WVSession) {
     eventsHelper.removeEventListeners(this._sessionListeners);
     this._session = session;
-    this.rawKeyboard.setSession(session);
-    this.rawMouse.setSession(session);
-    this.rawTouchscreen.setSession(session);
     this._workers.setSession(session);
     this._addSessionListeners();
   }
@@ -182,7 +227,14 @@ export class WVPage implements PageDelegate {
       this._workers.initializeSession(session),
       session.sendMayFail('Page.setBootstrapScript', { source: this._calculateBootstrapScript() }),
       session.sendMayFail('Runtime.evaluate', { expression: saveGlobalsSnapshotSource, returnByValue: true } as any),
+      session.sendMayFail('Network.setExtraHTTPHeaders', { headers: headersArrayToObject(this._calculateExtraHTTPHeaders(), false /* lowerCase */) }),
     ]);
+    const emulatedMedia = this._page.emulatedMedia();
+    if (emulatedMedia.media || emulatedMedia.colorScheme || emulatedMedia.reducedMotion || emulatedMedia.contrast)
+      await WVPage._setEmulateMedia(session, emulatedMedia.media, emulatedMedia.colorScheme, emulatedMedia.reducedMotion, emulatedMedia.contrast);
+    const contextOptions = this._browserContext._options;
+    if (contextOptions.userAgent)
+      await session.sendMayFail('Page.overrideUserAgent', { value: contextOptions.userAgent });
     if (this._page.needsRequestInterception()) {
       await Promise.all([
         session.sendMayFail('Network.setInterceptionEnabled', { enabled: true }),
@@ -193,9 +245,10 @@ export class WVPage implements PageDelegate {
     // Inject the page-side input dispatcher and dialog bridge into the
     // currently-loaded document too — bootstrap only applies to future navigations.
     await session.sendMayFail('Runtime.evaluate', { expression: webViewInputBootstrapSource, returnByValue: true } as any);
-    if (this._dialogEndpoint) {
+    await session.sendMayFail('Runtime.evaluate', { expression: sameDocumentNavigationBridgeSource, returnByValue: true } as any);
+    if (this._dialogHandler) {
       await session.sendMayFail('Runtime.evaluate', {
-        expression: dialogBridgeSource(this._dialogEndpoint),
+        expression: dialogBridgeSource(this._dialogHandler.endpoint),
         returnByValue: true,
       } as any);
     }
@@ -214,6 +267,13 @@ export class WVPage implements PageDelegate {
   }
 
   private async _onTargetCreated(event: Protocol.Target.targetCreatedPayload) {
+    // The Target domain only exists for the top-level web-page target, so send it as soon as we know it exists.
+    // Commands sent before the first Target.targetCreated event may be silently dropped as targets may not exist yet.
+    if (!this._sentPauseOnStart) {
+      this._sentPauseOnStart = true;
+      await this._outerSession.sendMayFail('Target.setPauseOnStart', { pauseOnStart: true });
+    }
+
     const { targetInfo } = event;
     if (targetInfo.type !== 'page') {
       // Site-isolated WebKit (iOS 26+) reports a separate target per frame. We
@@ -281,19 +341,25 @@ export class WVPage implements PageDelegate {
     }
   }
 
-  async onBridgeDialog(req: { type: 'alert' | 'confirm' | 'prompt'; message: string; defaultValue: string }): Promise<{ accept: boolean; promptText?: string }> {
+  private async _onBridgeDialog(body: any): Promise<{ accept: boolean; promptText?: string }> {
+    const type = body?.type;
+    if (type !== 'alert' && type !== 'confirm' && type !== 'prompt')
+      throw new Error(`Invalid dialog type: ${type}`);
+    const message = typeof body?.message === 'string' ? body.message : '';
+    const defaultValue = typeof body?.defaultValue === 'string' ? body.defaultValue : '';
     return await new Promise<{ accept: boolean; promptText?: string }>(resolve => {
       this._page.browserContext.dialogManager.dialogDidOpen(new dialog.Dialog(
           this._page,
-          req.type,
-          req.message,
+          type,
+          message,
           async (accept: boolean, promptText?: string) => resolve({ accept, promptText }),
-          req.defaultValue,
+          defaultValue,
       ));
     });
   }
 
   didClose() {
+    this._dialogHandler?.dispose();
     eventsHelper.removeEventListeners(this._sessionListeners);
     eventsHelper.removeEventListeners(this._eventListeners);
     if (this._session)
@@ -329,7 +395,11 @@ export class WVPage implements PageDelegate {
       eventsHelper.addEventListener(session, 'Network.loadingFailed', e => this._onLoadingFailed(session, e)),
       eventsHelper.addEventListener(session, 'Network.webSocketCreated', e => this._page.frameManager.onWebSocketCreated(e.requestId, e.url)),
       eventsHelper.addEventListener(session, 'Network.webSocketWillSendHandshakeRequest', event => this._onWebSocketWillSendHandshakeRequest(event)),
-      eventsHelper.addEventListener(session, 'Network.webSocketHandshakeResponseReceived', e => this._page.frameManager.onWebSocketResponse(e.requestId, e.response.status, e.response.statusText, headersObjectToArray(e.response.headers, ','))),
+      eventsHelper.addEventListener(session, 'Network.webSocketHandshakeResponseReceived', e => this._page.frameManager.onWebSocketResponse(e.requestId, {
+        status: e.response.status,
+        statusText: e.response.statusText,
+        headers: headersObjectToArray(e.response.headers, ','),
+      })),
       eventsHelper.addEventListener(session, 'Network.webSocketFrameSent', e => e.response.payloadData && this._page.frameManager.onWebSocketFrameSent(e.requestId, e.response.opcode, e.response.payloadData, this._timestampToWallTimeMsForWebSocket(e.requestId, e.timestamp))),
       eventsHelper.addEventListener(session, 'Network.webSocketFrameReceived', e => e.response.payloadData && this._page.frameManager.webSocketFrameReceived(e.requestId, e.response.opcode, e.response.payloadData, this._timestampToWallTimeMsForWebSocket(e.requestId, e.timestamp))),
       eventsHelper.addEventListener(session, 'Network.webSocketClosed', event => this._onWebSocketClosed(event)),
@@ -464,17 +534,20 @@ export class WVPage implements PageDelegate {
     // For example, frame.setContent relies on this.
     const { type, level, text, parameters, url, line: lineNumber, column: columnNumber, source } = event.message;
 
-    if (level === 'debug'
-        && parameters
-        && parameters.length >= 2
-        && parameters[0].type === 'string'
-        && parameters[0].value === BINDING_CALL_TAG
-        && parameters[1].type === 'string') {
-      const payload = parameters[1].value as string;
-      const context = [...this._contextIdToContext.values()].find(c => c.frame === this._page.mainFrame());
-      if (context)
-        this._page.onBindingCalled(payload, context).catch(e => debugLogger.log('error', e));
-      return;
+    if (level === 'debug' && parameters && parameters.length >= 2 && parameters[0].type === 'string') {
+      const [bindingName, bindingArg] = parameters;
+
+      if (bindingName.value === BINDING_CALL_TAG && bindingArg.type === 'string') {
+        const context = [...this._contextIdToContext.values()].find(c => c.frame === this._page.mainFrame());
+        if (context)
+          this._page.onBindingCalled(bindingArg.value, context).catch(e => debugLogger.log('error', e));
+        return;
+      }
+
+      if (bindingName.value === SAME_DOCUMENT_NAVIGATION_TAG && bindingArg.type === 'string') {
+        this._onFrameNavigatedWithinDocument(this._page.mainFrame()._id, bindingArg.value);
+        return;
+      }
     }
 
     if (level === 'error' && source === 'javascript') {
@@ -566,6 +639,11 @@ export class WVPage implements PageDelegate {
     return headers;
   }
 
+  async updateUserAgent(): Promise<void> {
+    const contextOptions = this._browserContext._options;
+    await this._updateState('Page.overrideUserAgent', { value: contextOptions.userAgent });
+  }
+
   async bringToFront(): Promise<void> {
   }
 
@@ -584,6 +662,21 @@ export class WVPage implements PageDelegate {
 
   async reload(): Promise<void> {
     await this._session.send('Page.reload');
+  }
+
+  async getCookies(): Promise<Protocol.Page.Cookie[]> {
+    const { cookies } = await this._session.send('Page.getCookies');
+    return cookies;
+  }
+
+  async setCookies(cookies: Protocol.Page.Cookie[]): Promise<void> {
+    for (const cookie of cookies)
+      await this._session.send('Page.setCookie', { cookie });
+  }
+
+  async deleteCookies(cookies: { cookieName: string, url: string }[]): Promise<void> {
+    for (const { cookieName, url } of cookies)
+      await this._session.send('Page.deleteCookie', { cookieName, url });
   }
 
   async addInitScript(initScript: InitScript): Promise<void> {
@@ -617,9 +710,10 @@ export class WVPage implements PageDelegate {
     scripts.push('if (!window.GestureEvent) window.GestureEvent = function GestureEvent() {};');
     scripts.push(this._publicKeyCredentialScript());
     scripts.push(bindingBridgeSource);
+    scripts.push(sameDocumentNavigationBridgeSource);
     scripts.push(webViewInputBootstrapSource);
-    if (this._dialogEndpoint)
-      scripts.push(dialogBridgeSource(this._dialogEndpoint));
+    if (this._dialogHandler)
+      scripts.push(dialogBridgeSource(this._dialogHandler.endpoint));
     scripts.push(...this._page.allInitScripts().map(script => script.source));
     return scripts.join(';\n');
   }
@@ -683,17 +777,64 @@ export class WVPage implements PageDelegate {
     const result = await progress.race(this._session.send('Page.snapshotRect', { ...rect, coordinateSystem: documentRect ? 'Page' : 'Viewport' }));
     const prefix = 'data:image/png;base64,';
     let buffer: Buffer = Buffer.from(result.dataURL.substr(prefix.length), 'base64');
-    if (format === 'jpeg')
+    if (format === 'jpeg') {
       buffer = jpegjs.encode(PNG.sync.read(buffer), quality).data;
+    } else if (format === 'webp') {
+      const png = PNG.sync.read(buffer);
+      // Match the native WebKit encoder: webp quality 100 (or omitted) is lossless.
+      buffer = (quality === undefined || quality >= 100) ? encodeWebp(png, { lossless: true }) : encodeWebp(png, { quality });
+    }
     return buffer;
   }
 
   async getContentFrame(handle: dom.ElementHandle): Promise<frames.Frame | null> {
-    throw new Error('Method not implemented');
+    if (!handle._objectId)
+      return null;
+    // A frame-owner node's contentDocument.frameId is the framed document's frame.
+    const { node } = await this._requestNodeViaDOM(handle._objectId);
+    const frameId = node?.contentDocument?.frameId;
+    return frameId ? this._page.frameManager.frame(frameId) : null;
   }
 
   async getOwnerFrame(handle: dom.ElementHandle): Promise<string | null> {
-    throw new Error('Method not implemented');
+    if (handle._objectId) {
+      // A node's frameId is its containing frame, even for a cross-frame handle.
+      const { node } = await this._requestNodeViaDOM(handle._objectId);
+      if (node?.frameId)
+        return node.frameId;
+    }
+    return handle._frame._id;
+  }
+
+  // Resolves a Runtime objectId to its DOM.Node. DOM.requestNode streams the node
+  // and its ancestor path through DOM.setChildNodes, but only once DOM.getDocument
+  // has let the agent observe the document. Returns the requested node along with
+  // every node seen along the way, keyed by id.
+  private async _requestNodeViaDOM(objectId: string): Promise<{ node: Protocol.DOM.Node | undefined, nodesById: Map<number, Protocol.DOM.Node> }> {
+    const nodesById = new Map<number, Protocol.DOM.Node>();
+    const collect = (nodes: Protocol.DOM.Node[] | undefined) => {
+      for (const node of nodes || []) {
+        nodesById.set(node.nodeId, node);
+        collect(node.children);
+        collect(node.shadowRoots);
+        if (node.contentDocument)
+          collect([node.contentDocument]);
+        if (node.templateContent)
+          collect([node.templateContent]);
+      }
+    };
+    const listener = eventsHelper.addEventListener(this._session, 'DOM.setChildNodes',
+        (e: Protocol.DOM.setChildNodesPayload) => collect(e.nodes));
+    try {
+      const { root } = await this._session.send('DOM.getDocument');
+      collect([root]);
+      const { nodeId } = await this._session.send('DOM.requestNode', { objectId });
+      return { node: nodesById.get(nodeId), nodesById };
+    } catch {
+      return { node: undefined, nodesById };
+    } finally {
+      eventsHelper.removeEventListeners([listener]);
+    }
   }
 
   async getBoundingBox(handle: dom.ElementHandle): Promise<types.Rect | null> {
@@ -762,7 +903,26 @@ export class WVPage implements PageDelegate {
     }, {});
     if (!result || typeof result === 'string')
       return null;
-    return result as types.Quad[];
+    let quads = result as types.Quad[];
+    let frame: frames.Frame | null = handle._frame;
+    while (frame?.parentFrame()) {
+      const frameElement = await this.getFrameElement(frame).catch(() => null);
+      if (!frameElement)
+        return null;
+      const offset = await frameElement.evaluateInUtility(([injected, iframe]) => {
+        const element = iframe as Element;
+        const style = injected.describeIFrameStyle(element);
+        if (style === 'error:notconnected' || style === 'transformed')
+          return null;
+        const rect = element.getBoundingClientRect();
+        return { x: rect.left + style.left, y: rect.top + style.top };
+      }, {}).finally(() => frameElement.dispose());
+      if (!offset || typeof offset === 'string')
+        return null;
+      quads = quads.map(quad => quad.map(point => ({ x: point.x + offset.x, y: point.y + offset.y })) as types.Quad);
+      frame = frame.parentFrame();
+    }
+    return quads;
   }
 
   async adoptElementHandle<T extends Node>(handle: dom.ElementHandle<T>, to: dom.FrameExecutionContext): Promise<dom.ElementHandle<T>> {
@@ -772,11 +932,85 @@ export class WVPage implements PageDelegate {
   async inputActionEpilogue(): Promise<void> {
   }
 
+  async deepestFrameForPoint(progress: Progress, x: number, y: number): Promise<{ frame: frames.Frame, point: types.Point }> {
+    const path = await this.framePointerPath(progress, x, y);
+    return path[path.length - 1];
+  }
+
+  async deepestFocusedFrame(progress: Progress): Promise<frames.Frame> {
+    let frame: frames.Frame = this._page.mainFrame();
+    for (;;) {
+      const context = await progress.race(frame.mainContext());
+      const iframe = await progress.race(context.evaluateHandle(() => (globalThis as any).__pwWebViewInput.activeIFrame())) as dom.ElementHandle;
+      const childFrame = await this._childFrameAndDispose(progress, iframe);
+      if (!childFrame)
+        break;
+      frame = childFrame;
+    }
+    return frame;
+  }
+
+  // Walk from the main frame into the deepest <iframe> that contains the point,
+  // recording each frame and the point translated into that frame's coordinates.
+  async framePointerPath(progress: Progress, x: number, y: number): Promise<{ frame: frames.Frame, point: types.Point }[]> {
+    const path: { frame: frames.Frame, point: types.Point }[] = [];
+    let frame: frames.Frame = this._page.mainFrame();
+    let point: types.Point = { x, y };
+    for (;;) {
+      path.push({ frame, point });
+      const context = await progress.race(frame.mainContext());
+      const position = await progress.race(context.evaluateHandle(p => (globalThis as any).__pwWebViewInput.positionInIFrame(p.x, p.y), point));
+      try {
+        const iframe = await position.getProperty(progress, 'iframe') as dom.ElementHandle;
+        const childFrame = await this._childFrameAndDispose(progress, iframe);
+        if (!childFrame)
+          break;
+        frame = childFrame;
+        point = await progress.race(position.evaluate(result => ({ x: result.x, y: result.y })));
+      } finally {
+        position.dispose();
+      }
+    }
+    return path;
+  }
+
+  private async _childFrameAndDispose(progress: Progress, iframe: dom.ElementHandle): Promise<frames.Frame | null> {
+    try {
+      return await progress.race(this.getContentFrame(iframe));
+    } finally {
+      iframe.dispose();
+    }
+  }
+
   async resetForReuse(progress: Progress): Promise<void> {
   }
 
   async getFrameElement(frame: frames.Frame): Promise<dom.ElementHandle> {
-    throw new Error('Method not implemented');
+    const parent = frame.parentFrame();
+    if (!parent)
+      throw new Error('Frame has been detached.');
+    // Requesting the frame's own document streams its ancestor path, which
+    // includes the owner element (and its siblings). Pick the one whose
+    // contentDocument is this frame, then resolve it in the parent's context.
+    const documentHandle = await (await frame.mainContext()).evaluateHandle(() => document);
+    let ownerNodeId: number | undefined;
+    try {
+      if (documentHandle._objectId) {
+        const { nodesById } = await this._requestNodeViaDOM(documentHandle._objectId);
+        for (const node of nodesById.values()) {
+          if (node.contentDocument?.frameId === frame._id) {
+            ownerNodeId = node.nodeId;
+            break;
+          }
+        }
+      }
+    } finally {
+      documentHandle.dispose();
+    }
+    const resolved = ownerNodeId !== undefined ? await this._session.sendMayFail('DOM.resolveNode', { nodeId: ownerNodeId }) : null;
+    if (!resolved || resolved.object.subtype === 'null')
+      throw new Error('Frame has been detached.');
+    return createHandle(await parent.mainContext(), resolved.object) as dom.ElementHandle;
   }
 
   _adoptRequestFromNewProcess(navigationRequest: network.Request, newSession: WVSession, newRequestId: string) {
@@ -814,16 +1048,12 @@ export class WVPage implements PageDelegate {
         redirectedFrom = request;
       }
     }
-    const frame = redirectedFrom ? redirectedFrom.request.frame() : this._page.frameManager.frame(event.frameId);
-    // sometimes we get stray network events for detached frames
-    // TODO(einbinder) why?
-    if (!frame)
-      return;
-
-    // TODO(einbinder) this will fail if we are an XHR document request
+    // The frame may be null for a subframe document request that arrives before
+    // Page.frameNavigated creates its frame.
+    const frame = redirectedFrom ? redirectedFrom.request.frame() : (this._page.frameManager.frame(event.frameId) ?? null);
     const isNavigationRequest = event.type === 'Document';
     const documentId = isNavigationRequest ? event.loaderId : undefined;
-    const request = new WVInterceptableRequest(session, frame, event, redirectedFrom, documentId);
+    const request = new WVInterceptableRequest(session, this._browserContext, frame, event, redirectedFrom, documentId);
     let route;
     if (intercepted) {
       route = new WVRouteImpl(session, event.requestId);
@@ -954,8 +1184,11 @@ export class WVPage implements PageDelegate {
 
   _onWebSocketWillSendHandshakeRequest(event: Protocol.Network.webSocketWillSendHandshakeRequestPayload) {
     const wallTimeMs = event.walltime * 1000;
-    this._timestampBaselineForWebSocket.set(event.requestId, wallTimeMs - event.timestamp);
-    this._page.frameManager.onWebSocketRequest(event.requestId, headersObjectToArray(event.request.headers), wallTimeMs);
+    this._timestampBaselineForWebSocket.set(event.requestId, wallTimeMs - event.timestamp * 1000);
+    this._page.frameManager.onWebSocketRequest(event.requestId, {
+      headers: headersObjectToArray(event.request.headers),
+      wallTimeMs,
+    });
   }
 
   _onWebSocketClosed(event: Protocol.Network.webSocketClosedPayload) {
@@ -964,7 +1197,7 @@ export class WVPage implements PageDelegate {
   }
 
   _timestampToWallTimeMsForWebSocket(requestId: string, timestamp: number): number {
-    return this._timestampBaselineForWebSocket.get(requestId)! + timestamp;
+    return this._timestampBaselineForWebSocket.get(requestId)! + timestamp * 1000;
   }
 
   shouldToggleStyleSheetToSyncAnimations(): boolean {
@@ -1032,6 +1265,35 @@ const bindingBridgeSource = `
     });
   }
 `;
+
+const SAME_DOCUMENT_NAVIGATION_TAG = '__pw_same_document_navigation__';
+const sameDocumentNavigationBridgeSource = `(() => {
+  if (window.top !== window)
+    return;
+  if (window['${SAME_DOCUMENT_NAVIGATION_TAG}'])
+    return;
+  Object.defineProperty(window, '${SAME_DOCUMENT_NAVIGATION_TAG}', { value: true, configurable: true });
+  let lastReportedURL = window.location.href;
+  function report() {
+    if (window.location.href === lastReportedURL)
+      return;
+    lastReportedURL = window.location.href;
+    console.debug('${SAME_DOCUMENT_NAVIGATION_TAG}', window.location.href);
+  }
+  for (const name of ['pushState', 'replaceState']) {
+    const original = window.History.prototype[name];
+    if (typeof original !== 'function')
+      continue;
+    window.History.prototype[name] = function() {
+      const result = original.apply(this, arguments);
+      report();
+      return result;
+    };
+  }
+  window.addEventListener('popstate', report);
+  window.addEventListener('hashchange', report);
+  window.navigation?.addEventListener('currententrychange', report);
+})()`;
 
 function dialogBridgeSource(endpoint: string): string {
   return `(() => {

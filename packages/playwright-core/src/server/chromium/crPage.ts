@@ -16,7 +16,7 @@
  */
 
 import { assert } from '@isomorphic/assert';
-import { rewriteErrorMessage } from '@isomorphic/stackTrace';
+import { rewriteErrorMessage } from '@utils/stackTrace';
 import { eventsHelper } from '@utils/eventsHelper';
 import * as dialog from '../dialog';
 import * as dom from '../dom';
@@ -44,7 +44,7 @@ import type { RegisteredListener } from '@utils/eventsHelper';
 import type { InitScript, PageDelegate } from '../page';
 import type { Progress } from '../progress';
 import type * as types from '../types';
-import type * as channels from '@protocol/channels';
+import type * as channels from '../channels';
 
 
 export type WindowBounds = { top?: number, left?: number, width?: number, height?: number };
@@ -247,7 +247,7 @@ export class CRPage implements PageDelegate {
     await this._mainFrameSession._client.send('Emulation.setDefaultBackgroundColorOverride', { color });
   }
 
-  async takeScreenshot(progress: Progress, format: 'png' | 'jpeg', documentRect: types.Rect | undefined, viewportRect: types.Rect | undefined, quality: number | undefined, fitsViewport: boolean, scale: 'css' | 'device'): Promise<Buffer> {
+  async takeScreenshot(progress: Progress, format: 'png' | 'jpeg' | 'webp', documentRect: types.Rect | undefined, viewportRect: types.Rect | undefined, quality: number | undefined, fitsViewport: boolean, scale: 'css' | 'device'): Promise<Buffer> {
     const { visualViewport, contentSize, cssContentSize } = await progress.race(this._mainFrameSession._client.send('Page.getLayoutMetrics'));
     if (!documentRect) {
       documentRect = {
@@ -488,7 +488,8 @@ class FrameSession {
           });
         }
 
-        const isInitialEmptyPage = this._isMainFrame() && this._page.mainFrame().url() === ':';
+        // In r1651606 Chromium changed the URL it reports for the initial empty document from the ":" to "".
+        const isInitialEmptyPage = this._isMainFrame() && (this._page.mainFrame().url() === ':' || this._page.mainFrame().url() === '');
         if (isInitialEmptyPage) {
           // Ignore lifecycle events, worlds and bindings for the initial empty page. It is never the final page
           // hence we are going to get more lifecycle updates after the actual navigation has
@@ -757,6 +758,8 @@ class FrameSession {
     // This might be a worker...
     const workerSession = this._workerSessions.get(event.sessionId);
     if (workerSession) {
+      this._workerSessions.delete(event.sessionId);
+      this._crPage._networkManager.removeSession(workerSession);
       workerSession.dispose();
       this._page.removeWorker(event.sessionId);
       return;
@@ -889,12 +892,12 @@ class FrameSession {
 
   _onScreencastFrame(payload: Protocol.Page.screencastFramePayload) {
     const buffer = Buffer.from(payload.data, 'base64');
-    this._page.screencast.onScreencastFrame({
+    void this._page.screencast.onScreencastFrame({
       buffer,
       frameSwapWallTime: payload.metadata.timestamp ? payload.metadata.timestamp * 1000 : Date.now(),
       viewportWidth: payload.metadata.deviceWidth,
       viewportHeight: payload.metadata.deviceHeight,
-    }, () => {
+    }).then(() => {
       this._client._sendMayFail('Page.screencastFrameAck', { sessionId: payload.sessionId });
     });
   }

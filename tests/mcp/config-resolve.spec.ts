@@ -83,6 +83,25 @@ test.describe('browserName and channel', () => {
     expect(config.browser.launchOptions.channel).toBeUndefined();
   });
 
+  test('malformed JSON config throws instead of falling back to INI', {
+    annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41893' },
+  }, async ({}, testInfo) => {
+    const configFile = testInfo.outputPath('config.json');
+    // Trailing comma makes this invalid JSON; it must not be silently parsed as INI.
+    await fs.promises.writeFile(configFile, '{ "browser": { "browserName": "firefox", } }');
+    await expect(resolveCLIConfigForMCP({ config: configFile }, emptyEnv)).rejects.toThrow();
+  });
+
+  test('INI config starting with a section header still parses', {
+    annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41893' },
+  }, async ({}, testInfo) => {
+    const configFile = testInfo.outputPath('config.cfg');
+    // A leading `[section]` is INI, not JSON — it must not be treated as malformed JSON.
+    await fs.promises.writeFile(configFile, '[browser]\nbrowserName = firefox\n');
+    const config = await resolveCLIConfigForMCP({ config: configFile }, emptyEnv);
+    expect(config.browser.browserName).toBe('firefox');
+  });
+
   test('config file browserName + channel are both preserved', async ({}, testInfo) => {
     const configFile = testInfo.outputPath('config.json');
     const fileConfig: Config = {
@@ -107,6 +126,11 @@ test.describe('browserName and channel', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('sandbox', () => {
+  test('chromium sandbox enabled by default', async () => {
+    const config = await resolveCLIConfigForMCP({}, emptyEnv);
+    expect(config.browser.launchOptions.chromiumSandbox).toBe(true);
+  });
+
   test('chromium sandbox enabled for chrome channel', async () => {
     const config = await resolveCLIConfigForMCP({ browser: 'chrome' }, emptyEnv);
     expect(config.browser.launchOptions.chromiumSandbox).toBe(true);
@@ -189,6 +213,48 @@ test.describe('viewport', () => {
   });
 });
 
+test.describe('mobile', () => {
+  test('--mobile defaults to a Chromium mobile device', async () => {
+    const config = await resolveCLIConfigForMCP({ mobile: true }, emptyEnv);
+    expect(config.browser.contextOptions.isMobile).toBe(true);
+    expect(config.browser.contextOptions.userAgent).toContain('Pixel 10');
+  });
+
+  test('--mobile with a Chromium channel picks a Chromium mobile device', async () => {
+    const config = await resolveCLIConfigForMCP({ mobile: true, browser: 'msedge' }, emptyEnv);
+    expect(config.browser.contextOptions.isMobile).toBe(true);
+    expect(config.browser.contextOptions.userAgent).toContain('Pixel 10');
+  });
+
+  test('--mobile with WebKit picks a WebKit mobile device', async () => {
+    const config = await resolveCLIConfigForMCP({ mobile: true, browser: 'webkit' }, emptyEnv);
+    expect(config.browser.contextOptions.isMobile).toBe(true);
+    expect(config.browser.contextOptions.userAgent).toContain('iPhone');
+  });
+
+  test('explicit viewport still wins over --mobile', async () => {
+    const config = await resolveCLIConfigForMCP({ mobile: true, viewportSize: { width: 800, height: 600 } }, emptyEnv);
+    expect(config.browser.contextOptions.isMobile).toBe(true);
+    expect(config.browser.contextOptions.viewport).toEqual({ width: 800, height: 600 });
+  });
+
+  test('--mobile via env var', async () => {
+    const config = await resolveCLIConfigForMCP({}, { PLAYWRIGHT_MCP_MOBILE: '1' });
+    expect(config.browser.contextOptions.isMobile).toBe(true);
+    expect(config.browser.contextOptions.userAgent).toContain('Pixel 10');
+  });
+
+  test('--mobile is rejected with Firefox', async () => {
+    await expect(resolveCLIConfigForMCP({ mobile: true, browser: 'firefox' }, emptyEnv))
+        .rejects.toThrow('--mobile is not supported with the Firefox browser.');
+  });
+
+  test('--mobile cannot be combined with --device', async () => {
+    await expect(resolveCLIConfigForMCP({ mobile: true, device: 'iPhone 15' }, emptyEnv))
+        .rejects.toThrow('Cannot use --mobile together with --device');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Shared behavior — merge order and config file
 // ---------------------------------------------------------------------------
@@ -247,6 +313,21 @@ test.describe('merge order', () => {
     await fs.promises.writeFile(configFile, JSON.stringify(fileConfig));
     const config = await resolveCLIConfigForMCP({ config: configFile }, emptyEnv);
     expect(config.browser.cdpHeaders).toEqual({ Authorization: 'Bearer token-from-file' });
+  });
+
+  test('env browser.cdpHeaders overrides config file and preserves colons in values', async ({}, testInfo) => {
+    const configFile = testInfo.outputPath('config.json');
+    const fileConfig: Config = {
+      browser: {
+        cdpEndpoint: 'ws://example.invalid',
+        cdpHeaders: { Authorization: 'Bearer token-from-file' },
+      },
+    };
+    await fs.promises.writeFile(configFile, JSON.stringify(fileConfig));
+    const config = await resolveCLIConfigForMCP({ config: configFile }, {
+      PLAYWRIGHT_MCP_CDP_HEADERS: 'X-Forwarded-Proto: value:with:colons',
+    });
+    expect(config.browser.cdpHeaders).toEqual({ 'X-Forwarded-Proto': 'value:with:colons' });
   });
 });
 

@@ -19,19 +19,19 @@ import { parseAriaSnapshotUnsafe } from '@isomorphic/ariaSnapshot';
 import { unsafeLocatorOrSelectorAsSelector } from '@isomorphic/locatorParser';
 import { gracefullyProcessExitDoNotHang } from '@utils/processLauncher';
 import { asLocator } from '@isomorphic/locatorGenerators';
+import { generateCode } from '@isomorphic/codegen/language';
+import { JavaScriptLanguageGenerator } from '@isomorphic/codegen/javascript';
 import { SdkObject, createInstrumentation } from './instrumentation';
 import { Recorder, RecorderEvent } from './recorder';
-import { generateCode } from './codegen/language';
 import { collapseActions } from './recorder/recorderUtils';
-import { JavaScriptLanguageGenerator } from './codegen/javascript';
 
 import type { Language } from '@isomorphic/locatorGenerators';
 import type { BrowserContext } from './browserContext';
 import type { InstrumentationListener } from './instrumentation';
 import type { Playwright } from './playwright';
 import type { ElementInfo, Mode } from '@recorder/recorderTypes';
-import type { Progress } from '@protocol/progress';
-import type * as actions from '@recorder/actions';
+import type { Progress } from './progress';
+import type * as actions from '@isomorphic/codegen/actions';
 
 export class DebugController extends SdkObject {
   static Events = {
@@ -193,7 +193,7 @@ function wireListeners(recorder: Recorder, debugController: DebugController) {
       browserName: 'chromium',
       launchOptions: {},
       contextOptions: {},
-      generateAutoExpect: debugController._generateAutoExpect,
+      generateExpectSignal: debugController._generateAutoExpect,
     });
     debugController.emit(DebugController.Events.SourceChanged, { text, header, footer, actions: actionTexts });
   };
@@ -213,7 +213,7 @@ function wireListeners(recorder: Recorder, debugController: DebugController) {
     actionsChanged();
   });
   recorder.on(RecorderEvent.SignalAdded, (signal: actions.SignalInContext) => {
-    const lastAction = actions.findLast(a => a.frame.pageGuid === signal.frame.pageGuid);
+    const lastAction = actions.findLast(a => a.pageGuid === signal.pageGuid);
     if (lastAction)
       lastAction.action.signals.push(signal.signal);
     actionsChanged();

@@ -21,7 +21,7 @@ import { currentFileDepsCollector } from './compilationCache';
 import { resolveHook, shouldTransform, transformHook } from './transform';
 import { fileIsModule } from '../util';
 
-export function resolve(specifier: string, context: { parentURL?: string, conditions?: string[] }, nextResolve: Function) {
+export function resolve(specifier: string, context: { parentURL?: string, conditions?: string[] | Set<string> }, nextResolve: Function) {
   if (context.parentURL && context.parentURL.startsWith('file://')) {
     const filename = url.fileURLToPath(context.parentURL);
     const resolved = resolveHook(filename, specifier);
@@ -32,7 +32,7 @@ export function resolve(specifier: string, context: { parentURL?: string, condit
       // - the ESM resolver wants a file:// URL and, on Windows, mistakes an absolute path's
       //   drive letter for a URL scheme ("Received protocol 'c:'").
       // The `import` condition is present only for ESM resolution, so use it to pick the form.
-      specifier = context.conditions?.includes('import') ? url.pathToFileURL(resolved).toString() : resolved;
+      specifier = new Set(context.conditions).has('import') ? url.pathToFileURL(resolved).toString() : resolved;
     }
   }
   const result = nextResolve(specifier, context);
@@ -56,7 +56,7 @@ const kSupportedFormats = new Map([
   [undefined, undefined]
 ]);
 
-export function load(moduleUrl: string, context: { format?: string }, nextLoad: Function) {
+export function load(moduleUrl: string, context: { format?: string, conditions?: string[] | Set<string> }, nextLoad: Function) {
   // Bail out for wasm, json, etc.
   if (!kSupportedFormats.has(context.format))
     return nextLoad(moduleUrl, context);
@@ -71,8 +71,10 @@ export function load(moduleUrl: string, context: { format?: string }, nextLoad: 
   if (!shouldTransform(filename))
     return nextLoad(moduleUrl, context);
 
-  // Output format is required, so we determine it manually when unknown.
-  const format = kSupportedFormats.get(context.format) || (fileIsModule(filename) ? 'module' : 'commonjs');
+  // A file reached via `require` is loaded as CommonJS. Files reached via `import` keep real ESM semantics.
+  // This is a "bundler" behavior, where we go against Node.js semantics, to support extension-less esm imports, path mapping, etc.
+  const isRequire = !new Set(context.conditions).has('import');
+  const format = isRequire ? 'commonjs' : (kSupportedFormats.get(context.format) || (fileIsModule(filename) ? 'module' : 'commonjs'));
 
   const code = fs.readFileSync(filename, 'utf-8');
   // Pass `moduleUrl` only for ESM. For CommonJS we omit it so that babel

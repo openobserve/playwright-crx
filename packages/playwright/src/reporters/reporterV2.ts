@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { FullConfig, FullResult, Reporter, Suite, TestCase, TestError, TestResult, TestStep, WorkerInfo } from '../../types/testReporter';
+import type { FullConfig, FullResult, Reporter, Suite, TestCase, TestError, TestResult, TestRun, TestStep, WorkerInfo } from '../../types/testReporter';
 
 export interface ReportConfigureParams {
   config: FullConfig;
@@ -26,8 +26,15 @@ export interface ReportEndParams {
   result: FullResult;
 }
 
+export type ReporterPreprocessParams = {
+  config: FullConfig;
+  suite: Suite;
+  testRun: TestRun;
+};
+
 export interface ReporterV2 {
   onConfigure?(config: FullConfig): void;
+  preprocess?(params: ReporterPreprocessParams): Promise<void> | void;
   onBegin?(suite: Suite): void;
   onTestBegin?(test: TestCase, result: TestResult): void;
   onStdOut?(chunk: string | Buffer, test?: TestCase, result?: TestResult): void;
@@ -77,6 +84,10 @@ class ReporterV2Wrapper implements ReporterV2 {
 
   onConfigure(config: FullConfig) {
     this._config = config;
+  }
+
+  preprocess(params: ReporterPreprocessParams) {
+    return this._reporter.preprocess?.(params);
   }
 
   onBegin(suite: Suite) {

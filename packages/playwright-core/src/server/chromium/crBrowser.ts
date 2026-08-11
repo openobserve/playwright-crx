@@ -38,7 +38,7 @@ import type { CRDevTools } from './crDevTools';
 import type { Protocol } from './protocol';
 import type { BrowserOptions } from '../browser';
 import type { SdkObject } from '../instrumentation';
-import type * as channels from '@protocol/channels';
+import type * as channels from '../channels';
 
 export class CRBrowser extends Browser {
   readonly _connection: CRConnection;
@@ -574,9 +574,6 @@ export class CRBrowserContext extends BrowserContext<CREventsMap> {
       serviceWorker.didClose();
       this._browser._serviceWorkers.delete(targetId);
     }
-  }
-
-  onClosePersistent() {
   }
 
   override async clearCache(): Promise<void> {

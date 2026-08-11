@@ -35,7 +35,7 @@ it('should work with navigation @smoke', async ({ page, server }) => {
   expect(requests.get('style.css').isNavigationRequest()).toBe(false);
 });
 
-it('should intercept after a service worker', async ({ page, server, browserName, isAndroid }) => {
+it('should intercept after a service worker', async ({ page, server, browserName, isAndroid, isBidi }) => {
   it.skip(isAndroid);
 
   await page.goto(server.PREFIX + '/serviceworkers/fetchdummy/sw.html');
@@ -63,8 +63,8 @@ it('should intercept after a service worker', async ({ page, server, browserName
   const nonInterceptedResponse = await page.evaluate(() => window['fetchDummy']('passthrough'));
   expect(nonInterceptedResponse).toBe('FAILURE: Not Found');
 
-  // Firefox does not want to fetch the redirect for some reason.
-  if (browserName !== 'firefox') {
+  // Firefox/Juggler does not want to fetch the redirect for some reason.
+  if (browserName !== 'firefox' || isBidi) {
     // Page route is not applied to service worker initiated fetch with redirect.
     server.setRedirect('/serviceworkers/fetchdummy/passthrough', '/simple.json');
     const redirectedResponse = await page.evaluate(() => window['fetchDummy']('passthrough'));
@@ -122,12 +122,26 @@ it('should work with glob', async () => {
   expect(urlMatches('http://playwright.dev', 'http://playwright.dev/?x=y', '?x=y')).toBeTruthy();
   expect(urlMatches('http://playwright.dev/foo/', 'http://playwright.dev/foo/bar?x=y', './bar?x=y')).toBeTruthy();
 
+  // '$$', '$&', '$`' and "$'" are special in String.prototype.replace with a string argument.
+  expect(urlMatches(undefined, 'http://playwright.dev/foo$$bar', 'http://playwright.dev/foo$$bar')).toBeTruthy();
+  expect(urlMatches(undefined, 'http://playwright.dev/a$&b', 'http://playwright.dev/a$&b')).toBeTruthy();
+  expect(urlMatches('http://playwright.dev', 'http://playwright.dev/p$$q', './p$$q')).toBeTruthy();
+
   // Case insensitive matching
   expect(urlMatches(undefined, 'https://playwright.dev/fooBAR', 'HtTpS://pLaYwRiGhT.dEv/fooBAR')).toBeTruthy();
   expect(urlMatches('http://ignored', 'https://playwright.dev/fooBAR', 'HtTpS://pLaYwRiGhT.dEv/fooBAR')).toBeTruthy();
   // Path and search query are case-sensitive
   expect(urlMatches(undefined, 'https://playwright.dev/foobar', 'https://playwright.dev/fooBAR')).toBeFalsy();
   expect(urlMatches(undefined, 'https://playwright.dev/foobar?a=b', 'https://playwright.dev/foobar?A=B')).toBeFalsy();
+
+  // Literal globs are normalized through new URL(), so explicit default ports,
+  // percent-encoding and IDN hosts match request.url() which is already normalized.
+  expect(urlMatches(undefined, 'http://example.com/path', 'http://example.com:80/path')).toBeTruthy();
+  expect(urlMatches(undefined, 'https://example.com/path', 'https://example.com:443/path')).toBeTruthy();
+  expect(urlMatches(undefined, 'http://example.com:8080/path', 'http://example.com:8080/path')).toBeTruthy();
+  expect(urlMatches(undefined, 'http://localhost/', 'http://localhost:80/**')).toBeTruthy();
+  expect(urlMatches(undefined, 'http://example.com/foo%20bar', 'http://example.com/foo bar')).toBeTruthy();
+  expect(urlMatches(undefined, 'http://xn--mnchen-3ya.de/', 'http://münchen.de/')).toBeTruthy();
 
   expect(urlMatches(undefined, 'https://localhost:3000/?a=b', '**/?a=b')).toBeTruthy();
   expect(urlMatches(undefined, 'https://localhost:3000/?a=b', '**?a=b')).toBeTruthy();
@@ -292,6 +306,19 @@ it('should work with regular expression passed from a different context', async 
   const response = await page.goto(server.EMPTY_PAGE);
   expect(response.ok()).toBe(true);
   expect(intercepted).toBe(true);
+});
+
+it('should intercept every request matching a global regexp', async ({ page, server }) => {
+  await page.goto(server.EMPTY_PAGE);
+  let intercepted = 0;
+  await page.route(/\/intercept-me/g, async route => {
+    ++intercepted;
+    await route.fulfill({ body: 'intercepted' });
+  });
+  const url = server.PREFIX + '/intercept-me';
+  for (let i = 0; i < 3; ++i)
+    expect(await page.evaluate(u => fetch(u, { cache: 'no-store' }).then(r => r.text()), url)).toBe('intercepted');
+  expect(intercepted).toBe(3);
 });
 
 it('should not break remote worker importScripts', async ({ page, server }) => {

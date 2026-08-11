@@ -16,11 +16,12 @@
  */
 
 import { PNG } from 'pngjs';
-import jpegjs from 'jpeg-js';
+
 import { headersArrayToObject, headersObjectToArray } from '@isomorphic/headers';
-import { splitErrorMessage } from '@isomorphic/stackTrace';
+import { splitErrorMessage } from '@utils/stackTrace';
 import { eventsHelper } from '@utils/eventsHelper';
 import { hostPlatform } from '@utils/hostPlatform';
+import { encodeWebp } from '@utils/webp/webp';
 import { assert } from '@isomorphic/assert';
 import * as dialog from '../dialog';
 import * as dom from '../dom';
@@ -190,7 +191,7 @@ export class WKPage implements PageDelegate {
 
     const contextOptions = this._browserContext._options;
     if (contextOptions.userAgent)
-      promises.push(this.updateUserAgent());
+      promises.push(session.send('Page.overrideUserAgent', { value: contextOptions.userAgent }));
     const emulatedMedia = this._page.emulatedMedia();
     if (emulatedMedia.media || emulatedMedia.colorScheme || emulatedMedia.reducedMotion || emulatedMedia.forcedColors || emulatedMedia.contrast)
       promises.push(WKPage._setEmulateMedia(session, emulatedMedia.media, emulatedMedia.colorScheme, emulatedMedia.reducedMotion, emulatedMedia.forcedColors, emulatedMedia.contrast));
@@ -207,7 +208,6 @@ export class WKPage implements PageDelegate {
         height: emulatedSize.screen.height,
       }));
     }
-    promises.push(this.updateEmulateMedia());
     promises.push(session.send('Network.setExtraHTTPHeaders', { headers: headersArrayToObject(this._calculateExtraHTTPHeaders(), false /* lowerCase */) }));
     if (contextOptions.offline)
       promises.push(session.send('Network.setEmulateOfflineState', { offline: true }));
@@ -218,13 +218,13 @@ export class WKPage implements PageDelegate {
     }
     if (this._page.fileChooserIntercepted())
       promises.push(session.send('Page.setInterceptFileChooserDialog', { enabled: true }));
-    promises.push(session.send('Page.overrideSetting', { setting: 'DeviceOrientationEventEnabled', value: contextOptions.isMobile }));
     promises.push(session.send('Page.overrideSetting', { setting: 'FullScreenEnabled', value: !contextOptions.isMobile }));
     promises.push(session.send('Page.overrideSetting', { setting: 'NotificationsEnabled', value: !contextOptions.isMobile }));
     promises.push(session.send('Page.overrideSetting', { setting: 'PointerLockEnabled', value: !contextOptions.isMobile }));
     promises.push(session.send('Page.overrideSetting', { setting: 'InputTypeMonthEnabled', value: contextOptions.isMobile }));
     promises.push(session.send('Page.overrideSetting', { setting: 'InputTypeWeekEnabled', value: contextOptions.isMobile }));
     promises.push(session.send('Page.overrideSetting', { setting: 'FixedBackgroundsPaintRelativeToDocument', value: contextOptions.isMobile }));
+    promises.push(session.send('Page.overrideSetting', { setting: 'PushAPIEnabled', value: !contextOptions.isMobile }));
     await Promise.all(promises);
   }
 
@@ -398,7 +398,11 @@ export class WKPage implements PageDelegate {
       eventsHelper.addEventListener(this._session, 'Network.loadingFailed', e => this._onLoadingFailed(this._session, e)),
       eventsHelper.addEventListener(this._session, 'Network.webSocketCreated', e => this._page.frameManager.onWebSocketCreated(e.requestId, e.url)),
       eventsHelper.addEventListener(this._session, 'Network.webSocketWillSendHandshakeRequest', event => this._onWebSocketWillSendHandshakeRequest(event)),
-      eventsHelper.addEventListener(this._session, 'Network.webSocketHandshakeResponseReceived', e => this._page.frameManager.onWebSocketResponse(e.requestId, e.response.status, e.response.statusText, headersObjectToArray(e.response.headers, ',', wkSetCookieSeparator))),
+      eventsHelper.addEventListener(this._session, 'Network.webSocketHandshakeResponseReceived', e => this._page.frameManager.onWebSocketResponse(e.requestId, {
+        status: e.response.status,
+        statusText: e.response.statusText,
+        headers: headersObjectToArray(e.response.headers, ',', wkSetCookieSeparator),
+      })),
       eventsHelper.addEventListener(this._session, 'Network.webSocketFrameSent', e => e.response.payloadData && this._page.frameManager.onWebSocketFrameSent(e.requestId, e.response.opcode, e.response.payloadData, this._timestampToWallTimeMsForWebSocket(e.requestId, e.timestamp))),
       eventsHelper.addEventListener(this._session, 'Network.webSocketFrameReceived', e => e.response.payloadData && this._page.frameManager.webSocketFrameReceived(e.requestId, e.response.opcode, e.response.payloadData, this._timestampToWallTimeMsForWebSocket(e.requestId, e.timestamp))),
       eventsHelper.addEventListener(this._session, 'Network.webSocketClosed', event => this._onWebSocketClosed(event)),
@@ -672,13 +676,10 @@ export class WKPage implements PageDelegate {
   }
 
   _calculateExtraHTTPHeaders(): types.HeadersArray {
-    const locale = this._browserContext._options.locale;
-    const headers = network.mergeHeaders([
+    return network.mergeHeaders([
       this._browserContext._options.extraHTTPHeaders,
       this._page.extraHTTPHeaders(),
-      locale ? network.singleHeader('Accept-Language', locale) : undefined,
     ]);
-    return headers;
   }
 
   async updateEmulateMedia(): Promise<void> {
@@ -697,7 +698,7 @@ export class WKPage implements PageDelegate {
 
   async updateUserAgent(): Promise<void> {
     const contextOptions = this._browserContext._options;
-    this._updateState('Page.overrideUserAgent', { value: contextOptions.userAgent });
+    await this._updateState('Page.overrideUserAgent', { value: contextOptions.userAgent });
   }
 
   async bringToFront(): Promise<void> {
@@ -798,11 +799,8 @@ export class WKPage implements PageDelegate {
 
   private _calculateBootstrapScript(): string {
     const scripts: string[] = [];
-    if (!this._page.browserContext._options.isMobile) {
+    if (!this._page.browserContext._options.isMobile)
       scripts.push('delete window.orientation');
-      scripts.push('delete window.ondevicemotion');
-      scripts.push('delete window.ondeviceorientation');
-    }
     scripts.push('if (!window.safari) window.safari = { pushNotification: { toString() { return "[object SafariRemoteNotification]"; } } };');
     scripts.push('if (!window.GestureEvent) window.GestureEvent = function GestureEvent() {};');
     scripts.push(this._publicKeyCredentialScript());
@@ -837,9 +835,9 @@ export class WKPage implements PageDelegate {
   }
 
   async closePage(runBeforeUnload: boolean): Promise<void> {
-    await this._pageProxySession.sendMayFail('Target.close', {
-      targetId: this._session.sessionId,
-      runBeforeUnload
+    await this._pageProxySession.connection.browserSession.sendMayFail('Playwright.closePage', {
+      pageProxyId: this._pageProxySession.sessionId,
+      runBeforeUnload,
     });
   }
 
@@ -849,8 +847,7 @@ export class WKPage implements PageDelegate {
 
   private _toolbarHeight(): number {
     if (this._page.browserContext._browser?.options.headful) {
-      if (hostPlatform === 'mac10.15')
-        return 55;
+      // note: historically, value for mac10.15 was 55
       if (hostPlatform === 'mac26-arm64' || hostPlatform === 'mac26')
         return 69;
       return 59;
@@ -874,11 +871,17 @@ export class WKPage implements PageDelegate {
     const omitDeviceScaleFactor = scale === 'css';
     this.validateScreenshotDimension(rect.width, omitDeviceScaleFactor);
     this.validateScreenshotDimension(rect.height, omitDeviceScaleFactor);
-    const result = await progress.race(this._session.send('Page.snapshotRect', { ...rect, coordinateSystem: documentRect ? 'Page' : 'Viewport', omitDeviceScaleFactor }));
-    const prefix = 'data:image/png;base64,';
-    let buffer: Buffer = Buffer.from(result.dataURL.substr(prefix.length), 'base64');
-    if (format === 'jpeg')
-      buffer = jpegjs.encode(PNG.sync.read(buffer), quality).data;
+    // WebKit on macOS has no built-in WebP encoder, so capture a PNG and re-encode it.
+    const recodePngToWebp = format === 'webp' && process.platform === 'darwin';
+    const result = await progress.race(this._session.send('Page.snapshotRect', { ...rect, coordinateSystem: documentRect ? 'Page' : 'Viewport', omitDeviceScaleFactor, format: (recodePngToWebp ? 'png' : format) as 'png' | 'jpeg' | 'webp', quality: recodePngToWebp ? undefined : quality }));
+    // Strip the 'data:image/<format>;base64,' prefix.
+    const buffer = Buffer.from(result.dataURL.substring(result.dataURL.indexOf(',') + 1), 'base64');
+    if (recodePngToWebp) {
+      const png = PNG.sync.read(buffer);
+      const image = { width: png.width, height: png.height, data: png.data };
+      // Match the native WebKit encoder: webp quality 100 (or omitted) is lossless.
+      return (quality === undefined || quality >= 100) ? encodeWebp(image, { lossless: true }) : encodeWebp(image, { quality });
+    }
     return buffer;
   }
 
@@ -948,18 +951,18 @@ export class WKPage implements PageDelegate {
   private _onScreencastFrame(event: Protocol.Screencast.screencastFramePayload) {
     const generation = this._screencastGeneration;
     const buffer = Buffer.from(event.data, 'base64');
-    this._page.screencast.onScreencastFrame({
+    void this._page.screencast.onScreencastFrame({
       buffer,
       frameSwapWallTime: event.timestamp
         // timestamp is in seconds, we need to convert to milliseconds.
         ? event.timestamp * 1000
-        // Fallback for Debian 11 and Ubuntu 20.04 where WebKit is frozen on an older
+        // Fallback for Ubuntu 20.04 where WebKit is frozen on an older
         // version that did not send timestamp.
-        // TODO: remove this fallback when Debian 11 and Ubuntu 20.04 are EOL.
+        // TODO: remove this fallback when Ubuntu 20.04 is EOL.
         : Date.now(),
       viewportWidth: event.deviceWidth,
       viewportHeight: event.deviceHeight,
-    }, () => {
+    }).then(() => {
       this._pageProxySession.sendMayFail('Screencast.screencastFrameAck', { generation });
     });
   }
@@ -1214,8 +1217,11 @@ export class WKPage implements PageDelegate {
 
   _onWebSocketWillSendHandshakeRequest(event: Protocol.Network.webSocketWillSendHandshakeRequestPayload) {
     const wallTimeMs = event.walltime * 1000;
-    this._timestampBaselineForWebSocket.set(event.requestId, wallTimeMs - event.timestamp);
-    this._page.frameManager.onWebSocketRequest(event.requestId, headersObjectToArray(event.request.headers), wallTimeMs);
+    this._timestampBaselineForWebSocket.set(event.requestId, wallTimeMs - event.timestamp * 1000);
+    this._page.frameManager.onWebSocketRequest(event.requestId, {
+      headers: headersObjectToArray(event.request.headers),
+      wallTimeMs,
+    });
   }
 
   _onWebSocketClosed(event: Protocol.Network.webSocketClosedPayload) {
@@ -1224,7 +1230,7 @@ export class WKPage implements PageDelegate {
   }
 
   _timestampToWallTimeMsForWebSocket(requestId: string, timestamp: number): number {
-    return this._timestampBaselineForWebSocket.get(requestId)! + timestamp;
+    return this._timestampBaselineForWebSocket.get(requestId)! + timestamp * 1000;
   }
 
   async _grantPermissions(origin: string, permissions: string[]) {
@@ -1233,6 +1239,8 @@ export class WKPage implements PageDelegate {
       ['notifications', 'notifications'],
       ['clipboard-read', 'clipboard-read'],
       ['screen-wake-lock', 'screen-wake-lock'],
+      ['camera', 'camera'],
+      ['microphone', 'microphone'],
     ]);
     const filtered = permissions.map(permission => {
       const protocolPermission = webPermissionToProtocol.get(permission);

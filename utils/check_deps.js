@@ -29,6 +29,7 @@ const packages = new Map();
 packages.set('web', packagesDir + '/web/src/');
 packages.set('injected', packagesDir + '/injected/src/');
 packages.set('isomorphic', packagesDir + '/isomorphic/');
+packages.set('protocol', packagesDir + '/protocol/src/');
 packages.set('utils', packagesDir + '/utils/');
 packages.set('testIsomorphic', packagesDir + '/playwright/src/isomorphic/');
 
@@ -82,7 +83,8 @@ async function innerCheckDeps(root) {
   });
   const sourceFiles = program.getSourceFiles();
   const errors = [];
-  sourceFiles.filter(x => !x.fileName.includes(path.sep + 'node_modules' + path.sep) && !x.fileName.includes(path.sep + 'bundles' + path.sep)).map(x => visit(x, x.fileName, x.getFullText()));
+  // Agent skills are shipped as-is (SKILL.md plus user-facing templates), they are not part of the program.
+  sourceFiles.filter(x => !x.fileName.includes(path.sep + 'node_modules' + path.sep) && !x.fileName.includes(path.sep + 'bundles' + path.sep) && !x.fileName.includes('/tools/skills/')).map(x => visit(x, x.fileName, x.getFullText()));
 
   if (errors.length) {
     for (const error of errors)

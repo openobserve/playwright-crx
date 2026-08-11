@@ -21,9 +21,9 @@ import { eventsHelper } from '@utils/eventsHelper';
 import { isUnderTest } from '@utils/debug';
 import { assert } from '@isomorphic/assert';
 import { monotonicTime } from '@isomorphic/time';
-import { rewriteErrorMessage } from '@isomorphic/stackTrace';
-import { ValidationError, createMetadataValidator, createWaitInfoValidator, findValidator, maybeFindValidator } from '../../protocol/validator';
-import { TargetClosedError, isTargetClosedError, serializeError } from '../errors';
+import { rewriteErrorMessage } from '@utils/stackTrace';
+import { ValidationError, createMetadataValidator, createWaitInfoValidator, findValidator, maybeFindValidator } from '@protocol/validator';
+import { AbortError, TargetClosedError, isTargetClosedError, serializeError } from '../errors';
 import { createRootSdkObject, SdkObject } from '../instrumentation';
 import { isProtocolError } from '../protocolError';
 import { compressCallLog } from '../callLog';
@@ -32,8 +32,8 @@ import { Progress, ProgressController } from '../progress';
 import type { CallMetadata } from '../instrumentation';
 import type { PlaywrightDispatcher } from './playwrightDispatcher';
 import type { RegisteredListener } from '@utils/eventsHelper';
-import type { ValidatorContext } from '../../protocol/validator';
-import type * as channels from '@protocol/channels';
+import type { ValidatorContext } from '@protocol/validator';
+import type * as channels from '../channels';
 
 const metadataValidator = createMetadataValidator();
 const waitInfoValidator = createWaitInfoValidator();
@@ -55,7 +55,6 @@ export class Dispatcher<Type extends SdkObject, ChannelType, ParentScopeType ext
   private _dispatchers = new Map<string, DispatcherScope>();
   protected _disposed = false;
   protected _eventListeners: RegisteredListener[] = [];
-  private _activeProgressControllers = new Set<ProgressController>();
 
   readonly _guid: string;
   readonly _type: string;
@@ -103,14 +102,8 @@ export class Dispatcher<Type extends SdkObject, ChannelType, ParentScopeType ext
     this.connection.sendAdopt(this, child);
   }
 
-  async _runCommand(callMetadata: CallMetadata, method: string, validParams: any) {
-    const controller = ProgressController.createForSdkObject(this._object, callMetadata);
-    this._activeProgressControllers.add(controller);
-    try {
-      return await controller.run(progress => (this as any)[method](validParams, progress), validParams?.timeout);
-    } finally {
-      this._activeProgressControllers.delete(controller);
-    }
+  createProgressController(callMetadata: CallMetadata): ProgressController {
+    return ProgressController.createForSdkObject(this._object, callMetadata);
   }
 
   _dispatchEvent<T extends keyof channels.EventsTraits<ChannelType>>(method: T, params?: channels.EventsTraits<ChannelType>[T]) {
@@ -132,14 +125,14 @@ export class Dispatcher<Type extends SdkObject, ChannelType, ParentScopeType ext
   }
 
   async stopPendingOperations(error: Error) {
-    const controllers: ProgressController[] = [];
+    const guids = new Set<string>();
     const collect = (dispatcher: DispatcherScope) => {
-      controllers.push(...dispatcher._activeProgressControllers);
+      guids.add(dispatcher._guid);
       for (const child of [...dispatcher._dispatchers.values()])
         collect(child);
     };
     collect(this);
-    await Promise.all(controllers.map(controller => controller.abort(error)));
+    await this.connection.abortControllersForGuids(guids, error);
   }
 
   private _disposeRecursively(error: Error) {
@@ -195,10 +188,20 @@ export class DispatcherConnection {
   readonly _dispatchersByBucket = new Map<string, Set<string>>();
   onmessage = (message: object) => {};
   private _waitOperations = new Map<string, CallMetadata>();
+  private _activeProgressControllers = new Map<string, ProgressController>();
   private _isInProcess: boolean;
 
   constructor(isInProcess?: boolean) {
     this._isInProcess = !!isInProcess;
+  }
+
+  async abortControllersForGuids(guids: Set<string>, error: Error) {
+    const controllers: ProgressController[] = [];
+    for (const controller of this._activeProgressControllers.values()) {
+      if (controller.metadata.objectId && guids.has(controller.metadata.objectId))
+        controllers.push(controller);
+    }
+    await Promise.all(controllers.map(controller => controller.abort(error)));
   }
 
   sendEvent(dispatcher: DispatcherScope, event: string, params: any) {
@@ -300,6 +303,10 @@ export class DispatcherConnection {
         await this._dispatchWaitInfo(id, dispatcher, params, metadata);
       return;
     }
+    if (method === '__abort__') {
+      await this._activeProgressControllers.get(`call@${params.id}`)?.abort(new AbortError(params.reason));
+      return;
+    }
     if (!dispatcher) {
       this.onmessage({ id, error: serializeError(new TargetClosedError(undefined)) });
       return;
@@ -341,8 +348,12 @@ export class DispatcherConnection {
       type: dispatcher._type,
       method,
       params: params || {},
+      timeout: validMetadata.timeout,
       log: [],
     };
+
+    const controller = dispatcher.createProgressController(callMetadata);
+    this._activeProgressControllers.set(callMetadata.id, controller);
 
     await sdkObject.instrumentation.onBeforeCall(sdkObject, callMetadata);
     const response: any = { id };
@@ -350,7 +361,7 @@ export class DispatcherConnection {
       // If the dispatcher has been disposed while running the instrumentation call, error out.
       if (this._dispatcherByGuid.get(guid) !== dispatcher)
         throw new TargetClosedError(sdkObject.closeReason());
-      const result = await dispatcher._runCommand(callMetadata, method, validParams);
+      const result = await controller.run(progress => (dispatcher as any)[method](validParams, progress), validMetadata.timeout);
       const validator = findValidator(dispatcher._type, method, 'Result');
       response.result = validator(result, '', this._validatorToWireContext());
       callMetadata.result = result;
@@ -376,6 +387,7 @@ export class DispatcherConnection {
       await sdkObject.instrumentation.onAfterCall(sdkObject, callMetadata);
       if (metainfo?.slowMo)
         await this._doSlowMo(sdkObject);
+      this._activeProgressControllers.delete(callMetadata.id);
     }
 
     if (response.error)

@@ -1019,7 +1019,7 @@ export namespace Protocol {
      */
     export type createStyleSheetParameters = {
       /**
-       * Identifier of the frame where the new "inspector" stylesheet should be created.
+       * Identifier of the frame where the new "inspector" stylesheet should be created. Ignored when dispatched to a FrameTarget; the receiving frame is used implicitly.
        */
       frameId: Network.FrameId;
     }
@@ -6372,7 +6372,7 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
     /**
      * List of settings able to be overridden by WebInspector.
      */
-    export type Setting = "PrivateClickMeasurementDebugModeEnabled"|"AuthorAndUserStylesEnabled"|"ICECandidateFilteringEnabled"|"ITPDebugModeEnabled"|"ImagesEnabled"|"MediaCaptureRequiresSecureConnection"|"MockCaptureDevicesEnabled"|"NeedsSiteSpecificQuirks"|"ScriptEnabled"|"ShowDebugBorders"|"ShowRepaintCounter"|"WebSecurityEnabled"|"DeviceOrientationEventEnabled"|"SpeechRecognitionEnabled"|"PointerLockEnabled"|"NotificationsEnabled"|"FullScreenEnabled"|"InputTypeMonthEnabled"|"InputTypeWeekEnabled"|"FixedBackgroundsPaintRelativeToDocument";
+    export type Setting = "PrivateClickMeasurementDebugModeEnabled"|"AuthorAndUserStylesEnabled"|"FixedBackgroundsPaintRelativeToDocument"|"FullScreenEnabled"|"ICECandidateFilteringEnabled"|"ITPDebugModeEnabled"|"ImagesEnabled"|"InputTypeMonthEnabled"|"InputTypeWeekEnabled"|"MediaCaptureRequiresSecureConnection"|"MockCaptureDevicesEnabled"|"NeedsSiteSpecificQuirks"|"NotificationsEnabled"|"PointerLockEnabled"|"PushAPIEnabled"|"ScriptEnabled"|"ShowDebugBorders"|"ShowRepaintCounter"|"WebSecurityEnabled"|"DeviceOrientationEventEnabled"|"SpeechRecognitionEnabled";
     /**
      * A user preference that can be overriden by Web Inspector, like an accessibility preference.
      */
@@ -7005,7 +7005,7 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
        */
       format?: ImageFormat;
       /**
-       * Compression quality from 0 to 100 (ignored for the "png" format). Defaults to 80.
+       * Compression quality from 0 to 100 (ignored for the "png" format). For "jpeg" it defaults to 80. For "webp", omitting the quality or setting it to 100 produces a lossless image; any other value uses lossy compression at that quality.
        */
       quality?: number;
     }
@@ -7165,6 +7165,10 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
        * Cookie Same-Site policy.
        */
       sameSite: CookieSameSitePolicy;
+      /**
+       * Cookie partition key for partitioned (CHIPS) cookies.
+       */
+      partitionKey?: string;
     }
     /**
      * Cookie object
@@ -7206,6 +7210,10 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
        * Cookie Same-Site policy.
        */
       sameSite?: CookieSameSitePolicy;
+      /**
+       * Cookie partition key for partitioned (CHIPS) cookies.
+       */
+      partitionKey?: string;
     }
     /**
      * Name-value pair
@@ -7481,6 +7489,21 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
       zoomFactor: number;
     }
     export type setPageZoomFactorReturnValue = {
+    }
+    /**
+     * Closes the page, destroying the page proxy. Works for both live and crashed pages.
+     */
+    export type closePageParameters = {
+      /**
+       * Unique identifier of the page proxy.
+       */
+      pageProxyId: PageProxyID;
+      /**
+       * Whether to run the beforeunload page handlers.
+       */
+      runBeforeUnload?: boolean;
+    }
+    export type closePageReturnValue = {
     }
     /**
      * Returns all cookies in the given browser context.
@@ -8671,6 +8694,193 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
     }
   }
   
+  /**
+   * Query and modify storage (cookies for now) under Site Isolation. Backed by the NetworkProcess-owned cookie store via API::HTTPCookieStore, so cross-origin iframe cookies are visible. The flat read also surfaces partitioned (CHIPS) cookies, each labeled with its partitionKey.
+   */
+  export namespace Storage {
+    /**
+     * Same-Site policy of a cookie.
+     */
+    export type CookieSameSitePolicy = "None"|"Lax"|"Strict";
+    /**
+     * Cookie object.
+     */
+    export interface Cookie {
+      /**
+       * Cookie name.
+       */
+      name: string;
+      /**
+       * Cookie value.
+       */
+      value: string;
+      /**
+       * Cookie domain.
+       */
+      domain: string;
+      /**
+       * Cookie path.
+       */
+      path: string;
+      /**
+       * Cookie expires.
+       */
+      expires: number;
+      /**
+       * True in case of session cookie.
+       */
+      session: boolean;
+      /**
+       * True if cookie is http-only.
+       */
+      httpOnly: boolean;
+      /**
+       * True if cookie is secure.
+       */
+      secure: boolean;
+      /**
+       * Cookie Same-Site policy.
+       */
+      sameSite: CookieSameSitePolicy;
+      /**
+       * Cookie partition key.
+       */
+      partitionKey?: string;
+    }
+    /**
+     * Filter parameters for cookie retrieval and deletion. Every provided field narrows the result set.
+     */
+    export interface CookieFilter {
+      /**
+       * The name of the cookie.
+       */
+      name?: string;
+      /**
+       * The value of the cookie.
+       */
+      value?: string;
+      /**
+       * The domain of the cookie.
+       */
+      domain?: string;
+      /**
+       * The path of the cookie.
+       */
+      path?: string;
+      /**
+       * If the cookie is HTTP only.
+       */
+      httpOnly?: boolean;
+      /**
+       * If the cookie is secure.
+       */
+      secure?: boolean;
+    }
+    /**
+     * Identifies the storage partition a cookie belongs to. At least one of 'userContext' or 'sourceOrigin' is present.
+     */
+    export interface PartitionKey {
+      /**
+       * The user context identifier of the partition.
+       */
+      userContext?: string;
+      /**
+       * The serialization of the origin of resources that can access the storage partition.
+       */
+      sourceOrigin?: string;
+    }
+    /**
+     * The type of storage partition descriptor.
+     */
+    export type PartitionDescriptorType = "context";
+    /**
+     * Describes a storage partition. Omit to target the inspected page's default data store. Type 'context' targets the inspected page's main-frame origin.
+     */
+    export interface PartitionDescriptor {
+      /**
+       * The type of partition descriptor.
+       */
+      type: PartitionDescriptorType;
+    }
+    
+    
+    /**
+     * Marks the Storage domain enabled for this target. No tracking is started; cookies are read on demand from the authoritative store, so this is effectively a no-op kept for domain-lifecycle symmetry.
+     */
+    export type enableParameters = {
+    }
+    export type enableReturnValue = {
+    }
+    /**
+     * Marks the Storage domain disabled for this target. Counterpart to enable; a no-op beyond lifecycle bookkeeping.
+     */
+    export type disableParameters = {
+    }
+    export type disableReturnValue = {
+    }
+    /**
+     * Retrieves zero or more cookies which match the provided filter, within the given partition.
+     */
+    export type getCookiesParameters = {
+      /**
+       * Filter parameters for cookie retrieval.
+       */
+      filter?: CookieFilter;
+      /**
+       * The storage partition in which to get cookies. Defaults to the origin of the inspected page's main frame.
+       */
+      partition?: PartitionDescriptor;
+    }
+    export type getCookiesReturnValue = {
+      /**
+       * The list of matching cookies.
+       */
+      cookies: Cookie[];
+      /**
+       * The storage partition key the cookies came from.
+       */
+      partitionKey: PartitionKey;
+    }
+    /**
+     * Creates a new cookie, replacing any cookie in the partition which matches.
+     */
+    export type setCookieParameters = {
+      /**
+       * The cookie to set.
+       */
+      cookie: Cookie;
+      /**
+       * The storage partition in which to set the cookie. Defaults to the origin of the inspected page's main frame.
+       */
+      partition?: PartitionDescriptor;
+    }
+    export type setCookieReturnValue = {
+      /**
+       * The storage partition key the cookie was set in.
+       */
+      partitionKey: PartitionKey;
+    }
+    /**
+     * Removes zero or more cookies which match the provided filter, within the given partition. A filter is required; omitting it fails rather than deleting every cookie.
+     */
+    export type deleteCookiesParameters = {
+      /**
+       * Filter parameters for cookie deletion. Required in practice: a request with no filter is rejected to avoid an accidental clear of the entire store.
+       */
+      filter?: CookieFilter;
+      /**
+       * The storage partition in which to delete cookies. Defaults to the origin of the inspected page's main frame.
+       */
+      partition?: PartitionDescriptor;
+    }
+    export type deleteCookiesReturnValue = {
+      /**
+       * The storage partition key the cookies were deleted from.
+       */
+      partitionKey: PartitionKey;
+    }
+  }
+  
   export namespace Target {
     /**
      * Description of a target.
@@ -8758,15 +8968,6 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
     }
     export type activateReturnValue = {
     }
-    /**
-     * Closes the target.
-     */
-    export type closeParameters = {
-      targetId: string;
-      runBeforeUnload?: boolean;
-    }
-    export type closeReturnValue = {
-    }
   }
   
   /**
@@ -8776,7 +8977,7 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
     /**
      * Timeline record type.
      */
-    export type EventType = "EventDispatch"|"ScheduleStyleRecalculation"|"RecalculateStyles"|"InvalidateLayout"|"Layout"|"Paint"|"Composite"|"RenderingFrame"|"TimerInstall"|"TimerRemove"|"TimerFire"|"EvaluateScript"|"TimeStamp"|"Time"|"TimeEnd"|"FunctionCall"|"ProbeSample"|"ConsoleProfile"|"RequestAnimationFrame"|"CancelAnimationFrame"|"FireAnimationFrame"|"ObserverCallback"|"FirstContentfulPaint"|"LargestContentfulPaint"|"Screenshot";
+    export type EventType = "EventDispatch"|"ScheduleStyleRecalculation"|"RecalculateStyles"|"InvalidateLayout"|"ScheduleLayout"|"Layout"|"Paint"|"Composite"|"RenderingFrame"|"TimerInstall"|"TimerRemove"|"TimerFire"|"EvaluateScript"|"TimeStamp"|"Time"|"TimeEnd"|"FunctionCall"|"ProbeSample"|"ConsoleProfile"|"RequestAnimationFrame"|"CancelAnimationFrame"|"FireAnimationFrame"|"ObserverCallback"|"FirstContentfulPaint"|"LargestContentfulPaint"|"Screenshot";
     /**
      * Instrument types.
      */
@@ -9449,6 +9650,7 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
     "Playwright.takePageScreenshot": Playwright.takePageScreenshotParameters;
     "Playwright.setIgnoreCertificateErrors": Playwright.setIgnoreCertificateErrorsParameters;
     "Playwright.setPageZoomFactor": Playwright.setPageZoomFactorParameters;
+    "Playwright.closePage": Playwright.closePageParameters;
     "Playwright.getAllCookies": Playwright.getAllCookiesParameters;
     "Playwright.setCookies": Playwright.setCookiesParameters;
     "Playwright.deleteAllCookies": Playwright.deleteAllCookiesParameters;
@@ -9484,11 +9686,15 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
     "ScriptProfiler.startTracking": ScriptProfiler.startTrackingParameters;
     "ScriptProfiler.stopTracking": ScriptProfiler.stopTrackingParameters;
     "ServiceWorker.getInitializationInfo": ServiceWorker.getInitializationInfoParameters;
+    "Storage.enable": Storage.enableParameters;
+    "Storage.disable": Storage.disableParameters;
+    "Storage.getCookies": Storage.getCookiesParameters;
+    "Storage.setCookie": Storage.setCookieParameters;
+    "Storage.deleteCookies": Storage.deleteCookiesParameters;
     "Target.setPauseOnStart": Target.setPauseOnStartParameters;
     "Target.resume": Target.resumeParameters;
     "Target.sendMessageToTarget": Target.sendMessageToTargetParameters;
     "Target.activate": Target.activateParameters;
-    "Target.close": Target.closeParameters;
     "Timeline.enable": Timeline.enableParameters;
     "Timeline.disable": Timeline.disableParameters;
     "Timeline.start": Timeline.startParameters;
@@ -9754,6 +9960,7 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
     "Playwright.takePageScreenshot": Playwright.takePageScreenshotReturnValue;
     "Playwright.setIgnoreCertificateErrors": Playwright.setIgnoreCertificateErrorsReturnValue;
     "Playwright.setPageZoomFactor": Playwright.setPageZoomFactorReturnValue;
+    "Playwright.closePage": Playwright.closePageReturnValue;
     "Playwright.getAllCookies": Playwright.getAllCookiesReturnValue;
     "Playwright.setCookies": Playwright.setCookiesReturnValue;
     "Playwright.deleteAllCookies": Playwright.deleteAllCookiesReturnValue;
@@ -9789,11 +9996,15 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
     "ScriptProfiler.startTracking": ScriptProfiler.startTrackingReturnValue;
     "ScriptProfiler.stopTracking": ScriptProfiler.stopTrackingReturnValue;
     "ServiceWorker.getInitializationInfo": ServiceWorker.getInitializationInfoReturnValue;
+    "Storage.enable": Storage.enableReturnValue;
+    "Storage.disable": Storage.disableReturnValue;
+    "Storage.getCookies": Storage.getCookiesReturnValue;
+    "Storage.setCookie": Storage.setCookieReturnValue;
+    "Storage.deleteCookies": Storage.deleteCookiesReturnValue;
     "Target.setPauseOnStart": Target.setPauseOnStartReturnValue;
     "Target.resume": Target.resumeReturnValue;
     "Target.sendMessageToTarget": Target.sendMessageToTargetReturnValue;
     "Target.activate": Target.activateReturnValue;
-    "Target.close": Target.closeReturnValue;
     "Timeline.enable": Timeline.enableReturnValue;
     "Timeline.disable": Timeline.disableReturnValue;
     "Timeline.start": Timeline.startReturnValue;

@@ -34,13 +34,13 @@ import { Frame } from './frames';
 import { Page } from './page';
 import { performAction } from './recorder/recorderRunner';
 
-import type { Language } from './codegen/types';
+import type { Language } from '@isomorphic/codegen/types';
 import type { CallMetadata, InstrumentationListener, SdkObject } from './instrumentation';
 import type { Point } from '@isomorphic/types';
 import type { AriaTemplateNode } from '@isomorphic/ariaSnapshot';
 import type { Progress } from './progress';
-import type * as channels from '@protocol/channels';
-import type * as actions from '@recorder/actions';
+import type * as channels from './channels';
+import type * as actions from '@isomorphic/codegen/actions';
 import type { CallLog, CallLogStatus, ElementInfo, Mode, OverlayState, Source, UIState } from '@recorder/recorderTypes';
 import type { RegisteredListener } from '@utils/eventsHelper';
 
@@ -89,8 +89,6 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
   private _recorderMode: 'default' | 'api';
 
   private _signalProcessor: RecorderSignalProcessor;
-  private _pageAliases = new Map<Page, string>();
-  private _lastPopupOrdinal = 0;
   private _lastDialogOrdinal = -1;
   private _lastDownloadOrdinal = -1;
   private _listeners: RegisteredListener[] = [];
@@ -229,7 +227,7 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
       // Input actions that potentially lead to navigation are intercepted on the page and are
       // performed by the Playwright.
       await this._context.exposeBinding(progress, '__pw_recorderPerformAction',
-          (source: BindingSource, action: actions.PerformOnRecordAction) => this._performAction(progress, source.frame, action));
+          (source: BindingSource, action: actions.PerformOnRecordAction, preconditionSelector?: string) => this._performAction(progress, source.frame, action, preconditionSelector));
 
       // Other non-essential actions are simply being recorded.
       await this._context.exposeBinding(progress, '__pw_recorderRecordAction',
@@ -378,17 +376,17 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
       return;
     try {
       const mainFrame = frame._page.mainFrame();
-      const resolved = await mainFrame.selectors.resolveFrameForSelector(this._highlightedElement.selector);
+      const resolved = await mainFrame.selectors.callOnSelector(this._highlightedElement.selector, { callWithoutMatches: true }, () => {}, {});
       // selector couldn't be found, don't highlight anything
       if (!resolved)
         return '';
 
       // selector points to no specific frame, highlight in all frames
-      if (resolved?.frame === mainFrame)
+      if (resolved.frame === mainFrame)
         return stringifySelector(resolved.info.parsed);
 
       // selector points to this frame, highlight it
-      if (resolved?.frame === frame)
+      if (resolved.frame === frame)
         return stringifySelector(resolved.info.parsed);
 
       // selector points to a different frame, highlight nothing
@@ -495,18 +493,16 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
   }
 
   private async _onPage(page: Page) {
-    // First page is called page, others are called popup1, popup2, etc.
     const frame = page.mainFrame();
     page.on(Page.Events.Close, () => {
       this._signalProcessor.addAction({
-        frame: this._describeMainFrame(page),
+        pageGuid: page.guid,
         action: {
           name: 'closePage',
           signals: [],
         },
         startTime: monotonicTime()
       });
-      this._pageAliases.delete(page);
       this._filePrimaryURLChanged();
     });
     frame.on(Frame.Events.InternalNavigation, event => {
@@ -516,15 +512,12 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
       }
     });
     page.on(Page.Events.Download, () => this._onDownload(page));
-    const suffix = this._pageAliases.size ? String(++this._lastPopupOrdinal) : '';
-    const pageAlias = 'page' + suffix;
-    this._pageAliases.set(page, pageAlias);
 
     if (page.opener()) {
       this._onPopup(page.opener()!, page);
     } else {
       this._signalProcessor.addAction({
-        frame: this._describeMainFrame(page),
+        pageGuid: page.guid,
         action: {
           name: 'openPage',
           url: page.mainFrame().url(),
@@ -548,74 +541,57 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
     }
   }
 
-  private _describeMainFrame(page: Page): actions.FrameDescription {
-    return {
-      pageGuid: page.guid,
-      pageAlias: this._pageAliases.get(page)!,
-      framePath: [],
-    };
-  }
-
-  private async _describeFrame(progress: Progress, frame: Frame): Promise<actions.FrameDescription> {
-    return {
-      pageGuid: frame._page.guid,
-      pageAlias: this._pageAliases.get(frame._page)!,
-      framePath: await generateFrameSelector(progress, frame),
-    };
-  }
-
   private _testIdAttributeName(): string {
     return this._params.testIdAttributeName || this._context.selectors().testIdAttributeName() || 'data-testid';
   }
 
-  private async _createActionInContext(progress: Progress, frame: Frame, action: actions.Action): Promise<actions.ActionInContext> {
-    const frameDescription = await this._describeFrame(progress, frame);
+  private _appendContextToAction(frame: Frame, action: actions.Action, framePath: string[]): actions.ActionInContext {
+    if (framePath.length && 'selector' in action)
+      action.selector = buildFullSelector(framePath, action.selector);
     const actionInContext: actions.ActionInContext = {
-      frame: frameDescription,
+      pageGuid: frame._page.guid,
       action,
-      description: undefined,
       startTime: monotonicTime(),
     };
     return actionInContext;
   }
 
-  private async _performAction(progress: Progress, frame: Frame, action: actions.PerformOnRecordAction) {
-    const actionInContext = await this._createActionInContext(progress, frame, action);
+  private async _performAction(progress: Progress, frame: Frame, action: actions.PerformOnRecordAction, preconditionSelector?: string) {
+    const framePath = await generateFrameSelector(progress, frame);
+    if (preconditionSelector)
+      this._signalProcessor.signal(frame, { name: 'expect', selector: buildFullSelector(framePath, preconditionSelector) });
+    const actionInContext = this._appendContextToAction(frame, action, framePath);
     this._signalProcessor.addAction(actionInContext);
     try {
       if (actionInContext.action.name !== 'openPage' && actionInContext.action.name !== 'closePage')
-        await performAction(progress, this._pageAliases, actionInContext);
+        await performAction(progress, frame._page.mainFrame(), actionInContext);
     } finally {
       actionInContext.endTime = monotonicTime();
     }
   }
 
   private async _recordAction(progress: Progress, frame: Frame, action: actions.Action) {
-    const actionInContext = await this._createActionInContext(progress, frame, action);
+    const framePath = await generateFrameSelector(progress, frame);
+    const actionInContext = this._appendContextToAction(frame, action, framePath);
     this._signalProcessor.addAction(actionInContext);
   }
 
   private _onFrameNavigated(frame: Frame, page: Page) {
-    const pageAlias = this._pageAliases.get(page);
-    this._signalProcessor.signal(pageAlias!, frame, { name: 'navigation', url: frame.url() });
+    this._signalProcessor.signal(frame, { name: 'navigation', url: frame.url() });
   }
 
   private _onPopup(page: Page, popup: Page) {
-    const pageAlias = this._pageAliases.get(page)!;
-    const popupAlias = this._pageAliases.get(popup)!;
-    this._signalProcessor.signal(pageAlias, page.mainFrame(), { name: 'popup', popupAlias });
+    this._signalProcessor.signal(page.mainFrame(), { name: 'popup', popupPageGuid: popup.guid });
   }
 
   private _onDownload(page: Page) {
-    const pageAlias = this._pageAliases.get(page)!;
     ++this._lastDownloadOrdinal;
-    this._signalProcessor.signal(pageAlias, page.mainFrame(), { name: 'download', downloadAlias: this._lastDownloadOrdinal ? String(this._lastDownloadOrdinal) : '' });
+    this._signalProcessor.signal(page.mainFrame(), { name: 'download', downloadAlias: this._lastDownloadOrdinal ? String(this._lastDownloadOrdinal) : '' });
   }
 
   private _onDialog(page: Page) {
-    const pageAlias = this._pageAliases.get(page)!;
     ++this._lastDialogOrdinal;
-    this._signalProcessor.signal(pageAlias, page.mainFrame(), { name: 'dialog', dialogAlias: this._lastDialogOrdinal ? String(this._lastDialogOrdinal) : '' });
+    this._signalProcessor.signal(page.mainFrame(), { name: 'dialog', dialogAlias: this._lastDialogOrdinal ? String(this._lastDialogOrdinal) : '' });
   }
 }
 

@@ -116,7 +116,7 @@ export class TestRun {
   result(): 'failed' | 'passed' {
     const hasFailedTests = this.rootSuite?.allTests().some(test => !test.ok());
     const hasFlakyTests = this.rootSuite?.allTests().some(test => test.outcome() === 'flaky');
-    return this.hasWorkerErrors || this.hasReachedMaxFailures() || hasFailedTests || (this.config.config.failOnFlakyTests && hasFlakyTests) ? 'failed' : 'passed';
+    return this.hasWorkerErrors || this.reporter.hasReporterErrors() || this.hasReachedMaxFailures() || hasFailedTests || (this.config.config.failOnFlakyTests && hasFlakyTests) ? 'failed' : 'passed';
   }
 }
 
@@ -146,6 +146,10 @@ async function finishTaskRun(testRun: TestRun, status: FullResult['status']) {
   if (modifiedResult && modifiedResult.status)
     status = modifiedResult.status;
   await testRun.reporter.onExit();
+  // A reporter may have thrown during onEnd/onExit (or earlier), which is not
+  // reflected in testRun.result() computed above. Fail the run in that case.
+  if (status === 'passed' && testRun.reporter.hasReporterErrors())
+    status = 'failed';
   return status;
 }
 
@@ -332,7 +336,7 @@ export function createLoadTask(mode: 'out-of-process' | 'in-process', options: {
         });
       }
 
-      if (testRun.options.lastFailedTestIds?.length) {
+      if (testRun.options.lastFailedTestIds) {
         const failedTestIds = new Set(testRun.options.lastFailedTestIds);
         testRun.postShardTestFilters.push(test => failedTestIds.has(test.id));
       }
@@ -391,6 +395,9 @@ function createPhasesTask(): Task<TestRun> {
       const projectToSuite = new Map(testRun.rootSuite!.suites.map(suite => [suite._fullProject!, suite]));
       const allProjects = [...projectToSuite.keys()];
       const teardownToSetups = buildTeardownToSetupsMap(allProjects);
+      // Teardown projects keep running after maxFailures is reached, so that cleanup
+      // is not skipped. Nothing to ignore when maxFailures cannot stop the run.
+      const ignoreMaxFailuresProjectIds = new Set(testRun.config.config.maxFailures > 0 ? [...teardownToSetups.keys()].map(project => project.id) : []);
       const teardownToSetupsDependents = new Map<commonConfig.FullProjectInternal, commonConfig.FullProjectInternal[]>();
       for (const [teardown, setups] of teardownToSetups) {
         const closure = buildDependentProjects(setups, allProjects);
@@ -410,14 +417,17 @@ function createPhasesTask(): Task<TestRun> {
           phaseProjects.push(project);
         }
 
-        // Create a new phase.
         for (const project of phaseProjects)
           processed.add(project);
-        if (phaseProjects.length) {
+        // Projects that ignore maxFailures run in their own phase.
+        for (const ignoreMaxFailures of [false, true]) {
+          const projects = phaseProjects.filter(project => ignoreMaxFailuresProjectIds.has(project.id) === ignoreMaxFailures);
+          if (!projects.length)
+            continue;
           let testGroupsInPhase = 0;
-          const phase: Phase = { dispatcher: new Dispatcher(testRun), projects: [] };
+          const phase: Phase = { dispatcher: new Dispatcher(testRun, { ignoreMaxFailures }), projects: [] };
           testRun.phases.push(phase);
-          for (const project of phaseProjects) {
+          for (const project of projects) {
             const projectSuite = projectToSuite.get(project)!;
             const testGroups = createTestGroups(projectSuite, testRun.config.config.workers);
             phase.projects.push({ project, projectSuite, testGroups });

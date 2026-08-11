@@ -16,9 +16,9 @@
 
 import { parseEvaluationResultValue, serializeAsCallArgument } from '@isomorphic/utilityScriptSerializers';
 
-import type * as channels from '@protocol/channels';
+import type { IndexedDBDatabase, OriginStorage, SetOriginStorage } from '@protocol/structs';
 
-export type SerializedStorage = Omit<channels.OriginStorage, 'origin'>;
+export type SerializedStorage = Omit<OriginStorage, 'origin'>;
 
 export class StorageScript {
   private _isFirefox: boolean;
@@ -85,7 +85,7 @@ export class StorageScript {
 
       const keys = await this._idbRequestToPromise(objectStore.getAllKeys());
       const records = await Promise.all(keys.map(async key => {
-        const record: channels.IndexedDBDatabase['stores'][0]['records'][0] = {};
+        const record: IndexedDBDatabase['stores'][0]['records'][0] = {};
 
         if (objectStore.keyPath === null) {
           const { encoded, trivial } = this._trySerialize(key);
@@ -146,7 +146,7 @@ export class StorageScript {
     }
   }
 
-  private async _restoreDB(dbInfo: channels.IndexedDBDatabase) {
+  private async _restoreDB(dbInfo: IndexedDBDatabase) {
     const openRequest = this._global.indexedDB.open(dbInfo.name, dbInfo.version);
     openRequest.addEventListener('upgradeneeded', () => {
       const db = openRequest.result;
@@ -176,7 +176,7 @@ export class StorageScript {
     }));
   }
 
-  async restore(originState: channels.SetOriginStorage | undefined) {
+  async restore(originState: SetOriginStorage | undefined) {
     // Clean Service Workers.
     const registrations = this._global.navigator.serviceWorker ? await this._global.navigator.serviceWorker.getRegistrations() : [];
     await Promise.all(registrations.map(async r => {

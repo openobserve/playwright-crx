@@ -16,7 +16,6 @@
 
 import { rootTestType } from './testType';
 import { computeTestCaseOutcome } from '../isomorphic/teleReceiver';
-
 import type { FixturesWithLocation, FullProjectInternal } from './config';
 import type { FixturePool } from './fixtures';
 import type { TestTypeImpl } from './testType';
@@ -94,6 +93,14 @@ export class Suite extends Base {
   _prependSuite(suite: Suite) {
     suite.parent = this;
     this._entries.unshift(suite);
+  }
+
+  _detach(child: Suite | TestCase) {
+    const idx = this._entries.indexOf(child);
+    if (idx !== -1)
+      this._entries.splice(idx, 1);
+    if (this._entries.length === 0)
+      this.parent?._detach(this);
   }
 
   allTests(): TestCase[] {
@@ -252,6 +259,7 @@ export class Suite extends Base {
   project(): FullProject | undefined {
     return this._fullProject?.project || this.parent?.project();
   }
+
 }
 
 export class TestCase extends Base implements reporterTypes.TestCase {
@@ -275,6 +283,7 @@ export class TestCase extends Base implements reporterTypes.TestCase {
   _projectId = '';
   // Explicitly declared tags that are not a part of the title.
   _tags: string[] = [];
+  _planAnnotations: TestAnnotation[] = [];
 
   constructor(title: string, fn: Function, testType: TestTypeImpl, location: Location) {
     super(title);
@@ -307,6 +316,15 @@ export class TestCase extends Base implements reporterTypes.TestCase {
       ...titleTags,
       ...this._tags,
     ];
+  }
+
+  _applyPlanAnnotation(annotation: TestAnnotation): void {
+    this.annotations.push(annotation);
+    this._planAnnotations.push(annotation);
+    if (annotation.type === 'skip' || annotation.type === 'fixme')
+      this.expectedStatus = 'skipped';
+    else if (annotation.type === 'fail' && this.expectedStatus !== 'skipped')
+      this.expectedStatus = 'failed';
   }
 
   _serialize(): any {

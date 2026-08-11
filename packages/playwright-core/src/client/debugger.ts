@@ -16,9 +16,10 @@
 
 import { ChannelOwner } from './channelOwner';
 import { Events } from './events';
+import { kNoTimeout } from './timeoutSettings';
 
 import type * as api from '../../types/types';
-import type * as channels from '@protocol/channels';
+import type * as channels from './channels';
 
 type PausedDetails = { location: { file: string, line?: number, column?: number }, title: string, stack?: string };
 
@@ -38,19 +39,19 @@ export class Debugger extends ChannelOwner<channels.DebuggerChannel> implements 
   }
 
   async requestPause(): Promise<void> {
-    await this._channel.requestPause();
+    await this._channel.requestPause({}, kNoTimeout);
   }
 
   async resume(): Promise<void> {
-    await this._channel.resume();
+    await this._channel.resume({}, kNoTimeout);
   }
 
   async next(): Promise<void> {
-    await this._channel.next();
+    await this._channel.next({}, kNoTimeout);
   }
 
   async runTo(location: { file: string, line?: number, column?: number }): Promise<void> {
-    await this._channel.runTo({ location });
+    await this._channel.runTo({ location }, kNoTimeout);
   }
 
   pausedDetails(): PausedDetails | null {

@@ -399,66 +399,74 @@ it.describe('setFixedTime', () => {
 it.describe('while running', () => {
   it('should progress time', async ({ page }) => {
     await page.clock.install({ time: 0 });
+    const startRealTime = Date.now();
     await page.goto('data:text/html,');
     await page.waitForTimeout(1000);
     const now = await page.evaluate(() => Date.now());
+    const realElapsed = Date.now() - startRealTime;
     expect(now).toBeGreaterThanOrEqual(1000);
-    expect(now).toBeLessThanOrEqual(2000);
+    expect(now).toBeLessThanOrEqual(realElapsed + 1000);
   });
 
   it('should runFor', async ({ page }) => {
     await page.clock.install({ time: 0 });
+    const startRealTime = Date.now();
     await page.goto('data:text/html,');
     await page.clock.runFor(10000);
     const now = await page.evaluate(() => Date.now());
+    const realElapsed = Date.now() - startRealTime;
     expect(now).toBeGreaterThanOrEqual(10000);
-    expect(now).toBeLessThanOrEqual(11000);
+    expect(now).toBeLessThanOrEqual(10000 + realElapsed + 1000);
   });
 
   it('should fastForward', async ({ page }) => {
     await page.clock.install({ time: 0 });
+    const startRealTime = Date.now();
     await page.goto('data:text/html,');
     await page.clock.fastForward(10000);
     const now = await page.evaluate(() => Date.now());
+    const realElapsed = Date.now() - startRealTime;
     expect(now).toBeGreaterThanOrEqual(10000);
-    expect(now).toBeLessThanOrEqual(11000);
-  });
-
-  it('should fastForwardTo', async ({ page }) => {
-    await page.clock.install({ time: 0 });
-    await page.goto('data:text/html,');
-    await page.clock.fastForward(10000);
-    const now = await page.evaluate(() => Date.now());
-    expect(now).toBeGreaterThanOrEqual(10000);
-    expect(now).toBeLessThanOrEqual(11000);
+    expect(now).toBeLessThanOrEqual(10000 + realElapsed + 1000);
   });
 
   it('should pause', async ({ page }) => {
     await page.clock.install({ time: 0 });
     await page.goto('data:text/html,');
-    await page.clock.pauseAt(1000);
+    await page.clock.pauseAt(60000);
     // Internally wait to make sure the clock is paused and not running.
     await page.waitForTimeout(1111);
     const now = await page.evaluate(() => Date.now());
-    expect(now).toBeGreaterThanOrEqual(0);
-    expect(now).toBeLessThanOrEqual(1000);
+    expect(now).toBe(60000);
+  });
+
+  it('should reject an invalid target time with an active requestAnimationFrame loop', {
+    annotation: {
+      type: 'issue',
+      description: 'https://github.com/microsoft/playwright-python/issues/3137',
+    }
+  }, async ({ page }) => {
+    await page.clock.install();
+    await page.setContent(`<script>function tick() { requestAnimationFrame(tick); } requestAnimationFrame(tick);</script>`);
+    const invalidTime = await page.evaluate(() => Date.now()) * 1_000_000;
+    await expect(page.clock.pauseAt(invalidTime)).rejects.toThrow(`clock.pauseAt: Invalid date: ${invalidTime}`);
   });
 
   it('should pause and fastForward', async ({ page }) => {
     await page.clock.install({ time: 0 });
     await page.goto('data:text/html,');
-    await page.clock.pauseAt(1000);
+    await page.clock.pauseAt(60000);
     await page.clock.fastForward(1000);
     const now = await page.evaluate(() => Date.now());
-    expect(now).toBe(2000);
+    expect(now).toBe(61000);
   });
 
   it('should set system time on pause', async ({ page }) => {
     await page.clock.install({ time: 0 });
     await page.goto('data:text/html,');
-    await page.clock.pauseAt(1000);
+    await page.clock.pauseAt(60000);
     const now = await page.evaluate(() => Date.now());
-    expect(now).toBe(1000);
+    expect(now).toBe(60000);
   });
 });
 

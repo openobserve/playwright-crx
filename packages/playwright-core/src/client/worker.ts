@@ -20,14 +20,14 @@ import { ConsoleMessage } from './consoleMessage';
 import { isTargetClosedError, TargetClosedError } from './errors';
 import { Events } from './events';
 import { JSHandle, assertMaxArguments, parseResult, serializeArgument } from './jsHandle';
-import { TimeoutSettings } from './timeoutSettings';
+import { TimeoutSettings, kNoTimeout } from './timeoutSettings';
 import { Waiter } from './waiter';
 
 import type { BrowserContext } from './browserContext';
 import type { Page } from './page';
 import type * as structs from '../../types/structs';
 import type * as api from '../../types/types';
-import type * as channels from '@protocol/channels';
+import type * as channels from './channels';
 import type { WaitForEventOptions } from './types';
 
 
@@ -52,7 +52,7 @@ export class Worker extends ChannelOwner<channels.WorkerChannel> implements api.
     ]));
     this._channel.on('console', event => {
       // Note: we only receive console events here for workers from "chromium._connectToWorker".
-      this.emit(Events.Worker.Console, new ConsoleMessage(this._platform, event, null, this));
+      this.emit(Events.Worker.Console, new ConsoleMessage(event, null, this));
     });
     this._channel.on('close', () => {
       if (this._page)
@@ -76,23 +76,23 @@ export class Worker extends ChannelOwner<channels.WorkerChannel> implements api.
 
   async evaluate<R, Arg>(pageFunction: structs.PageFunction<Arg, R>, arg?: Arg): Promise<R> {
     assertMaxArguments(arguments.length, 2);
-    const result = await this._channel.evaluateExpression({ expression: String(pageFunction), isFunction: typeof pageFunction === 'function', arg: serializeArgument(arg) });
+    const result = await this._channel.evaluateExpression({ expression: String(pageFunction), isFunction: typeof pageFunction === 'function', arg: serializeArgument(arg) }, kNoTimeout);
     return parseResult(result.value);
   }
 
   async evaluateHandle<R, Arg>(pageFunction: structs.PageFunction<Arg, R>, arg?: Arg): Promise<structs.SmartHandle<R>> {
     assertMaxArguments(arguments.length, 2);
-    const result = await this._channel.evaluateExpressionHandle({ expression: String(pageFunction), isFunction: typeof pageFunction === 'function', arg: serializeArgument(arg) });
+    const result = await this._channel.evaluateExpressionHandle({ expression: String(pageFunction), isFunction: typeof pageFunction === 'function', arg: serializeArgument(arg) }, kNoTimeout);
     return JSHandle.from(result.handle) as any as structs.SmartHandle<R>;
   }
 
   async waitForEvent(event: string, optionsOrPredicate: WaitForEventOptions = {}): Promise<any> {
     return await this._wrapApiCall(async () => {
-      const timeoutSettings = this._page?._timeoutSettings ?? this._context?._timeoutSettings ?? new TimeoutSettings(this._platform);
-      const timeout = timeoutSettings.timeout(typeof optionsOrPredicate === 'function' ? {} : optionsOrPredicate);
+      const timeoutSettings = this._page?._timeoutSettings ?? this._context?._timeoutSettings ?? new TimeoutSettings();
+      const timeoutOptions = timeoutSettings.timeout(typeof optionsOrPredicate === 'function' ? {} : optionsOrPredicate);
       const predicate = typeof optionsOrPredicate === 'function' ? optionsOrPredicate : optionsOrPredicate.predicate;
       const waiter = Waiter.createForEvent(this, event);
-      waiter.rejectOnTimeout(timeout, `Timeout ${timeout}ms exceeded while waiting for event "${event}"`);
+      waiter.rejectOnTimeout(timeoutOptions, `Timeout ${timeoutOptions.timeout}ms exceeded while waiting for event "${event}"`);
       if (event !== Events.Worker.Close)
         waiter.rejectOnEvent(this, Events.Worker.Close, () => this._closeErrorWithReason());
       const result = await waiter.waitForEvent(this, event, predicate as any);
@@ -104,7 +104,7 @@ export class Worker extends ChannelOwner<channels.WorkerChannel> implements api.
   async _disconnect(options: { reason?: string } = {}): Promise<void> {
     this._closeReason = options.reason;
     try {
-      await this._channel.disconnect(options);
+      await this._channel.disconnect(options, kNoTimeout);
     } catch (e) {
       if (isTargetClosedError(e))
         return;
