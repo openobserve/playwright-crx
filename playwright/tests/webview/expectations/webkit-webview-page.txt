@@ -30,6 +30,7 @@ page/elementhandle-screenshot.spec.ts › element screenshot › should wait for
 page/elementhandle-screenshot.spec.ts › element screenshot › should work [fail]
 page/elementhandle-screenshot.spec.ts › element screenshot › should work when main world busts JSON.stringify [fail]
 page/elementhandle-screenshot.spec.ts › element screenshot › should work with a rotated element [fail]
+page/elementhandle-screenshot.spec.ts › element screenshot › should work with webp [fail]
 page/expect-matcher-result.spec.ts › toHaveScreenshot should populate matcherResult [fail]
 page/locator-misc-2.spec.ts › should return bounding box [fail]
 page/locator-misc-2.spec.ts › should take screenshot [fail]
@@ -51,17 +52,21 @@ page/page-screenshot.spec.ts › page screenshot › mask option › should work
 page/page-screenshot.spec.ts › page screenshot › mask option › should work with locator [fail]
 page/page-screenshot.spec.ts › page screenshot › path option should create subdirectories [fail]
 page/page-screenshot.spec.ts › page screenshot › path option should detect jpeg [fail]
+page/page-screenshot.spec.ts › page screenshot › path option should detect webp [fail]
 page/page-screenshot.spec.ts › page screenshot › path option should work [fail]
 page/page-screenshot.spec.ts › page screenshot › should allow transparency [fail]
+page/page-screenshot.spec.ts › page screenshot › should allow transparency with webp [fail]
 page/page-screenshot.spec.ts › page screenshot › should clip elements to the viewport [fail]
 page/page-screenshot.spec.ts › page screenshot › should clip rect [fail]
 page/page-screenshot.spec.ts › page screenshot › should clip rect with fullPage [fail]
+page/page-screenshot.spec.ts › page screenshot › should produce a valid webp screenshot [fail]
 page/page-screenshot.spec.ts › page screenshot › should render white background on jpeg file [fail]
 page/page-screenshot.spec.ts › page screenshot › should restore viewport after fullPage screenshot [fail]
 page/page-screenshot.spec.ts › page screenshot › should run in parallel [fail]
 page/page-screenshot.spec.ts › page screenshot › should take fullPage screenshots [fail]
 page/page-screenshot.spec.ts › page screenshot › should take fullPage screenshots and mask elements outside of it [fail]
 page/page-screenshot.spec.ts › page screenshot › should take fullPage screenshots during navigation [fail]
+page/page-screenshot.spec.ts › page screenshot › should throw on a negative clip size [fail]
 page/page-screenshot.spec.ts › page screenshot › should throw on clip outside the viewport [fail]
 page/page-screenshot.spec.ts › page screenshot › should work @smoke [fail]
 page/page-screenshot.spec.ts › page screenshot › should work for canvas [fail]
@@ -71,49 +76,42 @@ page/page-screenshot.spec.ts › page screenshot › should work while navigatin
 page/page-screenshot.spec.ts › page screenshot › should work with Array deleted [fail]
 
 # ============================================================================
-# frame-element-and-ownership  (38 tests)
-# elementHandle.contentFrame / elementHandle.ownerFrame / frame.frameElement
-# are not implemented in wvPage — see the throwing stubs in wvPage.ts.
+# mouse-offset-border-box  (3 tests)
+# The iOS 18 simulator WebView reports MouseEvent.offsetX/offsetY relative to
+# the border box, while Playwright — like Chromium, Firefox and recent desktop
+# WebKit — measures from the padding box (the long-standing WebKit "border box"
+# behavior, https://bugs.webkit.org/show_bug.cgi?id=135399). The click lands at
+# the correct coordinate; only the reported offset is larger by the element's
+# border width, so the offsetX/offsetY assertions fail. Platform reporting
+# difference, not an input-translation bug — drop once the simulator ships a
+# WebKit that measures from the padding box.
 # ============================================================================
-page/elementhandle-content-frame.spec.ts › should return null for document.documentElement [fail]
-page/elementhandle-content-frame.spec.ts › should return null for non-iframes [fail]
-page/elementhandle-content-frame.spec.ts › should work [fail]
-page/elementhandle-content-frame.spec.ts › should work for cross-frame evaluations [fail]
-page/elementhandle-content-frame.spec.ts › should work for cross-process iframes [fail]
-page/elementhandle-owner-frame.spec.ts › should work [fail]
-page/elementhandle-owner-frame.spec.ts › should work for cross-frame evaluations [fail]
-page/elementhandle-owner-frame.spec.ts › should work for cross-process iframes [fail]
-page/elementhandle-owner-frame.spec.ts › should work for detached elements [fail]
-page/elementhandle-owner-frame.spec.ts › should work for document [fail]
-page/elementhandle-owner-frame.spec.ts › should work for iframe elements [fail]
-page/frame-evaluate.spec.ts › should be isolated between frames [fail]
-page/frame-evaluate.spec.ts › should have different execution contexts [fail]
+page/page-click.spec.ts › should click a button in scrolling container with offset [fail]
+page/page-click.spec.ts › should click the button with em border with offset [fail]
+page/page-click.spec.ts › should click the button with px border with offset [fail]
+
+# ============================================================================
+# frame-element-and-ownership  (remaining)
+# elementHandle.contentFrame / elementHandle.ownerFrame / frame.frameElement
+# are implemented in wvPage for same-origin and in-process cross-origin frames
+# (contentWindow token correlation, with name/url/document-order fallbacks), so
+# most of this section now passes and has been unskipped. The entries left here
+# are the ones that remain genuinely unsupported:
+#   - cross-frame element-handle adoption (needs DOM node identity across
+#     execution contexts, which the stock RDP DOM agent does not expose);
+#   - <iframe> elements nested inside a closed/declarative shadow root (the
+#     frame-element search does not pierce shadow roots);
+#   - clicking/typing/dragging into an iframe (input is dispatched in page
+#     coordinates without translating into the subframe's offset — same gap as
+#     the frame bounding-box section).
+# ============================================================================
 page/frame-evaluate.spec.ts › should not allow cross-frame element handles when frames do not script each other [fail]
-page/frame-evaluate.spec.ts › should throw for detached frames [fail]
-page/frame-frame-element.spec.ts › should throw when detached [fail]
-page/frame-frame-element.spec.ts › should work @smoke [fail]
 page/frame-frame-element.spec.ts › should work inside closed shadow root [fail]
 page/frame-frame-element.spec.ts › should work inside declarative shadow root [fail]
-page/frame-frame-element.spec.ts › should work with contentFrame [fail]
-page/frame-frame-element.spec.ts › should work with frameset [fail]
 page/frame-goto.spec.ts › should return matching responses [fail]
-page/frame-hierarchy.spec.ts › should report different frame instance when frame re-attaches [fail]
-page/frame-hierarchy.spec.ts › should report frame.name() [fail]
-page/frame-hierarchy.spec.ts › should report frame.parent() [fail]
-page/frame-hierarchy.spec.ts › should send events when frames are manipulated dynamically [fail]
-page/page-click.spec.ts › should click button inside frameset [fail]
-page/page-click.spec.ts › should click the button inside an iframe [fail]
 page/page-click.spec.ts › should not hang when frame is detached [fail]
 page/page-drag.spec.ts › Drag and drop › should work inside iframe [fail]
-page/page-evaluate.spec.ts › should throw when frame is detached [fail]
-page/page-keyboard.spec.ts › should type emoji into an iframe [fail]
-page/page-network-request.spec.ts › should work for subframe navigation request [fail]
-page/page-wait-for-function.spec.ts › should throw when frame is detached [fail]
 page/page-wait-for-selector-1.spec.ts › page.waitForSelector is shortcut for main frame [fail]
-page/page-wait-for-selector-1.spec.ts › should run in specified frame [fail]
-page/page-wait-for-selector-1.spec.ts › should throw when frame is detached [fail]
-page/page-wait-for-selector-2.spec.ts › should run in specified frame xpath [fail]
-page/page-wait-for-selector-2.spec.ts › should throw when frame is detached xpath [fail]
 
 # ============================================================================
 # expose-function  (2 tests)
@@ -131,6 +129,7 @@ page/locator-misc-1.spec.ts › should focus and blur a button [fail]
 # because service-worker registration persists across tests.
 # ============================================================================
 page/interception.spec.ts › should intercept after a service worker [fail]
+page/page-event-request.spec.ts › should report navigation requests and responses handled by service worker [fail]
 page/page-event-request.spec.ts › should report requests and responses handled by service worker with routing [fail]
 page/page-goto.spec.ts › should be able to navigate to a page controlled by service worker [fail]
 
@@ -200,13 +199,10 @@ page/page-request-fulfill.spec.ts › should fulfill with gzip and readback [fai
 # shielding, so DOM mutations between checks can detach the handle. Needs the
 # same retry-with-fresh-handle pattern that wkPage uses.
 # ============================================================================
-page/elementhandle-click.spec.ts › should double click the button [fail]
-page/elementhandle-click.spec.ts › should work with Node removed [fail]
 page/elementhandle-misc.spec.ts › should fill input [fail]
 page/elementhandle-misc.spec.ts › should hover [fail]
 page/elementhandle-misc.spec.ts › should hover when Node is removed [fail]
 page/elementhandle-scroll-into-view.spec.ts › should work @smoke [fail]
-page/elementhandle-select-text.spec.ts › should wait for visible [fail]
 page/locator-misc-2.spec.ts › should scroll into view [fail]
 page/page-keyboard.spec.ts › should handle selectAll [fail]
 page/page-screenshot.spec.ts › page screenshot animations › should not capture infinite css animation [fail]
@@ -219,9 +215,6 @@ page/page-screenshot.spec.ts › page screenshot animations › should not captu
 # deserves individual triage.
 # ============================================================================
 page/elementhandle-bounding-box.spec.ts › should handle scroll offset and click [fail]
-page/expect-boolean.spec.ts › toBeAttached › with frameLocator [fail]
-page/expect-boolean.spec.ts › toBeVisible › with frameLocator [fail]
-page/expect-boolean.spec.ts › toBeVisible › with frameLocator 2 [fail]
 page/expect-misc.spec.ts › toBeInViewport › should respect ratio option [fail]
 page/expect-misc.spec.ts › toBeInViewport › should work [fail]
 page/expect-misc.spec.ts › toHaveURL › fail string [fail]
@@ -231,16 +224,9 @@ page/expect-misc.spec.ts › toHaveURL › pass [fail]
 page/expect-misc.spec.ts › toHaveURL › resolve predicate after retries [fail]
 page/expect-misc.spec.ts › toHaveURL › resolve predicate on initial call [fail]
 page/expect-misc.spec.ts › toHaveURL › support ignoreCase [fail]
-page/expect-timeout.spec.ts › should timeout during first locator handler check [fail]
-page/expect-to-have-accessible.spec.ts › toHaveAccessibleDescription [fail]
-page/expect-to-have-text.spec.ts › toHaveText with array › fail [fail]
 page/frame-evaluate.spec.ts › should dispose context on cross-origin navigation [fail]
 page/frame-evaluate.spec.ts › should dispose context on navigation [fail]
-page/frame-evaluate.spec.ts › should have correct execution contexts @smoke [fail]
-page/frame-evaluate.spec.ts › should work in iframes that failed initial navigation [fail]
-page/frame-goto.spec.ts › should continue after client redirect [fail]
 page/interception.spec.ts › should intercept network activity from worker 2 [fail]
-page/locator-frame.spec.ts › should click in lazy iframe [fail]
 page/locator-misc-1.spec.ts › should clear input [fail]
 page/locator-misc-2.spec.ts › should scroll zero-sized element into view [fail]
 page/locator-query.spec.ts › should allow some, but not all nested frameLocators [fail]
@@ -260,31 +246,18 @@ page/page-autowaiting-basic.spec.ts › should work with waitForLoadState(load) 
 page/page-basic.spec.ts › async stacks should work [fail]
 page/page-basic.spec.ts › has navigator.webdriver set to true [fail]
 page/page-basic.spec.ts › page.url should include hashes [fail]
-page/page-basic.spec.ts › should have sane user agent [fail]
-page/page-click-react.spec.ts › should not retarget when element is recycled on hover [fail]
 page/page-click-scroll.spec.ts › should scroll into view span element [fail]
-page/page-click-timeout-2.spec.ts › should timeout waiting for display:none to be gone [fail]
-page/page-click-timeout-2.spec.ts › should timeout waiting for visibility:hidden to be gone [fail]
-page/page-click-timeout-3.spec.ts › should report wrong hit target subtree [fail]
-page/page-click-timeout-3.spec.ts › should timeout waiting for hit target [fail]
-page/page-click-timeout-4.spec.ts › should timeout waiting for stable position [fail]
 page/page-click.spec.ts › ensure events are dispatched in the individual tasks [fail]
-page/page-click.spec.ts › should click a button in scrolling container with offset [fail]
-page/page-click.spec.ts › should click on checkbox input and toggle [fail]
-page/page-click.spec.ts › should click the button with em border with offset [fail]
-page/page-click.spec.ts › should click the button with px border with offset [fail]
 page/page-click.spec.ts › should fire contextmenu event on right click in correct order [fail]
 page/page-click.spec.ts › should set PointerEvent.pressure on pointerdown [fail]
 page/page-click.spec.ts › should set PointerEvent.pressure on pointermove [fail]
 page/page-dispatchevent.spec.ts › should dispatch absolute device orientation event [fail]
-page/page-drag.spec.ts › Drag and drop › should be able to drag the mouse in a frame [fail]
 page/page-drag.spec.ts › Drag and drop › should cancel on escape [fail]
 page/page-drag.spec.ts › Drag and drop › should work @smoke [fail]
 page/page-drag.spec.ts › Drag and drop › should work if the drag event is captured but not canceled [fail]
 page/page-drag.spec.ts › Drag and drop › should work with locators [fail]
 page/page-drag.spec.ts › Drag and drop › should work with the helper method [fail]
 page/page-drag.spec.ts › should handle custom dataTransfer [fail]
-page/page-emulate-media.spec.ts › should emulate reduced motion [fail]
 page/page-emulate-media.spec.ts › should keep reduced motion and color emulation after reload [fail]
 page/page-expose-function.spec.ts › should fail with busted Array.prototype.toJSON [fail]
 page/page-fill.spec.ts › input event.composed should be true and cross shadow dom boundary - date [fail]
@@ -338,6 +311,9 @@ page/page-network-request.spec.ts › should report raw headers [fail]
 page/page-network-request.spec.ts › should return postData [fail]
 page/page-network-request.spec.ts › should work with binary post data [fail]
 page/page-network-request.spec.ts › should work with binary post data and interception [fail]
+# A subframe document request is reported without a frame (the frame is created
+# later on Page.frameNavigated), so request.frame() does not match the subframe.
+page/page-network-request.spec.ts › should work for subframe navigation request [fail]
 page/page-network-sizes.spec.ts › should handle redirects [fail]
 page/page-network-sizes.spec.ts › should have the correct responseBodySize for chunked request [fail]
 page/page-network-sizes.spec.ts › should set bodySize and headersSize [fail]
@@ -356,7 +332,6 @@ page/page-request-fulfill.spec.ts › should fulfill with multiple set-cookie [f
 page/page-request-intercept.spec.ts › should support timeout option in route.fetch [fail]
 page/page-route.spec.ts › should fail navigation when aborting main resource [fail]
 page/page-route.spec.ts › should not auto-intercept non-preflight OPTIONS with network interception [fail]
-page/page-route.spec.ts › should not override cookie header [fail]
 page/page-route.spec.ts › should send referer [fail]
 page/page-screenshot.spec.ts › page screenshot animations › should capture screenshots after layoutchanges in transitionend event › make sure transition is actually running [fail]
 page/page-screenshot.spec.ts › page screenshot animations › should fire transitionend for finite transitions › make sure transition is actually running [fail]
@@ -385,9 +360,15 @@ page/elementhandle-scroll-into-view.spec.ts › should wait for display:none to 
 page/frame-evaluate.spec.ts › should work in iframes that interrupted initial javascript url navigation [fail]
 page/frame-goto.spec.ts › should reject when frame detaches [fail]
 page/page-aria-snapshot-ai.spec.ts › should snapshot a locator inside an iframe [fail]
-page/page-click-react.spec.ts › should not retarget when element changes on hover [fail]
+# Unexpected pass: test.fail(webkit) expects ephemeral CacheStorage, but the iOS
+# WebView uses the persistent default data store, so the entry survives reload.
+page/page-cache-storage.spec.ts › CacheStorage entry should survive page.reload() [fail]
 page/page-click.spec.ts › should not wait with noAutoWaiting 2 [fail]
 page/page-emulate-media.spec.ts › should report hover and fine pointer for desktop [fail]
+# evaluate() function arguments (#41801) work in the main frame, but the
+# callback bridge is not wired for subframes, so the evaluate never resolves.
+page/page-evaluate-callback.spec.ts › should work in a child frame [fail]
+page/page-evaluate-callback.spec.ts › should work with locator.evaluate inside an iframe [fail]
 page/page-evaluate.spec.ts › should await promise from popup [fail]
 page/page-evaluate.spec.ts › should evaluate exception [fail]
 page/page-evaluate.spec.ts › should evaluate exception with a function on the stack [fail]
@@ -409,7 +390,6 @@ page/page-event-request.spec.ts › should finish 204 request [fail]
 page/page-event-request.spec.ts › should fire requestfailed when intercepting race [fail]
 page/page-event-request.spec.ts › should report navigation requests and responses handled by service worker with routing [fail]
 page/page-event-request.spec.ts › should return response body when Cross-Origin-Opener-Policy is set [fail]
-page/page-expose-function.spec.ts › should work after cross origin navigation [fail]
 page/page-expose-function.spec.ts › should work with busted Array.prototype.map/push [fail]
 page/page-expose-function.spec.ts › should work with overridden console object [fail]
 page/page-fill.spec.ts › should throw on incorrect date [fail]
@@ -425,7 +405,6 @@ page/page-goto.spec.ts › should fail when navigating and show the url at the e
 page/page-goto.spec.ts › should fail when navigating to bad SSL [fail]
 page/page-goto.spec.ts › should fail when navigating to bad SSL after redirects [fail]
 page/page-goto.spec.ts › should fail when server returns 204 [fail]
-page/page-goto.spec.ts › should work cross-process [fail]
 page/page-goto.spec.ts › should work with Cross-Origin-Opener-Policy [fail]
 page/page-goto.spec.ts › should work with Cross-Origin-Opener-Policy after redirect [fail]
 page/page-goto.spec.ts › should work with Cross-Origin-Opener-Policy and interception [fail]
@@ -437,10 +416,6 @@ page/page-history.spec.ts › page.goForward during renderer-initiated navigatio
 page/page-history.spec.ts › page.reload should work on a page with a hash [fail]
 page/page-history.spec.ts › page.reload should work with cross-origin redirect [fail]
 page/page-history.spec.ts › should reload proper page [fail]
-page/page-leaks.spec.ts › click should not leak [fail]
-page/page-leaks.spec.ts › expect should not leak [fail]
-page/page-leaks.spec.ts › fill should not leak [fail]
-page/page-leaks.spec.ts › waitFor should not leak [fail]
 page/page-localstorage.spec.ts › storage methods are scoped to the current origin [fail]
 page/page-mouse.spec.ts › should pointerdown the div with a custom button [fail]
 page/page-mouse.spec.ts › should select the text with mouse [fail]
@@ -459,14 +434,21 @@ page/page-request-continue.spec.ts › should not forward Host header on cross-o
 page/page-request-continue.spec.ts › should work with Cross-Origin-Opener-Policy [fail]
 page/page-request-fallback.spec.ts › should fall back after exception [fail]
 page/page-request-fallback.spec.ts › should work [fail]
+# The hit-target interceptor element is not released on iOS WebKit, so the
+# WeakRef stays alive after requestGC().
+page/page-request-gc.spec.ts › should collect element retained by locator hit-target interceptor after detach [fail]
 page/page-route.spec.ts › should not support ? in glob pattern [fail]
 page/page-screenshot.spec.ts › page screenshot › should capture canvas changes [fail]
 page/page-screenshot.spec.ts › page screenshot › should work with odd clip size on Retina displays [fail]
-page/page-select-option.spec.ts › should select only first option [fail]
 page/page-set-input-files.spec.ts › should upload large file [fail]
 page/page-set-input-files.spec.ts › should upload large file with relative path [fail]
 page/page-wait-for-load-state.spec.ts › should wait for load state of newPage [fail]
 page/page-wait-for-url.spec.ts › should work on frame [fail]
+# allHeaders() for the worker script request/response is missing host and
+# content-type on the stock backend
+# (https://github.com/microsoft/playwright/issues/39948).
+page/workers.spec.ts › should resolve worker script allHeaders in iframe [fail]
+page/workers.spec.ts › should resolve worker script allHeaders in main frame [fail]
 
 # ============================================================================
 # subframe-navigation  (2 tests)
@@ -483,7 +465,6 @@ page/page-wait-for-load-state.spec.ts › should work for frame [fail]
 # Page.goBack/goForward and we have not yet driven the back/forward list via
 # Runtime.evaluate(history.back()).
 # ============================================================================
-page/interception.spec.ts › should disable memory cache when intercepting [fail]
 page/page-history.spec.ts › goBack/goForward should work with bfcache-able pages [fail]
 page/page-history.spec.ts › page.goBack should work @smoke [fail]
 
@@ -501,18 +482,10 @@ page/page-aria-snapshot-ai.spec.ts › should list iframes [fail]
 page/page-aria-snapshot-ai.spec.ts › should persist iframe references [fail]
 page/page-aria-snapshot-ai.spec.ts › should produce incremental snapshot for iframes [fail]
 page/page-aria-snapshot-ai.spec.ts › should stitch all frame snapshots [fail]
-page/page-emulate-media.spec.ts › should change the actual colors in css [fail]
-page/page-emulate-media.spec.ts › should default to light [fail]
-page/page-emulate-media.spec.ts › should emulate colorScheme should work @smoke [fail]
-page/page-emulate-media.spec.ts › should emulate contrast [fail]
 page/page-emulate-media.spec.ts › should emulate forcedColors [fail]
-page/page-emulate-media.spec.ts › should emulate type @smoke [fail]
-page/page-emulate-media.spec.ts › should work during navigation [fail]
-page/page-request-gc.spec.ts › should work [fail]
 page/page-request-intercept.spec.ts › should fulfill intercepted response using alias [fail]
 page/page-request-intercept.spec.ts › should intercept with url override [fail]
 page/page-request-intercept.spec.ts › should not follow redirects when maxRedirects is set to 0 in route.fetch [fail]
-page/page-route.spec.ts › should properly return navigation response when URL has cookies [fail]
 page/page-set-input-files.spec.ts › should detect mime type [fail]
 page/page-set-input-files.spec.ts › should emit input and change events [fail]
 page/page-set-input-files.spec.ts › should upload a folder [fail]
@@ -547,7 +520,9 @@ page/page-autowaiting-basic.spec.ts › should report and collapse log in action
 page/page-autowaiting-basic.spec.ts › should report and collapse log in expect [fail]
 page/page-autowaiting-no-hang.spec.ts › assigning location to about:blank after non-about:blank [fail]
 page/page-autowaiting-no-hang.spec.ts › calling window.stop sync [fail]
-page/page-click.spec.ts › should wait for becoming hit target [fail]
+# Pre-existing (fails on main too): a same-document navigation via the Navigation
+# API does not update the frame URL on the stock WebView backend.
+page/page-autowaiting-no-hang.spec.ts › clicking a link intercepted by the Navigation API same-document [fail]
 page/page-drag.spec.ts › Drag and drop › should respect the drop effect [fail]
 page/page-drag.spec.ts › Drag and drop › should work if a frame is stalled [fail]
 page/page-evaluate.spec.ts › should return -Infinity [fail]
@@ -563,26 +538,24 @@ page/page-screenshot.spec.ts › should capture css box-shadow [fail]
 page/to-match-aria-snapshot.spec.ts › should not match what is not matched [fail]
 
 # ============================================================================
-# structural-unsupported  (111 tests)
+# structural-unsupported  (remaining)
 # Tests whose name contains 'iframe', 'popup', or 'filechooser'. Stock WebKit
-# RDP exposes no Target.create / popup tracking / file-chooser API and our
-# wvPage subframe support is intentionally minimal — these tests can't be
-# made to pass without a real WebKit build. Bulk-skipped to keep the worker
-# from stalling on popup/dialog interactions.
+# RDP exposes no Target.create / popup tracking / file-chooser API, so popup and
+# file-chooser tests stay skipped. The remaining iframe entries here are the
+# selectors-frame / locator-frame suites, which are almost entirely built on
+# fulfilling the MAIN navigation via page.route. On iOS 26 that fulfillment is
+# flaky: the cross-origin navigation triggers a process swap whose provisional
+# target arrives un-paused (Target.setPauseOnStart is not honored for it), so it
+# fetches the real document before interception can run and the fulfilled body is
+# lost (see the main-navigation-fulfill-flaky section). The underlying iframe
+# support works — same-origin frame discovery, contentFrame/ownerFrame/
+# frameElement, and subframe interception all pass (see the now-unskipped
+# frame-evaluate / frame-hierarchy / frame-frame-element / elementhandle-*-frame
+# tests). Kept skipped until the provisional-target pause gap is addressed.
 # ============================================================================
-page/elementhandle-content-frame.spec.ts › should return null for non-iframes [fail]
-page/elementhandle-content-frame.spec.ts › should work for cross-process iframes [fail]
-page/elementhandle-owner-frame.spec.ts › should work for cross-process iframes [fail]
-page/elementhandle-owner-frame.spec.ts › should work for iframe elements [fail]
-page/frame-evaluate.spec.ts › should work in iframes that failed initial navigation [fail]
 page/frame-evaluate.spec.ts › should work in iframes that interrupted initial javascript url navigation [fail]
-page/frame-hierarchy.spec.ts › should refuse to display x-frame-options:deny iframe [fail]
-page/locator-frame.spec.ts › click should survive iframe navigation [fail]
-page/locator-frame.spec.ts › locator.frameLocator should work for iframe [fail]
-page/locator-frame.spec.ts › should click in lazy iframe [fail]
 page/locator-frame.spec.ts › should work for iframe @smoke [fail]
 page/locator-frame.spec.ts › should work for nested iframe [fail]
-page/locator-frame.spec.ts › should work with COEP/COOP/CORP isolated iframe [fail]
 page/page-add-init-script.spec.ts › init script should run only once in iframe [fail]
 page/page-aria-snapshot-ai.spec.ts › return empty snapshot when iframe is not loaded [fail]
 page/page-aria-snapshot-ai.spec.ts › should limit depth across iframe boundary [fail]
@@ -592,6 +565,11 @@ page/page-aria-snapshot-ai.spec.ts › should persist iframe references [fail]
 page/page-aria-snapshot-ai.spec.ts › should produce incremental snapshot for iframes [fail]
 page/page-aria-snapshot-ai.spec.ts › should snapshot a locator inside an iframe [fail]
 page/page-aria-snapshot-ai.spec.ts › should support many properties on iframes [fail]
+# frame/frameset elements are treated like iframes in aria snapshots (#41828) —
+# same frame-stitching gap as the iframe entries above.
+page/page-aria-snapshot-ai.spec.ts › should snapshot a locator inside a frameset frame [fail]
+page/page-aria-snapshot-ai.spec.ts › should stitch iframes inside a frameset frame [fail]
+page/page-aria-snapshot-ai.spec.ts › should stitch nested frameset documents [fail]
 page/page-aria-snapshot.spec.ts › auto-waits the locator and does not include iframes [fail]
 page/page-aria-snapshot.spec.ts › should snapshot a locator inside an iframe [fail]
 page/page-autowaiting-no-hang.spec.ts › opening a popup [fail]
@@ -600,9 +578,6 @@ page/page-click.spec.ts › should click a button that is overlaid by a permissi
 page/page-click.spec.ts › should click in a nested transformed iframe [fail]
 page/page-click.spec.ts › should click in a transformed iframe [fail]
 page/page-click.spec.ts › should click in a transformed iframe with force [fail]
-page/page-click.spec.ts › should click in an iframe with border [fail]
-page/page-click.spec.ts › should click in an iframe with border 2 [fail]
-page/page-click.spec.ts › should click the button inside an iframe [fail]
 page/page-click.spec.ts › should click the button with fixed position inside an iframe [fail]
 page/page-click.spec.ts › should issue clicks in parallel in page and popup [fail]
 page/page-drag.spec.ts › Drag and drop › iframe › should drag into an iframe [fail]
@@ -667,16 +642,10 @@ page/page-wait-for-load-state.spec.ts › should wait for load state of about:bl
 page/page-wait-for-load-state.spec.ts › should wait for load state of empty url popup [fail]
 page/page-wait-for-load-state.spec.ts › should wait for load state of popup with network url [fail]
 page/page-wait-for-load-state.spec.ts › should wait for load state of popup with network url and noopener [fail]
-page/page-wait-for-load-state.spec.ts › should work with broken blob-url iframe [fail]
-page/page-wait-for-load-state.spec.ts › should work with broken data-url iframe [fail]
-page/page-wait-for-load-state.spec.ts › should work with javascript: iframe [fail]
-page/selectors-frame.spec.ts › click should survive iframe navigation [fail]
-page/selectors-frame.spec.ts › should click in lazy iframe [fail]
 page/selectors-frame.spec.ts › should work for iframe (handle) [fail]
 page/selectors-frame.spec.ts › should work for iframe @smoke [fail]
 page/selectors-frame.spec.ts › should work for nested iframe [fail]
 page/selectors-frame.spec.ts › should work for nested iframe (handle) [fail]
-page/selectors-frame.spec.ts › waitForSelector should survive iframe navigation (handle) [fail]
 page/wheel.spec.ts › should dispatch wheel events after popup was opened @smoke [fail]
 page/workers.spec.ts › should attribute network activity for worker inside iframe to the iframe [fail]
 
@@ -710,83 +679,36 @@ page/page-fill.spec.ts › should throw on incorrect datetime-local [fail]
 # leaves the page target dead for the next test's first navigation (see the
 # worker-remaining section). Re-run and prune this section as triggers are fixed.
 # ============================================================================
-page/elementhandle-click.spec.ts › should work @smoke [fail]
 page/elementhandle-owner-frame.spec.ts › should work for adopted elements [fail]
 page/elementhandle-query-selector.spec.ts › should work for adopted elements [fail]
 page/elementhandle-scroll-into-view.spec.ts › should scroll display:contents into view [fail]
-page/frame-evaluate.spec.ts › should execute after cross-site navigation [fail]
-page/frame-evaluate.spec.ts › should not allow cross-frame js handles [fail]
-page/frame-hierarchy.spec.ts › should not send attach/detach events for main frame [fail]
-page/frame-hierarchy.spec.ts › should persist mainFrame on cross-process navigation [fail]
 page/frame-hierarchy.spec.ts › should send "framenavigated" when navigating on anchor URLs [fail]
-page/interception.spec.ts › should intercept network activity from worker [fail]
 page/interception.spec.ts › should intercept worker requests when enabled after worker creation [fail]
-page/interception.spec.ts › should work with navigation @smoke [fail]
-page/locator-frame.spec.ts › click should survive frame reattach [fail]
-page/locator-frame.spec.ts › frameLocator.owner should work [fail]
-page/locator-frame.spec.ts › getBy coverage [fail]
-page/locator-frame.spec.ts › locator.contentFrame should work [fail]
-page/locator-frame.spec.ts › locator.frameLocator should not throw on first/last/nth [fail]
-page/locator-frame.spec.ts › locator.frameLocator should throw on ambiguity [fail]
-page/locator-frame.spec.ts › should wait for frame 2 [fail]
-page/locator-frame.spec.ts › should wait for frame to go [fail]
-page/locator-frame.spec.ts › should work for $ and $$ [fail]
-page/locator-frame.spec.ts › waitFor should survive frame reattach [fail]
-page/locator-misc-2.spec.ts › Locator.locator() and FrameLocator.locator() should accept locator [fail]
+# The custom selector navigates cross-process from inside query(), killing the
+# page target.
+page/locator-query.spec.ts › count() should not throw during navigation [fail]
 page/network-post-data.spec.ts › should get post data for file/blob [fail]
 page/network-post-data.spec.ts › should get post data for navigator.sendBeacon api calls [fail]
-page/page-add-init-script.spec.ts › should remove init script after dispose [fail]
 page/page-add-init-script.spec.ts › should work after a cross origin navigation [fail]
 page/page-autowaiting-basic.spec.ts › should await cross-process navigation when clicking anchor [fail]
 page/page-autowaiting-basic.spec.ts › should await form-get on click [fail]
-page/page-autowaiting-no-hang.spec.ts › clicking in the middle of navigation that commits [fail]
-page/page-autowaiting-no-hang.spec.ts › goBack in the middle of navigation that commits [fail]
-page/page-basic.spec.ts › frame.press should work [fail]
 page/page-basic.spec.ts › page.close should work with window.close [fail]
 page/page-basic.spec.ts › should provide access to the opener page [fail]
 page/page-click-scroll.spec.ts › should scroll into view display:contents [fail]
 page/page-click-scroll.spec.ts › should scroll into view display:contents with position [fail]
-page/page-click-timeout-1.spec.ts › should avoid side effects after timeout [fail]
-page/page-click-timeout-3.spec.ts › should fail when element jumps during hit testing [fail]
 page/page-click.spec.ts › should click a very large button with offset [fail]
-page/page-click.spec.ts › should click the button after a cross origin navigation [fail]
 page/page-click.spec.ts › should click the button when window.innerWidth is corrupted [fail]
 page/page-click.spec.ts › should select the text by triple clicking [fail]
-page/page-dispatchevent.spec.ts › should dispatch click after a cross origin navigation [fail]
-page/page-dispatchevent.spec.ts › should dispatch click after navigation [fail]
 page/page-dispatchevent.spec.ts › should dispatch click when node is added in shadow dom [fail]
-page/page-dispatchevent.spec.ts › should throw if argument is from different frame [fail]
-page/page-evaluate.spec.ts › should evaluate in the page context [fail]
 page/page-evaluate.spec.ts › should not throw an error when evaluation does a navigation [fail]
 page/page-evaluate.spec.ts › should transfer 100Mb of data from page to node.js [fail]
-page/page-evaluate.spec.ts › should work right after a cross-origin navigation [fail]
-page/page-expose-function.spec.ts › should alias Window, Document and Node [fail]
-page/page-expose-function.spec.ts › should await returned promise [fail]
-page/page-expose-function.spec.ts › should serialize cycles [fail]
-page/page-expose-function.spec.ts › should survive navigation [fail]
 page/page-expose-function.spec.ts › should work on frames [fail]
 page/page-expose-function.spec.ts › should work on frames before navigation [fail]
-page/page-expose-function.spec.ts › should work with complex objects [fail]
-page/page-expose-function.spec.ts › should work with setContent [fail]
 page/page-goto.spec.ts › js redirect overrides url bar navigation [fail]
-# First does a cross-origin navigation that kills the page target; second is a
-# plain navigation that inherits 'Target closed' when it runs after such a
-# trigger. Keep skipped until cross-process navigation stops tearing down the
-# session.
-page/page-goto.spec.ts › should not crash when navigating to bad SSL after a cross origin navigation [fail]
-page/page-goto.spec.ts › should not throw if networkidle0 is passed as an option [fail]
 page/page-request-fulfill.spec.ts › should fulfill preload link requests [fail]
-page/page-request-intercept.spec.ts › should give access to the intercepted response [fail]
-page/page-request-intercept.spec.ts › should intercept with post data override [fail]
-page/page-route.spec.ts › should be able to intercept every navigation to a page controlled by service worker [fail]
-page/page-route.spec.ts › should intercept main resource during cross-process navigation [fail]
 page/page-route.spec.ts › should not fulfill with redirect status [fail]
-page/page-route.spec.ts › should not throw if request was cancelled by the page [fail]
 page/page-screenshot.spec.ts › page screenshot animations › should trigger particular events for INfinite css animation [fail]
-page/page-screenshot.spec.ts › page screenshot animations › should trigger particular events for css transitions [fail]
 page/page-screenshot.spec.ts › page screenshot animations › should trigger particular events for finite css animation [fail]
-page/page-screenshot.spec.ts › page screenshot › mask option › should work when subframe has stalled navigation [fail]
-page/page-wait-for-function.spec.ts › should survive cross-process navigation [fail]
 page/page-wait-for-function.spec.ts › should survive navigations [fail]
 page/page-wait-for-load-state.spec.ts › should wait for load state of about:blank popup [fail]
 page/page-wait-for-load-state.spec.ts › should wait for load state of about:blank popup with noopener [fail]
@@ -794,43 +716,23 @@ page/page-wait-for-load-state.spec.ts › should wait for load state of popup wi
 page/page-wait-for-load-state.spec.ts › should wait for load state of popup with network url and noopener [fail]
 page/page-wait-for-load-state.spec.ts › should work with clicking target=_blank [fail]
 page/page-wait-for-load-state.spec.ts › should work with pages that have loaded before being connected to [fail]
-page/page-wait-for-navigation.spec.ts › should work for cross-process navigations [fail]
 page/page-wait-for-navigation.spec.ts › should work on frame [fail]
 page/page-wait-for-navigation.spec.ts › should work with clicking on anchor links [fail]
 page/page-wait-for-navigation.spec.ts › should work with history.pushState() [fail]
 page/page-wait-for-navigation.spec.ts › should work with history.replaceState() [fail]
 page/page-wait-for-navigation.spec.ts › should work with url match for same document navigations [fail]
 page/page-wait-for-selector-2.spec.ts › should support >> selector syntax [fail]
-page/page-wait-for-selector-2.spec.ts › should survive cross-process navigation [fail]
 page/page-wait-for-url.spec.ts › should work with clicking on anchor links [fail]
 page/page-wait-for-url.spec.ts › should work with history.pushState() [fail]
 page/page-wait-for-url.spec.ts › should work with history.replaceState() [fail]
 page/page-wait-for-url.spec.ts › should work with url match for same document navigations [fail]
 page/retarget.spec.ts › should check the box outside shadow dom label [fail]
-page/selectors-frame.spec.ts › click should survive frame reattach [fail]
-page/selectors-frame.spec.ts › click should survive navigation [fail]
-page/selectors-frame.spec.ts › should capture after the enter-frame [fail]
-page/selectors-frame.spec.ts › should not allow capturing before enter-frame [fail]
-page/selectors-frame.spec.ts › should not allow dangling enter-frame [fail]
-page/selectors-frame.spec.ts › should not allow leading enter-frame [fail]
-page/selectors-frame.spec.ts › should work for $ and $$ [fail]
-page/selectors-frame.spec.ts › should work for $ and $$ (handle) [fail]
-page/selectors-frame.spec.ts › should work for $$eval [fail]
-page/selectors-frame.spec.ts › should work for $$eval (handle) [fail]
-page/selectors-frame.spec.ts › should work for $eval [fail]
-page/selectors-frame.spec.ts › should work for $eval (handle) [fail]
-page/selectors-frame.spec.ts › waitFor should survive frame reattach [fail]
-page/selectors-frame.spec.ts › waitForSelector should survive frame reattach (handle) [fail]
+
 # ============================================================================
-# worker-remaining  (2 tests)
-# Web Workers attach over the WebView backend now (Worker.enable is sent during
-# session init), so page/workers.spec.ts mostly passes. Two gaps remain:
-#  - 'should clear upon cross-process navigation' passes its own assertions but
-#    the cross-process target swap leaves the page in a 'Target closed' state for
-#    the next test (same root cause as target-closed-cascade above).
-#  - 'should support extra http headers': setExtraHTTPHeaders is not applied to
-#    the worker script request, so worker.js arrives without the header.
+# busy-main-thread  (1 test)
+# This test deliberately infinite loops the WebProcess, which the shared MobileSafari
+# can't recover from without a full process restart. Left to run, its teardown would
+# exhaust the page fixture timeout and expensively recycle the worker on every shard.
 # ============================================================================
-page/workers.spec.ts › should clear upon cross-process navigation [fail]
-page/workers.spec.ts › should support extra http headers [fail]
+page/page-set-content.spec.ts › should handle timeout properly 2 [fail]
 

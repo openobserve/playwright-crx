@@ -351,13 +351,8 @@ test('should render console', async ({ showTraceViewer, browserName }) => {
   // Browsers can insert more messages between these two.
   await expect(traceViewer.consoleLineMessages.filter({ hasText: 'Cheers!' })).toBeVisible();
 
-  const icons = traceViewer.consoleLines.locator('.codicon');
-  await expect.soft(icons.nth(0)).toHaveClass('codicon codicon-browser status-none');
-  await expect.soft(icons.nth(1)).toHaveClass('codicon codicon-browser status-warning');
-  await expect.soft(icons.nth(2)).toHaveClass('codicon codicon-browser status-error');
-  await expect.soft(icons.nth(3)).toHaveClass('codicon codicon-browser status-error');
-  // Browsers can insert more messages between these two.
-  await expect.soft(traceViewer.consoleLines.filter({ hasText: 'Cheers!' }).locator('.codicon')).toHaveClass('codicon codicon-browser status-none');
+  // Single page and no runner messages: the source badge is hidden.
+  await expect(traceViewer.consoleLines.locator('.console-source')).toHaveCount(0);
   await expect(traceViewer.consoleStacks.first()).toContainText('Error: Unhandled exception');
 
   await traceViewer.selectAction('Evaluate');
@@ -369,6 +364,20 @@ test('should render console', async ({ showTraceViewer, browserName }) => {
   await expect(listViews.nth(3)).toHaveClass('list-view-entry error');
   // Browsers can insert more messages between these two.
   await expect(listViews.filter({ hasText: 'Cheers!' })).toHaveClass('list-view-entry');
+});
+
+test('should show console source for multiple pages', async ({ context, runAndTrace, server }) => {
+  const traceViewer = await runAndTrace(async () => {
+    const page1 = await context.newPage();
+    await page1.goto(server.EMPTY_PAGE);
+    await page1.evaluate(() => console.log('hello from one'));
+    const page2 = await context.newPage();
+    await page2.goto(server.EMPTY_PAGE);
+    await page2.evaluate(() => console.log('hello from two'));
+  });
+  await traceViewer.showConsoleTab();
+  await expect(traceViewer.consoleLines.filter({ hasText: 'hello from one' }).locator('.console-source')).toHaveText('page#1');
+  await expect(traceViewer.consoleLines.filter({ hasText: 'hello from two' }).locator('.console-source')).toHaveText('page#2');
 });
 
 test('should highlight console message on timeline on hover', async ({ showTraceViewer }) => {
@@ -477,7 +486,7 @@ test('should have network requests', async ({ showTraceViewer }) => {
   await expect(traceViewer.networkRequests).toContainText([/frame.htmlGET200text\/html/]);
   await expect(traceViewer.networkRequests).toContainText([/style.cssGET200text\/css/]);
   await expect(traceViewer.networkRequests).toContainText([/404GET404text\/plain/]);
-  await expect(traceViewer.networkRequests).toContainText([/script.jsGET200application\/javascript/]);
+  await expect(traceViewer.networkRequests).toContainText([/script.jsGET200text\/javascript/]);
   await expect(traceViewer.networkRequests.filter({ hasText: '404GET404text' })).toHaveCSS('background-color', 'rgb(242, 222, 222)');
 });
 
@@ -656,7 +665,7 @@ test('should have network request overrides 2', async ({ page, server, runAndTra
   await traceViewer.selectAction('Navigate');
   await traceViewer.showNetworkTab();
   await expect.soft(traceViewer.networkRequests).toContainText([/frame.htmlGET200text\/html.*/]);
-  await expect.soft(traceViewer.networkRequests).toContainText([/script.jsGET200application\/javascript.*continued/]);
+  await expect.soft(traceViewer.networkRequests).toContainText([/script.jsGET200text\/javascript.*continued/]);
 });
 
 test('should filter network requests by websocket type', {

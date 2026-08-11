@@ -25,6 +25,7 @@ Metadata:
     internal: boolean?
     # Test runner step id.
     stepId: string?
+    timeout: float?
 
 ClientSideCallMetadata:
   type: object
@@ -49,8 +50,6 @@ Disposable:
 
     dispose:
       internal: true
-      flags:
-        potentiallyClosesScope: true
 
 WaitInfo:
   type: object

@@ -16,7 +16,7 @@
 
 // @ts-check
 const path = require('path');
-const devices = require('../../packages/playwright-core/lib/server/deviceDescriptorsSource.json');
+const devices = require('../../packages/isomorphic/deviceDescriptorsSource.json');
 const md = require('../markdown');
 const docs = require('../doclint/documentation');
 const PROJECT_DIR = path.join(__dirname, '..', '..');
@@ -288,7 +288,7 @@ class TypesGenerator {
         for (const { eventName, params, comment, type } of eventDescriptions) {
           if (comment)
             parts.push(this.writeComment(comment, indent));
-          parts.push(`  ${member.alias}(event: '${eventName}', optionsOrPredicate?: { predicate?: (${params}) => boolean | Promise<boolean>, timeout?: number } | ((${params}) => boolean | Promise<boolean>)): Promise<${type}>;\n`);
+          parts.push(`  ${member.alias}(event: '${eventName}', optionsOrPredicate?: { predicate?: (${params}) => boolean | Promise<boolean>, timeout?: number, signal?: AbortSignal } | ((${params}) => boolean | Promise<boolean>)): Promise<${type}>;\n`);
         }
 
         return parts.join('\n');
@@ -581,6 +581,7 @@ class TypesGenerator {
         'Matchers',
         'PlaywrightWorkerArgs.playwright',
         'PlaywrightWorkerOptions.defaultBrowserType',
+        'PlaywrightWorkerOptions.reuseContext',
         'Project',
       ]),
       doNotExportClassNames: assertionClasses,

@@ -16,7 +16,7 @@
  */
 
 import { assert } from '@isomorphic/assert';
-import { rewriteErrorMessage } from '@isomorphic/stackTrace';
+import { rewriteErrorMessage } from '@utils/stackTrace';
 import { parseEvaluationResultValue } from '@isomorphic/utilityScriptSerializers';
 import { getExceptionMessage, releaseObject } from './crProtocolHelper';
 import * as js from '../javascript';
@@ -104,6 +104,8 @@ function rewriteError(error: Error): Protocol.Runtime.evaluateReturnValue {
     throw new Error('Cannot serialize result: object reference chain is too long.');
   if (error.message.includes('Object couldn\'t be returned by value'))
     return { result: { type: 'undefined' } };
+  if (error.message.includes('Promise was collected'))
+    throw new Error('Resulting promise was garbage collected.');
 
   if (error instanceof TypeError && error.message.startsWith('Converting circular structure to JSON'))
     rewriteErrorMessage(error, error.message + ' Are you passing a nested JSHandle?');

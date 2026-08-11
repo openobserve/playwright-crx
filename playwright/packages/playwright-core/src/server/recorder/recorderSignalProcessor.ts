@@ -16,12 +16,10 @@
 
 import { monotonicTime } from '@isomorphic/time';
 import { isUnderTest } from '@utils/debug';
-import { generateFrameSelector } from './recorderUtils';
-import { nullProgress } from '../progress';
 
-import type { Signal } from '../../../../recorder/src/actions';
+import type { Signal } from '@isomorphic/codegen/actions';
 import type { Frame } from '../frames';
-import type * as actions from '@recorder/actions';
+import type * as actions from '@isomorphic/codegen/actions';
 
 export interface ProcessorDelegate {
   addAction(actionInContext: actions.ActionInContext): void;
@@ -41,7 +39,7 @@ export class RecorderSignalProcessor {
     this._delegate.addAction(actionInContext);
   }
 
-  signal(pageAlias: string, frame: Frame, signal: Signal) {
+  signal(frame: Frame, signal: Signal) {
     const timestamp = monotonicTime();
     if (signal.name === 'navigation' && frame._page.mainFrame() === frame) {
       const lastAction = this._lastAction;
@@ -57,11 +55,7 @@ export class RecorderSignalProcessor {
 
       if (generateGoto) {
         this.addAction({
-          frame: {
-            pageGuid: frame._page.guid,
-            pageAlias,
-            framePath: [],
-          },
+          pageGuid: frame._page.guid,
           action: {
             name: 'navigate',
             url: frame.url(),
@@ -81,17 +75,10 @@ export class RecorderSignalProcessor {
       // like any other signal and attached to the causing action by the recorder app.
     }
 
-    generateFrameSelector(nullProgress, frame).then(framePath => {
-      const signalInContext: actions.SignalInContext = {
-        frame: {
-          pageGuid: frame._page.guid,
-          pageAlias,
-          framePath,
-        },
-        signal,
-        timestamp,
-      };
-      this._delegate.addSignal(signalInContext);
+    this._delegate.addSignal({
+      pageGuid: frame._page.guid,
+      signal,
+      timestamp,
     });
   }
 }

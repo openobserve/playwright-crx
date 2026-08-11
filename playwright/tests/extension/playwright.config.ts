@@ -17,17 +17,18 @@
 import { defineConfig } from '@playwright/test';
 
 import type { TestOptions } from '../mcp/fixtures';
-import type { ExtensionTestOptions } from './extension-fixtures';
 
-export default defineConfig<TestOptions & ExtensionTestOptions>({
+export default defineConfig<TestOptions>({
   testDir: './',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
-  reporter: 'list',
+  reporter: process.env.CI ? [
+    ['list'],
+    ['../config/parquetReporter.ts'],
+  ] : 'list',
   projects: [
-    { name: 'chromium', use: { mcpBrowser: 'chromium', protocolVersion: 2 } },
-    { name: 'chromium (legacy v1)', use: { mcpBrowser: 'chromium', protocolVersion: 1 } },
+    { name: 'chromium', use: { mcpBrowser: 'chromium' } },
   ],
 });

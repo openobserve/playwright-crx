@@ -192,7 +192,8 @@ async function runWatch() {
   for (const { files, from, to, ignored } of copyFiles) {
     const watcher = chokidar.watch([filePath(files)], { ignored });
     watcher.on('all', (event, file) => {
-      copyFile(file, from, to);
+      if (event === 'add' || event === 'change')
+        copyFile(file, from, to);
     });
   }
 
@@ -558,6 +559,43 @@ for (const pkg of workspace.packages()) {
   }));
 }
 
+// @playwright/client — browser-targeted ESM bundle. The client tree is written
+// isomorphically; the few genuine node builtins it still imports are swapped for
+// browser stubs here (see packages/playwright-client/src/nodeStubs). esbuild's
+// `platform: 'browser'` additionally fails the build if any other builtin leaks.
+{
+  const clientNodeStub = name => filePath(`packages/playwright-client/src/nodeStubs/${name}.ts`);
+  steps.push(new EsbuildStep({
+    bundle: true,
+    format: 'esm',
+    platform: 'browser',
+    target: 'es2020',
+    entryPoints: [filePath('packages/playwright-client/src/index.ts')],
+    outfile: filePath('packages/playwright-client/lib/index.mjs'),
+    alias: {
+      'fs': clientNodeStub('fs'),
+      'path': clientNodeStub('path'),
+      'stream': clientNodeStub('stream'),
+      'util': clientNodeStub('util'),
+      'inspector': clientNodeStub('inspector'),
+      'async_hooks': clientNodeStub('async_hooks'),
+      'events': clientNodeStub('events'),
+      'crypto': clientNodeStub('crypto'),
+      // Vendored npm dep used for terminal colors; no-op in the browser.
+      'colors/safe': clientNodeStub('colors'),
+    },
+    // Provide a `process` global so isomorphic/@utils code that reads
+    // `process.env` works in the browser.
+    inject: [clientNodeStub('processShim')],
+  }, [
+    filePath('packages/playwright-client/src'),
+    filePath('packages/playwright-core/src/client'),
+    filePath('packages/isomorphic'),
+    filePath('packages/utils'),
+    filePath('packages/protocol/src'),
+  ]));
+}
+
 // Build playwright-core exported entry points.
 steps.push(new EsbuildStep({
   entryPoints: [
@@ -589,6 +627,7 @@ steps.push(new EsbuildStep({
 }, [filePath('packages/playwright-core/src/*')]));
 
 const playwrightCoreSrc = filePath('packages/playwright-core/src');
+const commonUtilsSrc = [filePath('packages/protocol/src'), filePath('packages/utils'), filePath('packages/isomorphic')];
 
 // playwright-core/lib/utilsBundle.js — bundled npm utilities barrel.
 steps.push(new EsbuildStep({
@@ -628,7 +667,7 @@ steps.push(new EsbuildStep({
     setup: build => build.onResolve({ filter: /utilsBundle/ },
         () => ({ path: './utilsBundle', external: true })),
   }, dynamicImportToRequirePlugin],
-}, [playwrightCoreSrc]));
+}, [playwrightCoreSrc, ...commonUtilsSrc, filePath('packages/injected')]));
 
 function assertCoreBundleHasNoNodeModules() {
   const bundlePath = filePath('packages/playwright-core/lib/coreBundle.js');
@@ -673,7 +712,7 @@ steps.push(new CustomCallbackStep(assertCoreBundleHasNoNodeModules));
       '../transform/esmLoader.js',
     ],
     plugins: [],
-  }, [playwrightSrc]));
+  }, [playwrightSrc, ...commonUtilsSrc]));
 }
 
 // Build playwright entry points (per-file), excluding matchers/* and
@@ -700,7 +739,7 @@ steps.push(new EsbuildStep({
     '../package',
   ],
   plugins: [dynamicImportToRequirePlugin],
-}, [filePath('packages/playwright/src')]));
+}, [filePath('packages/playwright/src'), ...commonUtilsSrc]));
 
 // playwright/lib/matchers/expect.js — bundled jest expect facade.
 steps.push(new EsbuildStep({
@@ -715,7 +754,7 @@ steps.push(new EsbuildStep({
     '../babelBundle',
   ],
   plugins: [dynamicImportToRequirePlugin],
-}, [filePath('packages/playwright/src')]));
+}, [filePath('packages/playwright/src'), ...commonUtilsSrc]));
 
 // playwright/lib/common/index.js — bundled common barrel.
 steps.push(new EsbuildStep({
@@ -733,7 +772,7 @@ steps.push(new EsbuildStep({
     '../transform/esmLoader.js',
   ],
   plugins: [dynamicImportToRequirePlugin],
-}, [filePath('packages/playwright/src')]));
+}, [filePath('packages/playwright/src'), ...commonUtilsSrc]));
 
 // playwright/lib/runner/index.js — bundled runner barrel.
 steps.push(new EsbuildStep({
@@ -759,7 +798,7 @@ steps.push(new EsbuildStep({
     __PW_HMR__: String(!!watchMode),
   },
   plugins: [dynamicImportToRequirePlugin],
-}, [filePath('packages/playwright/src')]));
+}, [filePath('packages/playwright/src'), ...commonUtilsSrc]));
 
 // playwright/lib/isomorphic/index.js — bundled isomorphic barrel.
 steps.push(new EsbuildStep({
@@ -788,7 +827,7 @@ steps.push(new EsbuildStep({
     '../transform/esmLoader',
   ],
   plugins: [dynamicImportToRequirePlugin],
-}, [filePath('packages/playwright/src')]));
+}, [filePath('packages/playwright/src'), ...commonUtilsSrc]));
 
 // playwright/lib/worker/workerProcessEntry.js — bundled worker process
 // entry. Output sits at the same depth as the source so '../X' externals
@@ -808,7 +847,7 @@ steps.push(new EsbuildStep({
     '../transform/esmLoader',
   ],
   plugins: [dynamicImportToRequirePlugin],
-}, [filePath('packages/playwright/src')]));
+}, [filePath('packages/playwright/src'), ...commonUtilsSrc]));
 
 // Build the Electron preload loader as a standalone CJS file. It runs inside
 // the Electron process (via `electron -r loader.js`) and must not depend on
@@ -950,7 +989,7 @@ onChanges.push({
     'packages/playwright-core/src/server/chromium/protocol.d.ts',
   ],
   mustExist: [
-    'packages/playwright-core/lib/server/deviceDescriptorsSource.json',
+    'packages/isomorphic/deviceDescriptorsSource.json',
   ],
   script: 'utils/generate_types/index.js',
 });
@@ -989,6 +1028,21 @@ copyFiles.push({
   to: 'packages/playwright-core/lib',
 });
 
+// WebP codec: ship the WASM binary and its third-party license into lib/ next
+// to coreBundle.js, where @utils/webp/webp reads them at runtime. The .js glue
+// is inlined into coreBundle; the .wasm and .LICENSE ship as assets. The
+// license is generated from the pinned libwebp source by utils/libwebp-wasm/build.sh.
+copyFiles.push({
+  files: 'packages/utils/webp/webp_codec.wasm',
+  from: 'packages/utils/webp',
+  to: 'packages/playwright-core/lib',
+});
+copyFiles.push({
+  files: 'packages/utils/webp/webp_codec.LICENSE',
+  from: 'packages/utils/webp',
+  to: 'packages/playwright-core/lib',
+});
+
 
 copyFiles.push({
   files: 'packages/playwright/src/agents/*.md',
@@ -1002,14 +1056,9 @@ copyFiles.push({
   to: 'packages/playwright/lib',
 });
 
+// Agent skills ship as-is: SKILL.md, referenced docs and templates.
 copyFiles.push({
-  files: 'packages/playwright-core/src/tools/cli-client/skill/**/*.md',
-  from: 'packages/playwright-core/src',
-  to: 'packages/playwright-core/lib',
-});
-
-copyFiles.push({
-  files: 'packages/playwright-core/src/tools/trace/SKILL.md',
+  files: 'packages/playwright-core/src/tools/skills/**/*',
   from: 'packages/playwright-core/src',
   to: 'packages/playwright-core/lib',
 });

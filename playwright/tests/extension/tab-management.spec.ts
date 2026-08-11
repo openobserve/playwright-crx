@@ -16,15 +16,13 @@
 
 import { test, expect, connectAndNavigate } from './extension-fixtures';
 
-test.skip(({ protocolVersion }) => protocolVersion === 1, 'Multi-tab not supported in protocol v1');
-
 test(`browser_tabs new creates a new tab`, async ({ startExtensionClient, server }) => {
   server.setContent('/second.html', '<title>Second</title><body>Second page<body>', 'text/html');
   const { browserContext, client } = await startExtensionClient();
 
   const navigateResponse = await connectAndNavigate(browserContext, client, server.HELLO_WORLD);
   expect(navigateResponse).toHaveResponse({
-    snapshot: expect.stringContaining(`- generic [active] [ref=e1]: Hello, world!`),
+    snapshot: expect.stringContaining(`- generic [active] [ref=f1e1]: Hello, world!`),
   });
 
   const newTabResponse = await client.callTool({
@@ -117,7 +115,7 @@ test(`cmd+click opens new tab visible in tab list`, async ({ startExtensionClien
 
   await client.callTool({
     name: 'browser_click',
-    arguments: { element: 'click me', target: 'e2', modifiers: ['ControlOrMeta'] },
+    arguments: { element: 'click me', target: 'f1e2', modifiers: ['ControlOrMeta'] },
   });
 
   await expect.poll(async () => {
@@ -149,7 +147,7 @@ test(`window.open from tracked tab auto-attaches new tab`, async ({ startExtensi
 
   await client.callTool({
     name: 'browser_click',
-    arguments: { element: 'open', target: 'e2' },
+    arguments: { element: 'open', target: 'f1e2' },
   });
 
   await expect.poll(async () => {

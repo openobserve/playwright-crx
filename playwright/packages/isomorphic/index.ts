@@ -15,7 +15,6 @@
  */
 
 export * from './ariaSnapshot';
-export * from './expectUtils';
 export * from './assert';
 export * from './base64';
 export * from './colors';
@@ -30,7 +29,6 @@ export * from './protocolFormatter';
 export * from './protocolMetainfo';
 export * from './rtti';
 export * from './semaphore';
-export * from './stackTrace';
 export * from './stringUtils';
 export * from './formatUtils';
 export * from './time';

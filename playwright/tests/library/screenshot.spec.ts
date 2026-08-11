@@ -210,15 +210,18 @@ browserTest.describe('page screenshot', () => {
     expect(pixel(0, 999).b).toBeGreaterThan(128);
   });
 
-  browserTest('should not hang when event loop is blocked', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36702' } }, async ({ page, trace }) => {
+  browserTest('should not hang when event loop is blocked', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36702' } }, async ({ page, trace, mode }) => {
     browserTest.skip(trace === 'on', 'taking a snapshot hangs when the page is blocked');
+    browserTest.skip(mode === 'driver', 'test hooks are not available in driver mode');
     browserTest.setTimeout(5000);
-    await page.evaluate(() => {
-      window.builtins.setTimeout(() => {
+    const __testHookBeforeScreenshot = async () => {
+      page.evaluate(() => {
+        console.log('blocked');
         while (true) {}
-      }, 10);
-    });
-    await expect(page.screenshot({ fullPage: true, timeout: 200 })).rejects.toThrow(/page.screenshot: Timeout 200ms exceeded/);
+      }).catch(() => {});
+      await page.waitForEvent('console', e => e.text() === 'blocked');
+    };
+    await expect(page.screenshot({ fullPage: true, timeout: 200, __testHookBeforeScreenshot } as any)).rejects.toThrow(/page.screenshot: Timeout 200ms exceeded/);
   });
 });
 

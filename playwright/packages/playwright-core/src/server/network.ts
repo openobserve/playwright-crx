@@ -16,6 +16,8 @@
 
 import { ManualPromise } from '@isomorphic/manualPromise';
 import { assert } from '@isomorphic/assert';
+import { rewriteErrorMessage } from '@utils/stackTrace';
+import { isProtocolError } from './protocolError';
 import { BrowserContext } from './browserContext';
 import { APIRequestContext } from './fetch';
 import { SdkObject } from './instrumentation';
@@ -26,8 +28,8 @@ import type * as pages from './page';
 import type * as types from './types';
 import type { NormalizedContinueOverrides } from './types';
 import type { HeadersArray, NameValue } from '@isomorphic/types';
-import type * as channels from '@protocol/channels';
-import type { Progress } from '@protocol/progress';
+import type * as channels from './channels';
+import type { Progress } from './progress';
 
 
 export function filterCookies(cookies: channels.NetworkCookie[], urls: string[]): channels.NetworkCookie[] {
@@ -651,7 +653,13 @@ export class Response extends SdkObject {
           const { body, isBase64 } = this._request._responseBodyOverride;
           return Buffer.from(body, isBase64 ? 'base64' : 'utf-8');
         }
-        return this._getResponseBodyCallback();
+        try {
+          return await this._getResponseBodyCallback();
+        } catch (e) {
+          if (isProtocolError(e) && e.type === 'error')
+            rewriteErrorMessage(e, e.message + '\nResponse body is not available for a response that was navigated away from. Read response.body() before triggering any navigation.');
+          throw e;
+        }
       });
     }
     return this._contentPromise;

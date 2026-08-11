@@ -377,12 +377,12 @@ it('should properly serialize PerformanceMeasure object', async ({ page }) => {
     window.builtins.performance.mark('end');
     window.builtins.performance.measure('my-measure', 'start', 'end');
     return window.builtins.performance.getEntriesByType('measure');
-  })).toEqual([{
+  })).toEqual([expect.objectContaining({
     duration: expect.any(Number),
     entryType: 'measure',
     name: 'my-measure',
     startTime: expect.any(Number),
-  }]);
+  })]);
 });
 
 it('should properly serialize window.performance object', async ({ page }) => {
@@ -867,6 +867,21 @@ it('should work with Array.from/map', async ({ page }) => {
   })).toBe('([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})');
 });
 
+it('should work with a using declaration', async ({ page, nodeVersion, browserName }) => {
+  it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41511' });
+  it.skip(nodeVersion.major < 24, 'using is lowered to a module-scope helper that does not survive evaluate serialization on Node < 24');
+  it.skip(browserName === 'webkit', 'WebKit does not support using declarations');
+  const disposed = await page.evaluate(() => {
+    let disposed = false;
+    {
+      using r = { [Symbol.dispose]: () => { disposed = true; } };
+      void r;
+    }
+    return disposed;
+  });
+  expect(disposed).toBe(true);
+});
+
 it('should ignore dangerous object keys', async ({ page }) => {
   const input = {
     __proto__: { polluted: true },
@@ -874,4 +889,14 @@ it('should ignore dangerous object keys', async ({ page }) => {
   };
   const result = await page.evaluate(arg => arg, input);
   expect(result).toEqual({ safeKey: 'safeValue' });
+});
+
+it('promise collected', async ({ page, browserName }) => {
+  it.skip(browserName !== 'chromium', 'this is a chromium-only behavior');
+
+  const resultPromise = page.evaluate(() => new Promise<void>(() => {})).catch(e => e);
+  for (let i = 0; i < 20; i++)
+    await page.requestGC();
+  const error = await resultPromise;
+  expect(error.message).toContain('Resulting promise was garbage collected');
 });

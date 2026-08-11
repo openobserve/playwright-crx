@@ -80,6 +80,14 @@ This option has no effect.
 
 Whether to bypass the [actionability](../actionability.md) checks. Defaults to `false`.
 
+## input-scroll
+- `scroll` <[ScrollMode]<"auto"|"none">>
+
+Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`,
+which scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+`"none"`, Playwright does not scroll the element and the action fails if the element is not already in the viewport.
+This is useful to assert that an element is reachable by the user without additional scrolling.
+
 ## input-selector
 - `selector` <[string]>
 
@@ -576,6 +584,18 @@ to a function, the function is automatically invoked.
 
 Function to be evaluated in the page context.
 
+## js-evaluate-expose-functions
+* langs: js
+- `exposeFunctions` <[boolean]>
+
+When set to `true`, functions passed inside [`param: arg`] are exposed in the page and can be called from the page function. Calling one returns a [Promise] of its result. Under the hood, each function is exposed via [`method: Page.exposeFunction`], so it is technically accessible from all frames and worlds of the page. Exposed functions are cleared upon the top-level navigation. Defaults to `false`, in which case functions are not serializable and passing one throws an error.
+
+## js-init-script-expose-functions
+* langs: js
+- `exposeFunctions` <[boolean]>
+
+When set to `true`, functions passed inside [`param: arg`] are exposed in the page and can be called from the init script. Calling one returns a [Promise] of its result. Under the hood, each function is exposed via [`method: Page.exposeFunction`], so it is technically accessible from all frames and worlds of the page. Unlike functions passed to [`method: Page.evaluate`], functions passed to an init script are exposed in every new document, so they survive navigations. Defaults to `false`, in which case functions are not serializable and are silently dropped.
+
 ## js-evalonselector-pagefunction
 * langs: js
 - `pageFunction` <[function]\([Element]\)|[string]>
@@ -827,6 +847,7 @@ When set to `minimal`, only record information necessary for routing from HAR. T
     - `duration` ?<[float]> How long each annotation is displayed in milliseconds. Defaults to `500`.
     - `position` ?<[AnnotatePosition]<"top-left"|"top"|"top-right"|"bottom-left"|"bottom"|"bottom-right">> Position of the action title overlay. Defaults to `"top-right"`.
     - `fontSize` ?<[int]> Font size of the action title in pixels. Defaults to `24`.
+    - `cursor` ?<[ScreencastCursor]<"none"|"pointer">> Cursor decoration shown for pointer actions. `"pointer"` (the default) renders a mouse pointer that animates from the previous action point to the next one. `"none"` disables the cursor decoration.
 
 Enables video recording for all pages into `recordVideo.dir` directory. If not specified videos are not recorded. Make
 sure to await [`method: BrowserContext.close`] for videos to be saved.
@@ -991,6 +1012,22 @@ Receives the event data and resolves to truthy value when the waiting should res
 Maximum time to wait for in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout.
 The default value can be changed by using the [`method: BrowserContext.setDefaultTimeout`].
 
+## wait-for-event-signal
+* langs: js
+* since: v1.62
+- `signal` <[AbortSignal]>
+
+Allows to cancel the waiting using an [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal). If the signal is aborted, the waiting will be aborted and the operation will throw an error.
+Note that providing a signal does not disable the default timeout, which can be changed using [`method: BrowserContext.setDefaultTimeout`]; pass `timeout: 0` to disable the timeout entirely.
+
+## input-signal
+* langs: js
+* since: v1.62
+- `signal` <[AbortSignal]>
+
+Allows to cancel the operation using an [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal). If the signal is aborted, the operation will be aborted and throw an error.
+Note that providing a signal does not disable the default timeout, which can be changed using [`method: BrowserContext.setDefaultTimeout`] or [`method: Page.setDefaultTimeout`]; pass `timeout: 0` to disable the timeout entirely.
+
 ## android-timeout
 * langs: js
 - `timeout` <[float]>
@@ -1003,6 +1040,16 @@ using the [`method: AndroidDevice.setDefaultTimeout`] method.
 - `timeout` <[float]>
 
 Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
+
+## js-assertions-signal
+* langs: js
+* since: v1.62
+- `signal` <[AbortSignal]>
+
+An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that
+can cancel the assertion. Aborting the signal fails the assertion like a timeout: if the signal
+is aborted while the assertion is retrying, or is already aborted before the assertion starts,
+the assertion fails without retrying further.
 
 ## csharp-java-python-assertions-timeout
 * langs: java, python, csharp
@@ -1269,7 +1316,8 @@ Defaults to `false`.
 ## screenshot-option-quality
 - `quality` <[int]>
 
-The quality of the image, between 0-100. Not applicable to `png` images.
+The quality of the image, between 0-100. Not applicable to `png` images. For `jpeg` the default is `80`.
+For `webp`, a quality of `100` (the default) produces a lossless image, while lower values use lossy compression.
 
 ## screenshot-option-path
 - `path` <[path]>
@@ -1279,7 +1327,7 @@ relative path, then it is resolved relative to the current working directory. If
 saved to the disk.
 
 ## screenshot-option-type
-- `type` <[ScreenshotType]<"png"|"jpeg">>
+- `type` <[ScreenshotType]<"png"|"jpeg"|"webp">>
 
 Specify screenshot type, defaults to `png`.
 
@@ -1985,3 +2033,26 @@ In this config:
   * alias-java: ServerAddr
   - `ipAddress` <[string]> IPv4 or IPV6 address of the server.
   - `port` <[int]>
+
+## resource-timing
+- returns: <[Object]>
+  * alias-csharp: RequestTimingResult
+  * alias-java: Timing
+  - `startTime` <[float]> Request start time in milliseconds elapsed since January 1, 1970 00:00:00 UTC
+  - `domainLookupStart` <[float]> Time immediately before the client starts the domain name lookup for the
+    resource. The value is given in milliseconds relative to `startTime`, -1 if not available.
+  - `domainLookupEnd` <[float]> Time immediately after the client ends the domain name lookup for the resource.
+    The value is given in milliseconds relative to `startTime`, -1 if not available.
+  - `connectStart` <[float]> Time immediately before the client starts establishing the connection to the server
+    to retrieve the resource. The value is given in milliseconds relative to `startTime`, -1 if not available.
+  - `secureConnectionStart` <[float]> Time immediately before the client starts the handshake process to secure the
+    current connection. The value is given in milliseconds relative to `startTime`, -1 if not available.
+  - `connectEnd` <[float]> Time immediately after the client establishes the connection to the server
+    to retrieve the resource. The value is given in milliseconds relative to `startTime`, -1 if not available.
+  - `requestStart` <[float]> Time immediately before the client starts requesting the resource from the server,
+    cache, or local resource. The value is given in milliseconds relative to `startTime`, -1 if not available.
+  - `responseStart` <[float]> Time immediately after the client receives the first byte of the response from the server,
+    cache, or local resource. The value is given in milliseconds relative to `startTime`, -1 if not available.
+  - `responseEnd` <[float]> Time immediately after the client receives the last byte of the resource or immediately
+    before the transport connection is closed, whichever comes first. The value is given in milliseconds relative to
+    `startTime`, -1 if not available.

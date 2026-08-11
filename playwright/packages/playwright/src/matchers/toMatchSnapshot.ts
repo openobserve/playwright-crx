@@ -55,6 +55,7 @@ type ToHaveScreenshotOptions = ToHaveScreenshotConfigOptions & {
   mask?: Array<Locator>;
   maskColor?: string;
   omitBackground?: boolean;
+  signal?: AbortSignal;
 };
 
 // Keep in sync with above (begin).
@@ -64,6 +65,7 @@ const NonConfigProperties: (keyof ToHaveScreenshotOptions)[] = [
   'mask',
   'maskColor',
   'omitBackground',
+  'signal',
 ];
 // Keep in sync with above (end).
 
@@ -187,9 +189,10 @@ class SnapshotHelper {
   handleMissing(actual: Buffer | string): MatcherResult<string, string> {
     const attachments: MatcherAttachment[] = [];
     const isWriteMissingMode = this.updateSnapshots !== 'none';
-    if (isWriteMissingMode)
+    if (isWriteMissingMode) {
       writeFileSync(this.expectedPath, actual);
-    attachments.push({ name: addSuffixToFilePath(this.attachmentBaseName, '-expected'), contentType: this.mimeType, path: this.expectedPath });
+      attachments.push({ name: addSuffixToFilePath(this.attachmentBaseName, '-expected'), contentType: this.mimeType, path: this.expectedPath });
+    }
     writeFileSync(this.actualPath, actual);
     attachments.push({ name: addSuffixToFilePath(this.attachmentBaseName, '-actual'), contentType: this.mimeType, path: this.actualPath });
     const message = `A snapshot doesn't exist at ${this.expectedPath}${isWriteMissingMode ? ', writing actual.' : '.'}`;
@@ -342,8 +345,9 @@ export async function toHaveScreenshot(
   const [page, locator] = (pageOrLocator as any)._apiName === 'Page' ? [(pageOrLocator as PageEx), undefined] : [(pageOrLocator as Locator).page() as PageEx, pageOrLocator as Locator];
   const configOptions = expectConfig().toHaveScreenshot || {};
   const helper = new SnapshotHelper(this, testInfo, 'toHaveScreenshot', locator, undefined, configOptions, nameOrOptions, optOptions);
-  if (!helper.expectedPath.toLowerCase().endsWith('.png'))
-    throw new Error(`Screenshot name "${path.basename(helper.expectedPath)}" must have '.png' extension`);
+  const screenshotType = ({ 'image/png': 'png', 'image/webp': 'webp' } as const)[helper.mimeType];
+  if (!screenshotType)
+    throw new Error(`Screenshot name "${path.basename(helper.expectedPath)}" must have a '.png' or '.webp' extension`);
   expectTypes(pageOrLocator, ['Page', 'Locator'], 'toHaveScreenshot');
   const style = await loadScreenshotStyles(helper.options.stylePath);
   const timeout = helper.options.timeout ?? this.timeout;
@@ -360,6 +364,8 @@ export async function toHaveScreenshot(
     style,
     isNot: !!this.isNot,
     timeout,
+    signal: helper.options.signal,
+    type: screenshotType,
     comparator: helper.options.comparator,
     maxDiffPixels: helper.options.maxDiffPixels,
     maxDiffPixelRatio: helper.options.maxDiffPixelRatio,
@@ -457,6 +463,9 @@ function determineFileExtension(file: string | Buffer): string {
     return 'png';
   if (compareMagicBytes(file, [0xff, 0xd8, 0xff]))
     return 'jpg';
+  // A WebP bitstream is a RIFF container tagged 'WEBP': "RIFF????WEBP".
+  if (file.length >= 12 && file.toString('ascii', 0, 4) === 'RIFF' && file.toString('ascii', 8, 12) === 'WEBP')
+    return 'webp';
   return 'dat';
 }
 

@@ -30,7 +30,7 @@ import type { Page } from './page';
 import type { Progress } from './progress';
 import type { ScreenshotOptions } from './screenshotter';
 import type * as types from './types';
-import type * as channels from '@protocol/channels';
+import type * as channels from './channels';
 
 export type InputFilesItems = {
   filePayloads?: types.FilePayload[],
@@ -91,6 +91,7 @@ export class FrameExecutionContext extends js.ExecutionContext {
       const options: InjectedScriptOptions = {
         isUnderTest: isUnderTest(),
         sdkLanguage,
+        frameSeq: this.frame.seq,
         testIdAttributeName: selectorsRegistry.testIdAttributeName(),
         stableRafCount: this.frame._page.delegate.rafCountForStablePosition(),
         browserName: this.frame._page.browserContext._browser.options.name,
@@ -404,9 +405,11 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
     forceScrollOptions: ScrollIntoViewOptions | undefined,
     options: { waitAfter: boolean | 'disabled' } & types.PointerActionOptions & types.PointerActionWaitOptions,
   ): Promise<PerformActionResult> {
-    const { force = false, position } = options;
+    const { force = false, position, scroll } = options;
 
-    const doScrollIntoView = async (progress: Progress) => {
+    const doScrollIntoView = async (progress: Progress): Promise<'error:notvisible' | 'error:notconnected' | 'done'> => {
+      if (scroll === 'none')
+        return 'done';
       if (forceScrollOptions) {
         return await progress.race(this.evaluateInUtility(([injected, node, options]) => {
           if (node.nodeType === 1 /* Node.ELEMENT_NODE */)

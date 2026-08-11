@@ -22,6 +22,7 @@ import type { Route } from 'playwright-core';
 import path from 'path';
 import fs from 'fs';
 import { comparePNGs } from '../config/comparator';
+import { utils } from '../../packages/playwright-core/lib/coreBundle';
 
 it.describe('page screenshot', () => {
   it.skip(({ browserName, headless }) => browserName === 'firefox' && !headless, 'Firefox headed produces a different image.');
@@ -194,6 +195,20 @@ it.describe('page screenshot', () => {
     expect(screenshotError.message).toContain('Clipped area is either empty or outside the resulting image');
   });
 
+  it('should throw on a negative clip size', async ({ page, server }) => {
+    await page.setViewportSize({ width: 500, height: 500 });
+    await page.goto(server.PREFIX + '/grid.html');
+    const screenshotError = await page.screenshot({
+      clip: {
+        x: 50,
+        y: 50,
+        width: -100,
+        height: 100
+      }
+    }).catch(error => error);
+    expect(screenshotError.message).toContain('Expected options.clip.width to be greater than 0');
+  });
+
   it('should run in parallel', async ({ page, server }) => {
     await page.setViewportSize({ width: 500, height: 500 });
     await page.goto(server.PREFIX + '/grid.html');
@@ -262,6 +277,66 @@ it.describe('page screenshot', () => {
     await page.goto(server.EMPTY_PAGE);
     const screenshot = await page.screenshot({ omitBackground: true, type: 'jpeg' });
     expect(screenshot).toMatchSnapshot('white.jpg');
+  });
+
+  it('should produce a valid webp screenshot', async ({ page, server }) => {
+    await page.setViewportSize({ width: 300, height: 300 });
+    await page.goto(server.EMPTY_PAGE);
+    await page.evaluate(() => (document.body.style.background = 'rgb(255, 0, 0)'));
+    const screenshot = await page.screenshot({ type: 'webp' });
+    expect(screenshot).toMatchSnapshot('red.webp');
+  });
+
+  it('path option should detect webp', async ({ page, server }, testInfo) => {
+    await page.setViewportSize({ width: 300, height: 300 });
+    await page.goto(server.EMPTY_PAGE);
+    await page.evaluate(() => (document.body.style.background = 'rgb(255, 0, 0)'));
+    const outputPath = testInfo.outputPath('screenshot.webp');
+    const screenshot = await page.screenshot({ path: outputPath });
+    expect(await fs.promises.readFile(outputPath)).toMatchSnapshot('red.webp');
+    expect(screenshot).toMatchSnapshot('red.webp');
+  });
+
+  it('quality option should work for webp', async ({ page, server }) => {
+    await page.goto(server.PREFIX + '/grid.html');
+    const lowQuality = await page.screenshot({ type: 'webp', quality: 0 });
+    const highQuality = await page.screenshot({ type: 'webp', quality: 100 });
+    expect(lowQuality.byteLength).toBeLessThan(highQuality.byteLength);
+  });
+
+  it('webp screenshots should be lossless by default', async ({ page, server }) => {
+    await page.goto(server.PREFIX + '/grid.html');
+    expect(utils.isLosslessWebp(await page.screenshot({ type: 'webp' }))).toBe(true);
+    expect(utils.isLosslessWebp(await page.screenshot({ type: 'webp', quality: 80 }))).toBe(false);
+  });
+
+  it('should allow transparency with webp', async ({ page, browserName, isBidi }) => {
+    it.skip(isBidi, 'transparency is not supported via WebDriver BiDi');
+    it.fail(browserName === 'firefox');
+
+    await page.setViewportSize({ width: 300, height: 300 });
+    await page.setContent(`
+      <style>
+        body { margin: 0 }
+        div { width: 300px; height: 100px; }
+      </style>
+      <div style="background:black"></div>
+      <div style="background:white"></div>
+      <div style="background:transparent"></div>
+    `);
+    const screenshot = await page.screenshot({ omitBackground: true, type: 'webp' });
+    const { width, height, data } = utils.decodeWebp(screenshot);
+    expect(width).toBe(300);
+    expect(height).toBe(300);
+    const pixel = (x: number, y: number) => [...data.subarray((y * width + x) * 4, (y * width + x) * 4 + 4)];
+    expect(pixel(150, 50)).toEqual([0, 0, 0, 255]);
+    expect(pixel(150, 150)).toEqual([255, 255, 255, 255]);
+    expect(pixel(150, 250)[3]).toBe(0);
+  });
+
+  it('quality option should throw for webp when out of range', async ({ page }) => {
+    const error = await page.screenshot({ type: 'webp', quality: 101 }).catch(e => e);
+    expect(error.message).toContain('Expected options.quality to be between 0 and 100');
   });
 
   it('should work with odd clip size on Retina displays', async ({ page, isElectron }) => {
@@ -427,6 +502,8 @@ it.describe('page screenshot', () => {
   });
 
   it('should take fullPage screenshots during navigation', async ({ page, server }) => {
+    it.slow();
+
     await page.setViewportSize({ width: 500, height: 500 });
     await page.goto(server.PREFIX + '/grid.html');
     const reloadSeveralTimes = async () => {

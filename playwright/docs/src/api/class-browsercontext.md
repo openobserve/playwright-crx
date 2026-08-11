@@ -476,6 +476,9 @@ Path to the JavaScript file. If `path` is a relative path, then it is resolved r
 
 Script to be evaluated in all pages in the browser context. Optional.
 
+### option: BrowserContext.addInitScript.exposeFunctions = %%-js-init-script-expose-functions-%%
+* since: v1.62
+
 ## method: BrowserContext.backgroundPages
 * since: v1.11
 * deprecated: Background pages have been removed from Chromium together with Manifest V2 extensions.
@@ -1549,7 +1552,7 @@ Whether to emulate network being offline for the browser context.
       - `name` <[string]>
       - `value` <[string]>
 
-Returns storage state for this browser context, contains current cookies, local storage snapshot and IndexedDB snapshot.
+Returns storage state for this browser context, contains current cookies, local storage snapshot, IndexedDB snapshot and virtual WebAuthn credentials.
 
 ## async method: BrowserContext.storageState
 * since: v1.8
@@ -1566,10 +1569,21 @@ Returns storage state for this browser context, contains current cookies, local 
 Set to `true` to include [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) in the storage state snapshot.
 If your application uses IndexedDB to store authentication tokens, like Firebase Authentication, enable this.
 
+### option: BrowserContext.storageState.credentials
+* since: v1.61
+- `credentials` ?<boolean>
+
+Set to `true` to include the context's virtual WebAuthn [`property: BrowserContext.credentials`] (passkeys) in the storage
+state snapshot. The captured credentials carry their private keys, so they can be re-seeded into a later context via the
+[`option: Browser.newContext.storageState`] option or [`method: BrowserContext.setStorageState`].
+Note that restoring the storage state that contains credentials will automatically install the virtual WebAuthn authenticator (see [`method: Credentials.install`]), and prevent all real authenticators from working in this context.
+
 ## async method: BrowserContext.setStorageState
 * since: v1.59
 
-Clears the existing cookies, local storage and IndexedDB entries for all origins and sets the new storage state.
+Clears the existing cookies, local storage, IndexedDB entries and virtual WebAuthn credentials, and sets the new storage
+state. When the storage state contains credentials, the virtual WebAuthn authenticator is installed (equivalent to
+[`method: Credentials.install`]), preventing all real authenticators from working in this context.
 
 **Usage**
 
@@ -1702,6 +1716,24 @@ Will throw an error if the page is closed before the [`event: BrowserContext.con
 * langs: python
 - returns: <[EventContextManager]<[ConsoleMessage]>>
 
+**Usage**
+
+```python async
+async with context.expect_console_message() as message_info:
+    await page.get_by_role("button").click()
+
+message = await message_info.value
+print(message.text)
+```
+
+```python sync
+with context.expect_console_message() as message_info:
+    page.get_by_role("button").click()
+
+message = message_info.value
+print(message.text)
+```
+
 ### param: BrowserContext.waitForConsoleMessage.action = %%-csharp-wait-for-event-action-%%
 * since: v1.34
 
@@ -1713,6 +1745,7 @@ Receives the [ConsoleMessage] object and resolves to truthy value when the waiti
 
 ### option: BrowserContext.waitForConsoleMessage.timeout = %%-wait-for-event-timeout-%%
 * since: v1.34
+### option: BrowserContext.waitForConsoleMessage.signal = %%-wait-for-event-signal-%%
 
 ### param: BrowserContext.waitForConsoleMessage.callback = %%-java-wait-for-event-callback-%%
 * since: v1.34
@@ -1782,6 +1815,7 @@ Either a predicate that receives an event or an options object. Optional.
 
 ### option: BrowserContext.waitForEvent.timeout = %%-wait-for-event-timeout-%%
 * since: v1.8
+### option: BrowserContext.waitForEvent.signal = %%-wait-for-event-signal-%%
 
 ## async method: BrowserContext.waitForPage
 * since: v1.9
@@ -1799,6 +1833,24 @@ Will throw an error if the context closes before new [Page] is created.
 * langs: python
 - returns: <[EventContextManager]<[Page]>>
 
+**Usage**
+
+```python async
+async with context.expect_page() as page_info:
+    await page.get_by_text("Open new tab").click()
+
+new_page = await page_info.value
+print(await new_page.title())
+```
+
+```python sync
+with context.expect_page() as page_info:
+    page.get_by_text("Open new tab").click()
+
+new_page = page_info.value
+print(new_page.title())
+```
+
 ### param: BrowserContext.waitForPage.action = %%-csharp-wait-for-event-action-%%
 * since: v1.12
 
@@ -1811,6 +1863,7 @@ Receives the [Page] object and resolves to truthy value when the waiting should 
 
 ### option: BrowserContext.waitForPage.timeout = %%-wait-for-event-timeout-%%
 * since: v1.9
+### option: BrowserContext.waitForPage.signal = %%-wait-for-event-signal-%%
 
 ### param: BrowserContext.waitForPage.callback = %%-java-wait-for-event-callback-%%
 * since: v1.9
@@ -1837,3 +1890,4 @@ Will throw an error if the browser context is closed before the `event` is fired
 
 ### option: BrowserContext.waitForEvent2.timeout = %%-wait-for-event-timeout-%%
 * since: v1.8
+### option: BrowserContext.waitForEvent2.signal = %%-wait-for-event-signal-%%

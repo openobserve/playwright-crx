@@ -16,7 +16,7 @@
  */
 
 import { assert } from '@isomorphic/assert';
-import { splitErrorMessage } from '@isomorphic/stackTrace';
+import { splitErrorMessage } from '@utils/stackTrace';
 import { eventsHelper } from '@utils/eventsHelper';
 import * as dialog from '../dialog';
 import * as dom from '../dom';
@@ -150,25 +150,31 @@ export class FFPage implements PageDelegate {
       url.protocol = url.protocol === 'https' ? 'wss' : 'ws';
 
       this._page.frameManager.onWebSocketCreated(requestId, url.toString());
-      this._page.frameManager.onWebSocketRequest(requestId, request.headers);
-      this._page.frameManager.onWebSocketResponse(requestId, response.status, response.statusText, response.headers);
+      this._page.frameManager.onWebSocketRequest(requestId, request);
+      this._page.frameManager.onWebSocketResponse(requestId, response);
       this._page.frameManager.webSocketClosed(requestId);
       return;
     }
   }
 
   _onWebSocketOpened(event: Protocol.Page.webSocketOpenedPayload) {
+    const socketId = webSocketId(event.frameId, event.wsid);
     const request = this._webSocketRequests.get(event.requestId);
-    assert(request);
-
     const response = this._webSocketResponses.get(event.requestId);
-    assert(response);
+    // A `WebSocket` opened inside a worker is reported here, but its upgrade request is
+    // never seen by the network stack, so there is no handshake metadata to attach.
+    // TODO: Remove this workaround and make `requestData` required in `FrameManager.onWebSocketRequest`
+    // once Playwright's bundled Firefox includes https://phabricator.services.mozilla.com/D310690.
+    if (!request || !response) {
+      this._page.frameManager.onWebSocketRequest(socketId);
+      return;
+    }
 
     this._webSocketRequests.delete(event.requestId);
     this._webSocketResponses.delete(event.requestId);
 
-    this._page.frameManager.onWebSocketRequest(webSocketId(event.frameId, event.wsid), request.headers);
-    this._page.frameManager.onWebSocketResponse(webSocketId(event.frameId, event.wsid), response.status, response.statusText, response.headers);
+    this._page.frameManager.onWebSocketRequest(socketId, request);
+    this._page.frameManager.onWebSocketResponse(socketId, response);
   }
 
   _onWebSocketClosed(event: Protocol.Page.webSocketClosedPayload) {
@@ -239,18 +245,11 @@ export class FFPage implements PageDelegate {
   }
 
   _onNavigationCommitted(params: Protocol.Page.navigationCommittedPayload) {
-    if (!params.navigationId) {
-      // Firefox replays the current navigation without a navigationId during a process swap (e.g. when restoring a persistent profile).
-      // Treat these as same-document URL updates so they don't interrupt any in-flight new-document navigation in Frame.gotoImpl.
-      this._page.frameManager.frameCommittedSameDocumentNavigation(params.frameId, params.url);
-      return;
-    }
-
     for (const [workerId, worker] of this._workers) {
       if (worker.frameId === params.frameId)
         this._onWorkerDestroyed({ workerId });
     }
-    this._page.frameManager.frameCommittedNewDocumentNavigation(params.frameId, params.url, params.name || '', params.navigationId, false);
+    this._page.frameManager.frameCommittedNewDocumentNavigation(params.frameId, params.url, params.name || '', params.navigationId || '', false);
   }
 
   _onSameDocumentNavigation(params: Protocol.Page.sameDocumentNavigationPayload) {
@@ -458,7 +457,7 @@ export class FFPage implements PageDelegate {
   }
 
   async closePage(runBeforeUnload: boolean): Promise<void> {
-    await this._session.send('Page.close', { runBeforeUnload });
+    await this._session.sendEvenAfterCrash('Page.close', { runBeforeUnload });
   }
 
   async setBackgroundColor(color?: { r: number; g: number; b: number; a: number; }): Promise<void> {
@@ -466,7 +465,7 @@ export class FFPage implements PageDelegate {
       throw new Error('Not implemented');
   }
 
-  async takeScreenshot(progress: Progress, format: 'png' | 'jpeg', documentRect: types.Rect | undefined, viewportRect: types.Rect | undefined, quality: number | undefined, fitsViewport: boolean, scale: 'css' | 'device'): Promise<Buffer> {
+  async takeScreenshot(progress: Progress, format: 'png' | 'jpeg' | 'webp', documentRect: types.Rect | undefined, viewportRect: types.Rect | undefined, quality: number | undefined, fitsViewport: boolean, scale: 'css' | 'device'): Promise<Buffer> {
     if (!documentRect) {
       const scrollOffset = await this._page.mainFrame().waitForFunctionValueInUtility(progress, () => ({ x: window.scrollX, y: window.scrollY }));
       documentRect = {
@@ -477,7 +476,7 @@ export class FFPage implements PageDelegate {
       };
     }
     const { data } = await progress.race(this._session.send('Page.screenshot', {
-      mimeType: ('image/' + format) as ('image/png' | 'image/jpeg'),
+      mimeType: ('image/' + format) as ('image/png' | 'image/jpeg' | 'image/webp'),
       clip: documentRect,
       quality,
       omitDeviceScaleFactor: scale === 'css',
@@ -546,12 +545,12 @@ export class FFPage implements PageDelegate {
 
   private _onScreencastFrame(event: Protocol.Page.screencastFramePayload) {
     const buffer = Buffer.from(event.data, 'base64');
-    this._page.screencast.onScreencastFrame({
+    void this._page.screencast.onScreencastFrame({
       buffer,
       frameSwapWallTime: event.timestamp * 1000, // timestamp is in seconds, we need to convert to milliseconds.
       viewportWidth: event.deviceWidth,
       viewportHeight: event.deviceHeight,
-    }, () => {
+    }).then(() => {
       this._session.sendMayFail('Page.screencastFrameAck');
     });
   }

@@ -58,6 +58,7 @@ export type CLIOptions = {
   initPage?: string[];
   isolated?: boolean;
   imageResponses?: 'allow' | 'omit';
+  mobile?: boolean;
   sandbox?: boolean;
   outputDir?: string;
   outputMaxSize?: number;
@@ -73,6 +74,7 @@ export type CLIOptions = {
   testIdAttribute?: string;
   timeoutAction?: number;
   timeoutNavigation?: number;
+  timeoutSettle?: number;
   userAgent?: string;
   userDataDir?: string;
   viewportSize?: ViewportSize;
@@ -87,6 +89,7 @@ const defaultConfig: MergedConfig = {
     action: 5000,
     navigation: 60000,
     expect: 5000,
+    settle: 500,
   },
 };
 
@@ -155,7 +158,9 @@ export async function resolveCLIConfigForCLI(daemonProfilesDir: string, sessionN
     cdpEndpoint: options.cdp,
     config: options.config,
     browser: options.browser,
+    device: options.device,
     headless: options.headed ? false : undefined,
+    mobile: options.mobile,
     extension: options.extension,
     userDataDir: options.profile,
     snapshotMode: 'full',
@@ -212,7 +217,7 @@ async function validateBrowserConfig(browser: MergedConfig['browser']): Promise<
       browser.launchOptions.channel = 'chrome';
   }
 
-  if (browser.browserName === 'chromium' && browser.launchOptions.chromiumSandbox === undefined) {
+  if (browserName === 'chromium' && browser.launchOptions.chromiumSandbox === undefined) {
     if (process.platform === 'linux')
       browser.launchOptions.chromiumSandbox = browser.launchOptions.channel !== 'chromium' && browser.launchOptions.channel !== 'chrome-for-testing';
     else
@@ -291,11 +296,20 @@ function configFromCLIOptions(cliOptions: CLIOptions): Config & { configFile?: s
   if (cliOptions.sandbox !== undefined)
     launchOptions.chromiumSandbox = cliOptions.sandbox;
 
-  if (cliOptions.device && cliOptions.cdpEndpoint)
+  let device = cliOptions.device;
+  if (cliOptions.mobile) {
+    if (device)
+      throw new Error('Cannot use --mobile together with --device, pick one.');
+    if (browserName === 'firefox')
+      throw new Error('--mobile is not supported with the Firefox browser.');
+    device = browserName === 'webkit' ? 'iPhone 17' : 'Pixel 10';
+  }
+
+  if (device && cliOptions.cdpEndpoint)
     throw new Error('Device emulation is not supported with cdpEndpoint.');
 
   // Context options
-  const contextOptions: playwrightTypes.BrowserContextOptions = cliOptions.device ? playwright.devices[cliOptions.device] : {};
+  const contextOptions: playwrightTypes.BrowserContextOptions = device ? playwright.devices[device] : {};
 
   if (cliOptions.proxyServer) {
     const proxy: playwrightTypes.LaunchOptions['proxy'] = { server: cliOptions.proxyServer };
@@ -366,6 +380,7 @@ function configFromCLIOptions(cliOptions: CLIOptions): Config & { configFile?: s
     timeouts: {
       action: cliOptions.timeoutAction,
       navigation: cliOptions.timeoutNavigation,
+      settle: cliOptions.timeoutSettle,
     },
   };
 
@@ -409,6 +424,7 @@ export function configFromEnv(env?: NodeJS.ProcessEnv): Config & { configFile?: 
   options.isolated = envToBoolean(e.PLAYWRIGHT_MCP_ISOLATED);
   if (e.PLAYWRIGHT_MCP_IMAGE_RESPONSES)
     options.imageResponses = enumParser<'allow' | 'omit'>('--image-responses', ['allow', 'omit'], e.PLAYWRIGHT_MCP_IMAGE_RESPONSES);
+  options.mobile = envToBoolean(e.PLAYWRIGHT_MCP_MOBILE);
   options.sandbox = envToBoolean(e.PLAYWRIGHT_MCP_SANDBOX);
   options.outputDir = envToString(e.PLAYWRIGHT_MCP_OUTPUT_DIR);
   options.outputMaxSize = numberParser(e.PLAYWRIGHT_MCP_OUTPUT_MAX_SIZE);
@@ -421,6 +437,7 @@ export function configFromEnv(env?: NodeJS.ProcessEnv): Config & { configFile?: 
   options.testIdAttribute = envToString(e.PLAYWRIGHT_MCP_TEST_ID_ATTRIBUTE);
   options.timeoutAction = numberParser(e.PLAYWRIGHT_MCP_TIMEOUT_ACTION);
   options.timeoutNavigation = numberParser(e.PLAYWRIGHT_MCP_TIMEOUT_NAVIGATION);
+  options.timeoutSettle = numberParser(e.PLAYWRIGHT_MCP_TIMEOUT_SETTLE);
   options.userAgent = envToString(e.PLAYWRIGHT_MCP_USER_AGENT);
   options.userDataDir = envToString(e.PLAYWRIGHT_MCP_USER_DATA_DIR);
   options.viewportSize = resolutionParser('--viewport-size', e.PLAYWRIGHT_MCP_VIEWPORT_SIZE);
@@ -434,10 +451,16 @@ export async function loadConfig(configFile: string | undefined): Promise<Config
   if (configFile.endsWith('.ini'))
     return configFromIniFile(configFile);
 
+  const raw = await fs.promises.readFile(configFile, 'utf8');
+  const data = raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw;
   try {
-    const data = await fs.promises.readFile(configFile, 'utf8');
-    return JSON.parse(data.charCodeAt(0) === 0xFEFF ? data.slice(1) : data);
-  } catch {
+    return JSON.parse(data);
+  } catch (jsonError) {
+    // A JSON config is always an object, so JSON-looking input must surface its
+    // parse error rather than silently falling back to INI (and the default
+    // config). A leading `[` stays with INI — it is a `[section]` header there.
+    if (/^\s*\{/.test(data))
+      throw jsonError;
     return configFromIniFile(configFile);
   }
 }

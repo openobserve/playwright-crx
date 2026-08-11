@@ -15,20 +15,21 @@
  */
 
 import { getMetainfo } from '@isomorphic/protocolMetainfo';
-import { stringifyStackFrames } from '@isomorphic/stackTrace';
+import { showInternalStackFrames, stringifyStackFrames } from '@utils/stackTrace';
+import { isUnderTest } from '@utils/debug';
+import { debugLogger } from '@utils/debugLogger';
+import { currentZone } from '@utils/zones';
+import { ValidationError, maybeFindValidator } from '@protocol/validator';
 import { EventEmitter } from './eventEmitter';
-import { ValidationError, maybeFindValidator  } from '../protocol/validator';
 import { captureLibraryStackTrace } from './clientStackTrace';
 
 import type { ClientInstrumentation } from './clientInstrumentation';
 import type { Connection } from './connection';
 import type { Logger } from './types';
-import type { ValidatorContext } from '../protocol/validator';
-import type { Platform } from '@isomorphic/platform';
-import type * as channels from '@protocol/channels';
-// patch(playwright-crx): 1.60 moved utils out of playwright-core; `../utils` is now
-// the top-level package.
-import { currentZone } from '@utils/zones';
+import type { ValidatorContext } from '@protocol/validator';
+// 1.62 split channels per side; the client gets its own generated types.
+import type * as channels from './channels';
+// NB: our apiName patch below uses currentZone, which upstream now imports itself above.
 
 type Listener = (...args: any[]) => void;
 
@@ -48,7 +49,7 @@ export abstract class ChannelOwner<T extends channels.Channel = channels.Channel
 
   constructor(parent: ChannelOwner | Connection, type: string, guid: string, initializer: channels.InitializerTraits<T>) {
     const connection = parent instanceof ChannelOwner ? parent._connection : parent;
-    super(connection._platform);
+    super();
     this.setMaxListeners(0);
     this._connection = connection;
     this._type = type;
@@ -62,7 +63,7 @@ export abstract class ChannelOwner<T extends channels.Channel = channels.Channel
       this._logger = this._parent._logger;
     }
 
-    this._channel = this._createChannel(new EventEmitter(connection._platform));
+    this._channel = this._createChannel(new EventEmitter());
     this._initializer = initializer;
   }
 
@@ -117,6 +118,16 @@ export abstract class ChannelOwner<T extends channels.Channel = channels.Channel
     child._parent = this;
   }
 
+  _parentOfType(type: string): ChannelOwner<any> | undefined {
+    let parent: ChannelOwner<any> | undefined = this._parent;
+    while (parent) {
+      if (parent._type === type)
+        return parent;
+      parent = parent._parent;
+    }
+    return undefined;
+  }
+
   _dispose(reason: 'gc' | undefined) {
     // Clean up from parent and connection.
     if (this._parent)
@@ -141,7 +152,7 @@ export abstract class ChannelOwner<T extends channels.Channel = channels.Channel
     return {
       tChannelImpl: tChannelImplToWire,
       binary: this._connection.rawBuffers() ? 'buffer' : 'toBase64',
-      isUnderTest: () => this._platform.isUnderTest(),
+      isUnderTest,
     };
   }
 
@@ -152,19 +163,20 @@ export abstract class ChannelOwner<T extends channels.Channel = channels.Channel
           const validator = maybeFindValidator(this._type, prop, 'Params');
           const { internal } = getMetainfo({ type: this._type, method: prop }) || {};
           if (validator) {
-            return async (params: any) => {
+            return async (params: any, options: { signal?: AbortSignal, timeout?: number } = {}) => {
               return await this._wrapApiCall(async apiZone => {
                 const validatedParams = validator(params, '', this._validatorToWireContext());
+                const { signal, timeout = 0 } = options;
                 if (!apiZone.internal && !apiZone.reported) {
                   // Reporting/tracing/logging this api call for the first time.
                   apiZone.reported = true;
                   this._instrumentation.onApiCallBegin(apiZone, { type: this._type, method: prop, params });
-                  logApiCall(this._platform, this._logger, `=> ${apiZone.apiName} started`);
-                  return await this._connection.sendMessageToServer(this, prop, validatedParams, apiZone);
+                  logApiCall(this._logger, `=> ${apiZone.apiName} started`);
+                  return await this._connection.sendMessageToServer(this, prop, validatedParams, { ...apiZone, signal, timeout });
                 }
                 // Since this api call is either internal, or has already been reported/traced once,
                 // passing as internal.
-                return await this._connection.sendMessageToServer(this, prop, validatedParams, { internal: true });
+                return await this._connection.sendMessageToServer(this, prop, validatedParams, { internal: true, signal, timeout });
               }, { internal });
             };
           }
@@ -178,24 +190,28 @@ export abstract class ChannelOwner<T extends channels.Channel = channels.Channel
 
   async _wrapApiCall<R>(func: (apiZone: ApiZone) => Promise<R>, options?: { internal?: boolean, title?: string }): Promise<R> {
     const logger = this._logger;
-    const existingApiZone = this._platform.zones.current().data<ApiZone>();
+    const existingApiZone = currentZone().data<ApiZone>('apiZone');
     if (existingApiZone)
       return await func(existingApiZone);
 
+    // patch(playwright-crx): crx names its own API calls. Inside an extension the library
+    // stack trace is the bundle's, not the caller's, so apiName from it is meaningless;
+    // crxZone carries the real one. 1.62 also dropped captureLibraryStackTrace's platform
+    // argument.
     const crxZone = currentZone().data<{ apiName: string }>('crxZone');
 
-    const stackTrace = captureLibraryStackTrace(this._platform);
+    const stackTrace = captureLibraryStackTrace();
     const apiZone: ApiZone = { title: options?.title, apiName: crxZone?.apiName ?? stackTrace.apiName, frames: stackTrace.frames, internal: options?.internal ?? false, reported: false, userData: undefined, stepId: undefined };
 
     try {
-      const result = await this._platform.zones.current().push(apiZone).run(async () => await func(apiZone));
+      const result = await currentZone().with('apiZone', apiZone).run(async () => await func(apiZone));
       if (!options?.internal) {
-        logApiCall(this._platform, logger, `<= ${apiZone.apiName} succeeded`);
+        logApiCall(logger, `<= ${apiZone.apiName} succeeded`);
         this._instrumentation.onApiCallEnd(apiZone);
       }
       return result;
     } catch (e) {
-      const innerError = ((this._platform.showInternalStackFrames() || this._platform.isUnderTest()) && e.stack) ? '\n<inner error>\n' + e.stack : '';
+      const innerError = ((showInternalStackFrames() || isUnderTest()) && e.stack) ? '\n<inner error>\n' + e.stack : '';
       if (apiZone.apiName && !apiZone.apiName.includes('<anonymous>'))
         e.message = apiZone.apiName + ': ' + e.message;
       const stackFrames = '\n' + stringifyStackFrames(stackTrace.frames).join('\n') + innerError;
@@ -205,7 +221,7 @@ export abstract class ChannelOwner<T extends channels.Channel = channels.Channel
         e.stack = '';
       if (!options?.internal) {
         apiZone.error = e;
-        logApiCall(this._platform, logger, `<= ${apiZone.apiName} failed`);
+        logApiCall(logger, `<= ${apiZone.apiName} failed`);
         this._instrumentation.onApiCallEnd(apiZone);
       }
       throw e;
@@ -224,10 +240,10 @@ export abstract class ChannelOwner<T extends channels.Channel = channels.Channel
   }
 }
 
-function logApiCall(platform: Platform, logger: Logger | undefined, message: string) {
+function logApiCall(logger: Logger | undefined, message: string) {
   if (logger && logger.isEnabled('api', 'info'))
     logger.log('api', 'info', message, [], { color: 'cyan' });
-  platform.log('api', message);
+  debugLogger.log('api', message);
 }
 
 function tChannelImplToWire(names: '*' | string[], arg: any, path: string, context: ValidatorContext) {

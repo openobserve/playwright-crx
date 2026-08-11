@@ -66,9 +66,13 @@ function resolveConfigFile(baseConfigFile: string, referencedConfigFile: string)
     referencedConfigFile += '.json';
   const currentDir = path.dirname(baseConfigFile);
   let resolvedConfigFile = path.resolve(currentDir, referencedConfigFile);
-  // TODO: I don't see how this makes sense, delete in the next minor release.
   if (referencedConfigFile.includes('/') && referencedConfigFile.includes('.') && !fs.existsSync(resolvedConfigFile))
     resolvedConfigFile = path.join(currentDir, 'node_modules', referencedConfigFile);
+  // Note: this function may return a non-existing file, and the caller silently ignores it.
+  // We deliberately do not throw in this case, because we do not want to repeat the whole
+  // resolution process that tsc has, e.g. node_modules walk-up and package.json "exports".
+  // See https://github.com/microsoft/playwright/issues/41989.
+  // TODO: implement tsc-compatible resolution and start throwing on invalid "extends"/"references".
   return resolvedConfigFile;
 }
 

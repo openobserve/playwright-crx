@@ -108,8 +108,9 @@ it('should accept relative userDataDir', async ({ createUserDataDir, browserType
   await context.close();
 });
 
-it('should restore state from userDataDir', async ({ browserType, server, createUserDataDir }) => {
+it('should restore state from userDataDir', async ({ browserType, server, createUserDataDir, channel }) => {
   it.slow();
+  it.fixme(channel === 'webkit-wsl', 'Pending local storage writes are lost on close, see https://github.com/microsoft/playwright-browsers/issues/2275');
 
   const userDataDir = await createUserDataDir();
   const browserContext = await browserType.launchPersistentContext(userDataDir);
@@ -144,7 +145,9 @@ it('should create userDataDir if it does not exist', async ({ createUserDataDir,
 
 it('should goto about:blank on relaunched persistent context', {
   annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41216' },
-}, async ({ browserType, createUserDataDir }) => {
+}, async ({ browserType, createUserDataDir, browserName, isBidi }) => {
+  it.fixme(browserName === 'firefox' && !isBidi);
+
   const userDataDir = await createUserDataDir();
 
   const context1 = await browserType.launchPersistentContext(userDataDir);
@@ -276,6 +279,27 @@ it('dialog.accept should work', {
   });
   await page.getByRole('button', { name: 'Button' }).click();
   expect(shown).toBe(true);
+  await context.close();
+});
+
+it('CacheStorage entry should survive page.reload()', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41618' }
+}, async ({ launchPersistent, server }) => {
+  const { context, page } = await launchPersistent();
+  await page.goto(server.EMPTY_PAGE);
+  await page.evaluate(async () => {
+    const cache = await caches.open('repro-cache');
+    await cache.put('/meta', new Response('payload'));
+  });
+
+  await page.reload();
+
+  const after = await page.evaluate(async () => {
+    const cache = await caches.open('repro-cache');
+    const resp = await cache.match('/meta');
+    return resp ? await resp.text() : null;
+  });
+  expect(after).toBe('payload');
   await context.close();
 });
 

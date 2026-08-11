@@ -25,19 +25,21 @@ import { httpHappyEyeballsAgent, httpsHappyEyeballsAgent } from '@utils/happyEye
 import { headersArrayToObject } from '@isomorphic/headers';
 import { Browser } from '../../browser';
 import { helper } from '../../helper';
+import * as network from '../../network';
 import { perMessageDeflate } from '../../transport';
 import { getUserAgent } from '../../userAgent';
 import { BrowserContext } from '../../browserContext';
-import { DialogBridge } from './dialogBridge';
+import { SyncServer } from './syncServer';
 import { WVConnection } from './wvConnection';
 import { WVPage } from './wvPage';
 
 import type { BrowserOptions, BrowserProcess } from '../../browser';
 import type { SdkObject } from '../../instrumentation';
 import type { InitScript, Page } from '../../page';
+import type { Protocol } from './protocol';
 import type { ProtocolRequest, ProtocolResponse } from '../../transport';
 import type * as types from '../../types';
-import type * as channels from '@protocol/channels';
+import type * as channels from '../../channels';
 import type { Progress } from '../../progress';
 import type { ConnectOverCDPTransport } from '../../../../types/types.d.ts';
 
@@ -141,8 +143,8 @@ export async function connectOverRDP(progress: Progress, parent: SdkObject, para
   };
 
   const browser = await progress.race((async () => {
-    const dialogBridge = await DialogBridge.start();
-    const created = new WVBrowser(parent, proxyBase, headersMap!, dialogBridge, transport, {
+    const syncServer = await SyncServer.start();
+    const created = new WVBrowser(parent, proxyBase, headersMap!, syncServer, transport, {
       slowMo: params.slowMo,
       name: 'webkit',
       browserType: 'webkit',
@@ -156,7 +158,7 @@ export async function connectOverRDP(progress: Progress, parent: SdkObject, para
     });
     const shutdown = async () => {
       await created._closeAllTabs();
-      await dialogBridge.close().catch(() => {});
+      await syncServer.close().catch(() => {});
       await doCleanup();
     };
     created.options.browserProcess = { close: shutdown, kill: shutdown };
@@ -181,18 +183,18 @@ export class WVBrowser extends Browser {
   readonly _context: WVBrowserContext;
   readonly _proxyBase: string;
   readonly _headers: { [key: string]: string };
-  readonly _dialogBridge: DialogBridge;
+  readonly _syncServer: SyncServer;
   readonly _directPageTransport: ConnectOverCDPTransport | undefined;
   readonly _tabs = new Map<string, TabEntry>();
   private _didCloseFired = false;
   // Backwards compat — old code still reads `_page` for the "primary" tab.
   _page!: WVPage;
 
-  constructor(parent: SdkObject, proxyBase: string, headers: { [key: string]: string }, dialogBridge: DialogBridge, directPageTransport: ConnectOverCDPTransport | undefined, options: BrowserOptions) {
+  constructor(parent: SdkObject, proxyBase: string, headers: { [key: string]: string }, syncServer: SyncServer, directPageTransport: ConnectOverCDPTransport | undefined, options: BrowserOptions) {
     super(parent, options);
     this._proxyBase = proxyBase;
     this._headers = headers;
-    this._dialogBridge = dialogBridge;
+    this._syncServer = syncServer;
     this._directPageTransport = directPageTransport;
     this._context = new WVBrowserContext(this);
   }
@@ -236,12 +238,9 @@ export class WVBrowser extends Browser {
 
   private async _attachTab(pageId: string, transport: ConnectOverCDPTransport): Promise<void> {
     const connection = new WVConnection(transport, () => this._detachTab(pageId), this.options.protocolLogger, this.options.browserLogsCollector);
-    const dialogEndpoint = this._dialogBridge.endpointFor(pageId);
-    const page = new WVPage(this._context, connection.outerSession, dialogEndpoint);
-    this._dialogBridge.registerTab(pageId, req => page.onBridgeDialog(req));
+    const page = new WVPage(this._context, connection.outerSession, this._syncServer);
     this._tabs.set(pageId, { pageId, transport, connection, page });
     transport.open?.();
-    connection.outerSession.sendMayFail('Target.setPauseOnStart', { pauseOnStart: true });
     await page.waitForInitialized();
   }
 
@@ -250,7 +249,6 @@ export class WVBrowser extends Browser {
     if (!entry)
       return;
     this._tabs.delete(pageId);
-    this._dialogBridge.unregisterTab(pageId);
     entry.connection.close();
     entry.page.didClose();
   }
@@ -305,16 +303,64 @@ export class WVBrowserContext extends BrowserContext {
     throw new Error('Not supported');
   }
 
+  // The Page cookie commands only see cookies for the current page's domain, so
+  // cookie access is scoped to that page rather than the whole context.
+  private _cookiePage(): WVPage | undefined {
+    const page = this.pages()[0];
+    return page ? page.delegate as WVPage : undefined;
+  }
+
   async doGetCookies(urls: string[]): Promise<channels.NetworkCookie[]> {
-    return [];
+    const page = this._cookiePage();
+    if (!page)
+      return [];
+    const cookies = await page.getCookies();
+    return network.filterCookies(cookies.map(c => {
+      const copy: channels.NetworkCookie = {
+        name: c.name,
+        value: c.value,
+        domain: c.domain,
+        path: c.path,
+        expires: c.session ? -1 : c.expires / 1000,
+        httpOnly: c.httpOnly,
+        secure: c.secure,
+        sameSite: c.sameSite,
+      };
+      return copy;
+    }), urls);
   }
 
   async addCookies(cookies: channels.SetNetworkCookie[]) {
-    throw new Error('Method not implemented.');
+    const page = this._cookiePage();
+    if (!page)
+      throw new Error('Cannot set cookies without an open page');
+    const protocolCookies = network.rewriteCookies(cookies).map(c => {
+      const session = c.expires === undefined || c.expires === -1;
+      const cookie: Protocol.Page.Cookie = {
+        name: c.name,
+        value: c.value,
+        domain: c.domain!,
+        path: c.path!,
+        expires: session ? 0 : c.expires! * 1000,
+        session,
+        httpOnly: !!c.httpOnly,
+        secure: !!c.secure,
+        sameSite: c.sameSite ?? 'Lax',
+      };
+      return cookie;
+    });
+    await page.setCookies(protocolCookies);
   }
 
   async doClearCookies() {
-    throw new Error('Method not implemented.');
+    const page = this._cookiePage();
+    if (!page)
+      return;
+    const cookies = await page.getCookies();
+    await page.deleteCookies(cookies.map(c => ({
+      cookieName: c.name,
+      url: `${c.secure ? 'https' : 'http'}://${c.domain.replace(/^\./, '')}${c.path}`,
+    })));
   }
 
   async doGrantPermissions(origin: string, permissions: string[]) {
@@ -332,6 +378,12 @@ export class WVBrowserContext extends BrowserContext {
   async doUpdateExtraHTTPHeaders(): Promise<void> {
     for (const page of this.pages())
       await (page.delegate as WVPage).updateExtraHTTPHeaders();
+  }
+
+  async setUserAgent(userAgent: string | undefined): Promise<void> {
+    this._options.userAgent = userAgent;
+    for (const page of this.pages())
+      await (page.delegate as WVPage).updateUserAgent();
   }
 
   async doAddInitScript(initScript: InitScript) {
@@ -354,13 +406,11 @@ export class WVBrowserContext extends BrowserContext {
       await (page.delegate as WVPage).exposePlaywrightBinding();
   }
 
-  override async onClosePersistent() {}
   override async doUpdateDefaultViewport() {}
   override async doUpdateDefaultEmulatedMedia() {}
   override async clearCache(): Promise<void> { throw new Error('Method not implemented.'); }
   override async doClose(reason: string | undefined): Promise<void | 'close-browser'> { throw new Error('Method not implemented.'); }
   override async cancelDownload(uuid: string) { throw new Error('Method not implemented.'); }
-  override async setUserAgent(userAgent: string | undefined): Promise<void> { throw new Error('Method not implemented.'); }
   protected override async doSetHTTPCredentials(httpCredentials?: types.Credentials): Promise<void> { throw new Error('Method not implemented.'); }
   protected override async doUpdateOffline(): Promise<void> { throw new Error('Method not implemented.'); }
 }

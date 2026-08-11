@@ -24,12 +24,11 @@ import { test as testNs } from '../common';
 import * as babel from '../transform/babelBundle';
 import { wrapReporterAsV2 } from './reporterV2';
 
-import type { AnyReporter, ReporterV2 } from './reporterV2';
+import type { AnyReporter, ReporterPreprocessParams, ReporterV2 } from './reporterV2';
 import type { FullConfig, FullResult, TestCase, TestError, TestResult, TestStep, WorkerInfo } from '../../types/testReporter';
 
-
 export class InternalReporter implements ReporterV2 {
-  private _reporter: ReporterV2;
+  private _reporter: Multiplexer;
   private _didBegin = false;
   private _config!: FullConfig;
   private _startTime: Date | undefined;
@@ -43,11 +42,19 @@ export class InternalReporter implements ReporterV2 {
     return 'v2';
   }
 
+  hasReporterErrors(): boolean {
+    return this._reporter.hasReporterErrors();
+  }
+
   onConfigure(config: FullConfig) {
     this._config = config;
     this._startTime = new Date();
     this._monotonicStartTime = monotonicTime();
     this._reporter.onConfigure?.(config);
+  }
+
+  async preprocess(params: ReporterPreprocessParams) {
+    await this._reporter.preprocess(params);
   }
 
   onBegin(suite: testNs.Suite) {
@@ -108,7 +115,7 @@ export class InternalReporter implements ReporterV2 {
   }
 
   printsToStdio() {
-    return this._reporter.printsToStdio ? this._reporter.printsToStdio() : true;
+    return this._reporter.printsToStdio?.() ?? true;
   }
 
   private _addSnippetToTestErrors(test: TestCase, result: TestResult) {

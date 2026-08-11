@@ -3,7 +3,7 @@ remote/
 server/
 @utils/**
 @isomorphic/**
-protocol/validatorPrimitives.ts
+@protocol/**
 
 [androidServerImpl.ts]
 remote/
@@ -16,6 +16,7 @@ server/
 [inprocess.ts]
 **
 @utils/**
+@isomorphic/**
 
 [outofprocess.ts]
 client/

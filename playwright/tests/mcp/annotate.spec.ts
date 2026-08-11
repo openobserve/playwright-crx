@@ -248,6 +248,24 @@ test('should capture annotations via show --annotate', async ({ connectToDashboa
   verifyAnnotateOutput(output, 'hello', test.info().outputDir);
 });
 
+test('should route annotate to a running port dashboard', async ({ cli, server, startDashboardServer }) => {
+  await cli('open', server.EMPTY_PAGE);
+
+  const dashboard = await startDashboardServer();
+  await dashboard.getByRole('navigation', { name: 'Sessions' }).getByRole('option').first().click();
+
+  const annotatePromise = cli('show', '--annotate');
+  let done = false;
+  void annotatePromise.finally(() => { done = true; });
+
+  await drawAndSubmitAnnotation(dashboard, 'routed');
+
+  const { output, exitCode } = await annotatePromise;
+  expect(done).toBe(true);
+  expect(exitCode).toBe(0);
+  verifyAnnotateOutput(output, 'routed', test.info().outputDir);
+});
+
 test('should start dashboard and annotate when no dashboard is running', async ({ connectToDashboard, cli, server }) => {
   const bindTitle = `--playwright-internal--${crypto.randomUUID()}`;
   await cli('open', server.EMPTY_PAGE, { bindTitle });
@@ -476,7 +494,6 @@ test('should switch screencast to -s session on show --annotate', async ({ conne
 });
 
 test('should disengage annotate mode when --annotate client disconnects', async ({ connectToDashboard, cli, childProcess, cliEnv, mcpBrowser, mcpHeadless, server }) => {
-  test.slow();
   await cli('open', server.EMPTY_PAGE);
   const bindTitle = `--playwright-internal--${crypto.randomUUID()}`;
   await cli('show', { bindTitle });

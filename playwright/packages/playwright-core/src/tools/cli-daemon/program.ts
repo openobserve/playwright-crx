@@ -22,18 +22,20 @@ import path from 'path';
 
 import { getAsBooleanFromENV, guessClientName } from '@utils/env';
 import { gracefullyProcessExitDoNotHang } from '@utils/processLauncher';
-import { libPath } from '../../package';
 import { startCliDaemonServer } from './daemon';
 import { setupExitWatchdog } from '../mcp/watchdog';
 import { createBrowserWithInfo } from '../mcp/browserFactory';
 import * as configUtils from '../mcp/config';
 import { createClientInfo } from '../cli-client/registry';
+import { installSkills } from '../utils/installSkills';
 import { registry as browserRegistry } from '../../server/registry/index';
 import type { Command } from 'commander';
 
 export function decorateProgram(program: Command) {
   program.argument('[session-name]', 'name of the session to create or connect to', 'default')
       .option('--headed', 'run in headed mode (non-headless)')
+      .option('--device <device>', 'emulate a specific device, for example "iPhone 15"')
+      .option('--mobile', 'emulate a generic mobile device (Pixel 10 for Chromium, iPhone 17 for WebKit)')
       .option('--extension', 'run with the extension')
       .option('--browser <name>', 'browser to use (chromium, chrome, firefox, webkit)')
       .option('--persistent', 'use a persistent browser context')
@@ -83,23 +85,21 @@ function globalConfigFile(): string {
   return path.join(process.env['PWTEST_CLI_GLOBAL_CONFIG'] ?? os.homedir(), '.playwright', 'cli.config.json');
 }
 
-async function initWorkspace(initSkills: string | undefined) {
+export async function initWorkspace(initSkills: string | undefined) {
   const cwd = process.cwd();
   const playwrightDir = path.join(cwd, '.playwright');
   await fs.promises.mkdir(playwrightDir, { recursive: true });
   console.log(`✅ Workspace initialized at \`${cwd}\`.`);
 
   if (initSkills) {
-    const skillSourceDir = libPath('tools', 'cli-client', 'skill');
     const target = initSkills === 'agents' ? 'agents' : 'claude';
-    const skillDestDir = path.join(cwd, `.${target}`, 'skills', 'playwright-cli');
-    if (!fs.existsSync(skillSourceDir)) {
-      console.error('❌ Skills source directory not found:', skillSourceDir);
+    try {
+      await installSkills(['playwright-cli'], target);
+    } catch (error) {
+      console.error('❌', error instanceof Error ? error.message : error);
       // eslint-disable-next-line no-restricted-properties
       process.exit(1);
     }
-    await fs.promises.cp(skillSourceDir, skillDestDir, { recursive: true });
-    console.log(`✅ Skills installed to \`${path.relative(cwd, skillDestDir)}\`.`);
   }
 
   await ensureConfiguredBrowserInstalled();
@@ -139,7 +139,7 @@ async function findOrInstallDefaultBrowser() {
 
 async function resolveAndInstall(nameOrChannel: string) {
   const executables = browserRegistry.resolveBrowsers([nameOrChannel], { shell: 'no' });
-  await browserRegistry.install(executables);
+  await browserRegistry.install(executables, { gc: false });
 }
 
 async function createDefaultConfig(channel: string) {

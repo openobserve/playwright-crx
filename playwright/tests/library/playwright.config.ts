@@ -15,7 +15,7 @@
  */
 
 import { config as loadEnv } from 'dotenv';
-loadEnv({ path: path.join(__dirname, '..', '..', '.env'), override: true });
+loadEnv({ path: path.join(__dirname, '..', '..', '.env'), override: true, quiet: true });
 process.env.PWTEST_UNDER_TEST = '1';
 
 import { type Config, type PlaywrightTestOptions, type PlaywrightWorkerOptions, type ReporterDescription } from '@playwright/test';
@@ -47,22 +47,12 @@ const reporters = () => {
     ['dot'],
     ['json', { outputFile: path.join(outputDir, 'report.json') }],
     ['blob'],
+    ['../config/parquetReporter.ts'],
   ] : [
     ['html', { open: 'on-failure', title: 'Playwright Library Tests' }]
   ];
   return result;
 };
-
-let connectOptions: any;
-let webServer: Config['webServer'];
-
-if (channel === 'webkit-wsl') {
-  connectOptions = { wsEndpoint: 'ws://localhost:3777/' };
-  webServer = {
-    command: 'set PWTEST_UNDER_TEST=1 && set WSLENV=PWTEST_UNDER_TEST && wsl.exe -d playwright -u pwuser -- bash -lc \'/home/pwuser/node/bin/npx playwright run-server --port=3777\'',
-    url: 'http://localhost:3777',
-  };
-}
 
 const config: Config<PlaywrightWorkerOptions & PlaywrightTestOptions & TestModeWorkerOptions> = {
   testDir,
@@ -71,7 +61,7 @@ const config: Config<PlaywrightWorkerOptions & PlaywrightTestOptions & TestModeW
     timeout: 10000,
   },
   maxFailures: 200,
-  timeout: video ? 60000 : 30000,
+  timeout: video || (process.platform === 'darwin' && process.arch === 'x64') ? 60000 : 30000,
   globalTimeout: 7200000,
   workers: undefined,
   fullyParallel: !process.env.CI,
@@ -80,10 +70,6 @@ const config: Config<PlaywrightWorkerOptions & PlaywrightTestOptions & TestModeW
   reporter: reporters(),
   tag: process.env.PW_TAG,
   projects: [],
-  use: {
-    connectOptions,
-  },
-  webServer,
 };
 
 const browserNames = ['chromium', 'webkit', 'firefox'] as BrowserName[];
