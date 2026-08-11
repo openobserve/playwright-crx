@@ -1547,6 +1547,6 @@ function lowercaseAllKeys(json: any): any {
 // scope, so it kills the service worker before it activates. crx never downloads a
 // browser (it attaches to the one it is running in), but this module is still in the
 // graph and its top level still executes.
-export const registry = new Registry(browsersJSONStatic);
+export const registry = new Registry(browsersJSONStatic as unknown as BrowsersJSON);
 
 export { runOopDownloadBrowserMain } from './oopDownloadBrowserMain';

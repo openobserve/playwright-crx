@@ -403,7 +403,9 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
   }
 
   async _uninstallInjectedRecorder(page: Page) {
-    await Promise.all(page.frames().map(f => f.evaluateExpression('window.__pw_uninstall()').catch(() => {})));
+    // 1.60 gave Frame.evaluateExpression a leading Progress. Nothing here is
+    // cancellable — the page is being detached — so it runs unbounded.
+    await Promise.all(page.frames().map(f => f.evaluateExpression(nullProgress, 'window.__pw_uninstall()').catch(() => {})));
   }
 
   async onBeforeCall(sdkObject: SdkObject, metadata: CallMetadata) {
@@ -432,10 +434,10 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
     for (const error of errors)
       this._currentCallsMetadata.delete(error);
 
-    this._updateSources();
+    this._updateUserSources();
   }
 
-  private _updateSources() {
+  private _updateUserSources() {
     // Remove old decorations.
     for (const source of this._userSources.values()) {
       source.highlight = [];

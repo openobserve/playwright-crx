@@ -79,7 +79,8 @@ export class Debugger extends SdkObject implements InstrumentationListener {
 
   async setMuted(muted: boolean) {
     this._muted = muted;
-    if (muted) this.resume(false);
+    // 1.60 dropped resume()'s `step` parameter.
+    if (muted) this.resume();
   }
 
   async onBeforeCall(sdkObject: SdkObject, metadata: CallMetadata): Promise<void> {
