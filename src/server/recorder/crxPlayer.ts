@@ -28,15 +28,11 @@ import type { ActionInContextWithLocation, Location } from './parser';
 import type { FrameDescription } from '@recorder/actions';
 import type { StructuredError } from './syntheticsRecorderApp';
 import { toClickOptions } from 'playwright-core/lib/server/recorder/recorderRunner';
-import { parseAriaSnapshotUnsafe } from '@isomorphic/ariaSnapshot';
 import { nullProgress, ProgressController } from 'playwright-core/lib/server/progress';
 import type { CallMetadata } from 'playwright-core/lib/server/instrumentation';
 import type { Progress } from 'playwright-core/lib/server/progress';
 import type { Crx } from '../crx';
 import type { InstrumentationListener, SdkObject } from 'playwright-core/lib/server/instrumentation';
-// Namespace import, not default: `YamlLibrary` in @isomorphic/ariaSnapshot is the
-// module's shape (parseDocument, Scalar, YAMLMap, ...), which is the namespace.
-import * as yaml from 'yaml';
 
 class Stopped extends Error {}
 
@@ -325,10 +321,11 @@ export default class CrxPlayer extends EventEmitter {
 
     if (action.name === 'closePage') {
       pageAliases.delete(page);
-      // 1.60 made Page.close take a Progress. There is nothing to cancel here — the
-      // step is closing a page it already owns — so it runs unbounded, which is what
-      // the untimed close did before.
-      await page.close(nullProgress, { runBeforeUnload: true });
+      // 1.60 made Page.close take a Progress; 1.61 moved runBeforeUnload out of its
+      // options into a method of its own. Nothing here is cancellable — the step is
+      // closing a page it already owns — so both run unbounded, as the untimed close did.
+      await page.runBeforeUnload(nullProgress);
+      await page.close(nullProgress);
       return;
     }
 
@@ -357,16 +354,13 @@ export default class CrxPlayer extends EventEmitter {
       if (action.name === 'select')
         return await mainFrame.selectOption(progress, selector, [], action.options.map((value: any) => ({ value })), { strict: true });
 
-      // 1.54: Frame.expect() RESOLVES with { matches } instead of throwing when the
-      // assertion does not hold. Left as-is, every failing assertion would replay as a
-      // pass — so the result is checked and turned back into a throw, which is what the
-      // step-result reporting (and the fidelity report) depends on.
-      const expectAndThrow = async (options: Parameters<typeof mainFrame.expect>[2]) => {
-        const result = await mainFrame.expect(progress, selector, options);
-        if (!result.matches)
-          throw new Error(result.log?.join('\n') || `Assertion failed: ${action.name}`);
-        return result;
-      };
+      // 1.54 had made Frame.expect() RESOLVE with { matches } instead of throwing, so this
+      // wrapped it and turned a false result back into a throw — without which every
+      // failing assertion replayed as a pass. 1.61 returned it to throwing (it now returns
+      // void), which makes the wrapper not merely redundant but inverted: `result.matches`
+      // on undefined would throw on every assertion that PASSED. Calling it directly again.
+      const expectAndThrow = (options: Parameters<typeof mainFrame.expect>[2]) =>
+        mainFrame.expect(progress, selector, options);
 
       if (action.name === 'assertChecked') {
         return await expectAndThrow({
@@ -403,8 +397,11 @@ export default class CrxPlayer extends EventEmitter {
         return await expectAndThrow({
           selector,
           expression: 'to.match.aria',
-          // 1.54 renamed the action field `snapshot` -> `ariaSnapshot`.
-          expectedValue: parseAriaSnapshotUnsafe(yaml, action.ariaSnapshot),
+          // 1.54 renamed the action field `snapshot` -> `ariaSnapshot`. 1.61 moved the
+          // parsing into Frame.expect itself, so the raw string goes across now — parsing
+          // it here first made expect parse an already-parsed template and every
+          // aria-snapshot assertion replayed red.
+          expectedValue: action.ariaSnapshot,
           isNot: false,
         });
       }

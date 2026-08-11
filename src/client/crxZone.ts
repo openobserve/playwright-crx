@@ -14,43 +14,32 @@
  * limitations under the License.
  */
 
-// some types are commented out because they are not used in the extension
-import {
-  Browser,
-  BrowserContext,
-  BrowserType,
-  Clock,
-  ConsoleMessage,
-  Coverage,
-  Dialog,
-  Download,
-  // Electron,
-  // ElectronApplication,
-  Locator,
-  FrameLocator,
-  ElementHandle,
-  FileChooser,
-  TimeoutError,
-  Frame,
-  Keyboard,
-  Mouse,
-  Touchscreen,
-  JSHandle,
-  Route,
-  WebSocket,
-  WebSocketRoute,
-  // APIRequest,
-  // APIRequestContext,
-  // APIResponse,
-  Page,
-  Selectors,
-  Tracing,
-  Video,
-  Worker,
-  CDPSession,
-  Playwright,
-  WebError,
-} from 'playwright-core/lib/client/api';
+// 1.61 deleted client/api.ts — it was a barrel that existed only for doc tooling
+// (playwright#40777), so these now come from the modules that define them.
+import { Browser } from 'playwright-core/lib/client/browser';
+import { BrowserContext } from 'playwright-core/lib/client/browserContext';
+import { BrowserType } from 'playwright-core/lib/client/browserType';
+import { Clock } from 'playwright-core/lib/client/clock';
+import { ConsoleMessage } from 'playwright-core/lib/client/consoleMessage';
+import { Coverage } from 'playwright-core/lib/client/coverage';
+import { Dialog } from 'playwright-core/lib/client/dialog';
+import { Download } from 'playwright-core/lib/client/download';
+import { FrameLocator, Locator } from 'playwright-core/lib/client/locator';
+import { ElementHandle } from 'playwright-core/lib/client/elementHandle';
+import { FileChooser } from 'playwright-core/lib/client/fileChooser';
+import { TimeoutError } from 'playwright-core/lib/client/errors';
+import { Frame } from 'playwright-core/lib/client/frame';
+import { Keyboard, Mouse, Touchscreen } from 'playwright-core/lib/client/input';
+import { JSHandle } from 'playwright-core/lib/client/jsHandle';
+import { Route, WebSocket, WebSocketRoute } from 'playwright-core/lib/client/network';
+import { Page } from 'playwright-core/lib/client/page';
+import { Selectors } from 'playwright-core/lib/client/selectors';
+import { Tracing } from 'playwright-core/lib/client/tracing';
+import { Video } from 'playwright-core/lib/client/video';
+import { Worker } from 'playwright-core/lib/client/worker';
+import { CDPSession } from 'playwright-core/lib/client/cdpSession';
+import { Playwright } from 'playwright-core/lib/client/playwright';
+import { WebError } from 'playwright-core/lib/client/webError';
 
 import {
   Crx,
@@ -251,7 +240,10 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
     waitForSelector: true,
   }],
   fileChooser: [FileChooser.prototype, { setFiles: true }],
-  timeoutError: [TimeoutError.prototype, {}],
+  // 1.61 gave PlaywrightError a `details?: any` field. KeysOfAsyncMethods sweeps any
+  // `any`-typed key in, since `any` is assignable to a promise-returning function —
+  // so it has to be listed, but as data it must not be wrapped. `false` says both.
+  timeoutError: [TimeoutError.prototype, { details: false }],
   frame: [Frame.prototype, {
     goto: true,
     waitForNavigation: true,
