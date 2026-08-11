@@ -155,6 +155,7 @@ Frame:
         pause: true
         input: true
         isAutoWaiting: true
+        potentiallyClosesScope: true
 
     content:
       title: Get content
@@ -764,18 +765,14 @@ Frame:
         useInnerText: boolean?
         isNot: boolean
         timeout: float
-      returns:
-        matches: boolean
+      errorDetails:
         received:
           type: object?
           properties:
             value: SerializedValue?
             ariaSnapshot: string?
         timedOut: boolean?
-        errorMessage: string?
-        log:
-          type: array?
-          items: string
+        customErrorMessage: string?
       flags:
         snapshot: true
         pause: true

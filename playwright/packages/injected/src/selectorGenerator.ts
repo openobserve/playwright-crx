@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { splitTestIdAttributeNames } from '@isomorphic/locatorUtils';
 import { escapeForAttributeSelector, escapeForTextSelector, escapeRegExp, quoteCSSAttributeValue } from '@isomorphic/stringUtils';
 
 import { beginDOMCaches, closestCrossShadow, endDOMCaches, isElementVisible, isInsideScope, parentElementOrShadowHost } from './domUtils';
@@ -256,11 +257,12 @@ function generateSelectorFor(cache: Cache, injectedScript: InjectedScript, targe
 
 function buildNoTextCandidates(injectedScript: InjectedScript, element: Element, options: InternalOptions): SelectorToken[] {
   const candidates: SelectorToken[] = [];
+  const testIdAttributeNames = splitTestIdAttributeNames(options.testIdAttributeName);
 
   // CSS selectors are applicable to elements via locator() and iframes via frameLocator().
   {
     for (const attr of ['data-testid', 'data-test-id', 'data-test']) {
-      if (!options.noTestId && attr !== options.testIdAttributeName && element.getAttribute(attr))
+      if (!options.noTestId && !testIdAttributeNames.includes(attr) && element.getAttribute(attr))
         candidates.push({ engine: 'css', selector: `[${attr}=${quoteCSSAttributeValue(element.getAttribute(attr)!)}]`, score: kOtherTestIdScore });
     }
 
@@ -280,16 +282,28 @@ function buildNoTextCandidates(injectedScript: InjectedScript, element: Element,
     }
 
     // Locate by testId via CSS selector.
-    if (!options.noTestId && element.getAttribute(options.testIdAttributeName))
-      candidates.push({ engine: 'css', selector: `[${options.testIdAttributeName}=${quoteCSSAttributeValue(element.getAttribute(options.testIdAttributeName)!)}]`, score: kTestIdScore });
+    if (!options.noTestId) {
+      for (const testIdAttr of testIdAttributeNames) {
+        if (element.getAttribute(testIdAttr))
+          candidates.push({ engine: 'css', selector: `[${testIdAttr}=${quoteCSSAttributeValue(element.getAttribute(testIdAttr)!)}]`, score: kTestIdScore });
+      }
+    }
 
     penalizeScoreForLength([candidates]);
     return candidates;
   }
 
   // Everything below is not applicable to iframes (getBy* methods).
-  if (!options.noTestId && element.getAttribute(options.testIdAttributeName))
-    candidates.push({ engine: 'internal:testid', selector: `[${options.testIdAttributeName}=${escapeForAttributeSelector(element.getAttribute(options.testIdAttributeName)!, true)}]`, score: kTestIdScore });
+  // patch(playwright-crx): `noTestId` now has to suppress every configured test attribute,
+  // not just the one — 1.61 made testIdAttributeName a comma-separated list. A candidate
+  // list that survives a test-attribute rename has to avoid all of them, so the guard moved
+  // outside the loop rather than into it.
+  if (!options.noTestId) {
+    for (const testIdAttr of testIdAttributeNames) {
+      if (element.getAttribute(testIdAttr))
+        candidates.push({ engine: 'internal:testid', selector: `[${testIdAttr}=${escapeForAttributeSelector(element.getAttribute(testIdAttr)!, true)}]`, score: kTestIdScore });
+    }
+  }
 
   if (element.nodeName === 'INPUT' || element.nodeName === 'TEXTAREA') {
     const input = element as HTMLInputElement | HTMLTextAreaElement;
@@ -378,7 +392,7 @@ function buildTextCandidates(injectedScript: InjectedScript, element: Element, i
       if (ariaDescription) {
         candidates.push([{ engine: 'internal:role', selector: `${ariaRole}[name=${escapeForAttributeSelector(ariaName, true)}][description=${escapeForAttributeSelector(ariaDescription, true)}]`, score: kRoleWithNameScoreExact + 1 }]);
         for (const alternative of suitableTextAlternatives(ariaName))
-          candidates.push([{ engine: 'internal:role', selector: `${ariaRole}[name=${escapeForAttributeSelector(alternative.text, false)}][description=${escapeForAttributeSelector(ariaDescription, true)}]`, score: kRoleWithNameScore - alternative.scoreBonus + 1 }]);
+          candidates.push([{ engine: 'internal:role', selector: `${ariaRole}[name=${escapeForAttributeSelector(alternative.text, false)}][description=${escapeForAttributeSelector(ariaDescription, false)}]`, score: kRoleWithNameScore - alternative.scoreBonus + 1 }]);
       }
     } else {
       const roleToken = { engine: 'internal:role', selector: `${ariaRole}`, score: kRoleWithoutNameScore };

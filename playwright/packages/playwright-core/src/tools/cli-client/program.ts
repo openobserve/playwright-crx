@@ -156,7 +156,8 @@ export async function program(options?: { embedderVersion?: string}) {
     }
     case 'attach': {
       const attachTarget = args._[1] as string | undefined;
-      if (attachTarget && (args.cdp || args.endpoint || args.extension))
+      const targetCount = (attachTarget ? 1 : 0) + (args.cdp ? 1 : 0) + (args.endpoint ? 1 : 0) + (args.extension ? 1 : 0);
+      if (targetCount > 1)
         output.errorAttachConflict();
       if (attachTarget)
         args.endpoint = attachTarget;
@@ -167,7 +168,7 @@ export async function program(options?: { embedderVersion?: string}) {
       }
 
       const cdpChannel = typeof args.cdp === 'string' && isKnownChannel(args.cdp) ? args.cdp : undefined;
-      const targetName = attachTarget ?? cdpChannel ?? extensionChannel ?? args.cdp as string;
+      const targetName = attachTarget ?? cdpChannel ?? extensionChannel ?? args.endpoint as string ?? args.cdp as string;
       if (!targetName)
         output.errorAttachNoTarget();
       const attachSessionName = explicitSessionName(args.session as string) ?? attachTarget ?? cdpChannel ?? extensionChannel ?? sessionName;
@@ -204,9 +205,16 @@ export async function program(options?: { embedderVersion?: string}) {
       const daemonScript = libPath('entry', 'dashboardApp.js');
       const daemonArgs = [
         daemonScript,
-        `--sessionName=${sessionName}`,
         `--workspaceDir=${clientInfo.workspaceDir ?? ''}`,
       ];
+      // Only pass --sessionName when the user explicitly requested a session
+      // (via -s/--session or PLAYWRIGHT_CLI_SESSION). Bare `playwright cli show`
+      // opens the dashboard generically, with no specific session to reveal,
+      // so the daemon should ack as soon as it's ready rather than waiting for
+      // a reveal that was never asked for.
+      const explicit = explicitSessionName(args.session as string);
+      if (explicit)
+        daemonArgs.push(`--sessionName=${explicit}`);
       if (args.port !== undefined)
         daemonArgs.push(`--port=${args.port}`);
       if (args.host !== undefined)
@@ -229,14 +237,35 @@ export async function program(options?: { embedderVersion?: string}) {
       const foreground = args.port !== undefined;
       const child = spawn(process.execPath, daemonArgs, {
         detached: !foreground,
-        stdio: foreground ? 'inherit' : 'ignore',
+        stdio: foreground ? 'inherit' : ['pipe', 'pipe', 'ignore'],
       });
       if (foreground) {
         await new Promise<void>(resolve => child.on('exit', () => resolve()));
         return;
       }
+      const timer = setTimeout(() => child.stdin!.destroy(), 60_000);
       child.unref();
-      output.show(sessionName, child.pid);
+      let daemonPid: number;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          let outLog = '';
+          child.stdout!.on('data', data => {
+            outLog += data.toString();
+            const match = outLog.match(/Dashboard is running pid=(\d+)/);
+            if (match) {
+              daemonPid = Number(match[1]);
+              resolve();
+            }
+          });
+          child.once('exit', (code, signal) => reject(new Error(`Dashboard daemon exited (code=${code}, signal=${signal}) before signaling READY${outLog ? '\n' + outLog : ''}`)));
+        });
+      } finally {
+        clearTimeout(timer);
+        child.removeAllListeners('exit');
+        child.stdin!.destroy();
+        child.stdout!.destroy();
+      }
+      output.show(sessionName, daemonPid!);
       return;
     }
     default: {

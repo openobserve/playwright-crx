@@ -741,8 +741,7 @@ class FrameSession {
       worker.workerScriptLoaded();
     // This might fail if the target is closed before we initialize.
     session._sendMayFail('Runtime.enable');
-    // TODO: attribute workers to the right frame.
-    this._crPage._networkManager.addSession(session, this._page.frameManager.frame(this._targetId) ?? undefined).catch(() => {});
+    this._crPage._networkManager.addSession(session, this._page.frameManager.frame(event.targetInfo.parentFrameId ?? this._targetId) ?? undefined).catch(() => {});
     session._sendMayFail('Runtime.runIfWaitingForDebugger');
     session._sendMayFail('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
     session.on('Target.attachedToTarget', event => this._onAttachedToTarget(event));
@@ -1166,7 +1165,7 @@ async function emulateTimezone(session: CRSession, timezoneId: string) {
 }
 
 // Chromium reference: https://source.chromium.org/chromium/chromium/src/+/main:components/embedder_support/user_agent_utils.cc;l=434;drc=70a6711e08e9f9e0d8e4c48e9ba5cab62eb010c2
-function calculateUserAgentMetadata(options: types.BrowserContextOptions) {
+export function calculateUserAgentMetadata(options: types.BrowserContextOptions) {
   const ua = options.userAgent;
   if (!ua)
     return undefined;

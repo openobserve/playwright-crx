@@ -85,6 +85,36 @@ it('insertText should only emit input event', async ({ page, server }) => {
   expect(await events.jsonValue()).toEqual(['input']);
 });
 
+it('should emit keydown, keypress, textInput and input when typing a character', async ({ page }) => {
+  await page.setContent(`<input>`);
+  const events = await page.evaluateHandle(() => {
+    const events: string[] = [];
+    for (const type of ['keydown', 'keypress', 'textInput', 'input', 'keyup'])
+      document.querySelector('input').addEventListener(type, () => events.push(type));
+    return events;
+  });
+  await page.focus('input');
+  await page.keyboard.press('f');
+  expect(await events.jsonValue()).toEqual(['keydown', 'keypress', 'textInput', 'input', 'keyup']);
+});
+
+it('should dispatch key events in separate tasks', async ({ page, browserName }) => {
+  it.skip(browserName === 'firefox', 'Firefox dispatches keydown and keypress in the same task');
+  await page.setContent(`<input>`);
+  const log = await page.evaluateHandle(() => {
+    const log: string[] = [];
+    const input = document.querySelector('input');
+    for (const type of ['keydown', 'keypress'])
+      input.addEventListener(type, () => { log.push(type); queueMicrotask(() => log.push('microtask-' + type)); });
+    input.focus();
+    return log;
+  });
+  await page.keyboard.press('a');
+  // A microtask scheduled in the keydown handler must run before keypress,
+  // proving each event is delivered in its own task rather than synchronously.
+  expect(await log.jsonValue()).toEqual(['keydown', 'microtask-keydown', 'keypress', 'microtask-keypress']);
+});
+
 it('should report shiftKey', async ({ page, server, browserName, platform }) => {
   it.fail(browserName === 'firefox' && platform === 'darwin');
 

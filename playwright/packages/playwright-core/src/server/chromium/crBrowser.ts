@@ -30,7 +30,7 @@ import { CRPage } from './crPage';
 import { saveProtocolStream } from './crProtocolHelper';
 import { CRServiceWorker } from './crServiceWorker';
 
-import type { InitScript, Worker } from '../page';
+import type { InitScript } from '../page';
 import type { ConnectionTransport } from '../transport';
 import type * as types from '../types';
 import type { CDPSession, CRSession } from './crConnection';
@@ -63,7 +63,7 @@ export class CRBrowser extends Browser {
     const browser = new CRBrowser(parent, connection, options);
     browser._devtools = devtools;
     if (browser.isClank())
-      browser._isCollocatedWithServer = false;
+      browser._isBrowserCollocatedWithServer = false;
     const session = connection.rootSession;
     if ((options as any).__testHookOnConnectToBrowser)
       await (options as any).__testHookOnConnectToBrowser();
@@ -496,9 +496,10 @@ export class CRBrowserContext extends BrowserContext<CREventsMap> {
 
   async setUserAgent(userAgent: string | undefined): Promise<void> {
     this._options.userAgent = userAgent;
-    for (const page of this.pages())
-      await (page.delegate as CRPage).updateUserAgent();
-    // TODO: service workers don't have Emulation domain?
+    await Promise.all([
+      ...this.pages().map(page => (page.delegate as CRPage).updateUserAgent()),
+      ...this.serviceWorkers().map(sw => sw.updateUserAgent()),
+    ]);
   }
 
   async doUpdateOffline(): Promise<void> {
@@ -593,7 +594,7 @@ export class CRBrowserContext extends BrowserContext<CREventsMap> {
     });
   }
 
-  serviceWorkers(): Worker[] {
+  serviceWorkers(): CRServiceWorker[] {
     return Array.from(this._browser._serviceWorkers.values()).filter(serviceWorker => serviceWorker.browserContext === this);
   }
 

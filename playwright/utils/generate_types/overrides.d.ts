@@ -211,11 +211,13 @@ export interface Locator {
 
 export interface BrowserType<Unused = {}> {
   connectOverCDP(endpointURL: string, options?: ConnectOverCDPOptions): Promise<Browser>;
+  connectOverCDP(transport: ConnectOverCDPTransport, options?: ConnectOverCDPOptions): Promise<Browser>;
   /**
    * Option `wsEndpoint` is deprecated. Instead use `endpointURL`.
    * @deprecated
    */
   connectOverCDP(options: ConnectOverCDPOptions & { wsEndpoint?: string }): Promise<Browser>;
+
   connect(wsEndpoint: string, options?: ConnectOptions): Promise<Browser>;
   /**
    * wsEndpoint in options is deprecated. Instead use `wsEndpoint`.
@@ -224,6 +226,14 @@ export interface BrowserType<Unused = {}> {
    * @deprecated
    */
   connect(options: ConnectOptions & { wsEndpoint?: string }): Promise<Browser>;
+}
+
+export interface ConnectOverCDPTransport {
+  open?(): void;
+  send(message: object): void;
+  close(): void;
+  onmessage?: (message: object) => void;
+  onclose?: (reason?: string) => void;
 }
 
 export interface CDPSession {
@@ -245,7 +255,7 @@ export interface WebSocketRoute {
 
 export interface Screencast {
   start(options?: {
-    onFrame?: (frame: { data: Buffer, viewportWidth: number, viewportHeight: number }) => Promise<any>|any;
+    onFrame?: (frame: { data: Buffer, timestamp: number, viewportWidth: number, viewportHeight: number }) => Promise<any>|any;
     path?: string;
     size?: {
       width: number;
@@ -395,17 +405,6 @@ export type AndroidKey =
 
 export const _electron: Electron;
 export const _android: Android;
-
-//@ts-ignore this will be any if electron is not installed
-type ElectronType = typeof import('electron');
-
-export interface ElectronApplication {
-  evaluate<R, Arg>(pageFunction: PageFunctionOn<ElectronType, Arg, R>, arg: Arg): Promise<R>;
-  evaluate<R>(pageFunction: PageFunctionOn<ElectronType, void, R>, arg?: any): Promise<R>;
-
-  evaluateHandle<R, Arg>(pageFunction: PageFunctionOn<ElectronType, Arg, R>, arg: Arg): Promise<SmartHandle<R>>;
-  evaluateHandle<R>(pageFunction: PageFunctionOn<ElectronType, void, R>, arg?: any): Promise<SmartHandle<R>>;
-}
 
 // This is required to not export everything by default. See https://github.com/Microsoft/TypeScript/issues/19545#issuecomment-340490459
 export {};

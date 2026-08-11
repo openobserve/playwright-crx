@@ -22,7 +22,7 @@ import { isUnderTest } from '@utils/debug';
 import { assert } from '@isomorphic/assert';
 import { monotonicTime } from '@isomorphic/time';
 import { rewriteErrorMessage } from '@isomorphic/stackTrace';
-import { ValidationError, createMetadataValidator, findValidator  } from '../../protocol/validator';
+import { ValidationError, createMetadataValidator, createWaitInfoValidator, findValidator, maybeFindValidator } from '../../protocol/validator';
 import { TargetClosedError, isTargetClosedError, serializeError } from '../errors';
 import { createRootSdkObject, SdkObject } from '../instrumentation';
 import { isProtocolError } from '../protocolError';
@@ -36,6 +36,7 @@ import type { ValidatorContext } from '../../protocol/validator';
 import type * as channels from '@protocol/channels';
 
 const metadataValidator = createMetadataValidator();
+const waitInfoValidator = createWaitInfoValidator();
 
 let maxDispatchersOverride: number | undefined;
 export function setMaxDispatchersForTest(value: number | undefined) {
@@ -143,10 +144,6 @@ export class Dispatcher<Type extends SdkObject, ChannelType, ParentScopeType ext
 
   private _disposeRecursively(error: Error) {
     assert(!this._disposed, `${this._guid} is disposed more than once`);
-    for (const controller of this._activeProgressControllers) {
-      if (!controller.metadata.potentiallyClosesScope)
-        controller.abort(error).catch(() => {});
-    }
     this._onDispose();
     this._disposed = true;
     eventsHelper.removeEventListeners(this._eventListeners);
@@ -169,10 +166,6 @@ export class Dispatcher<Type extends SdkObject, ChannelType, ParentScopeType ext
       _guid: this._guid,
       objects: Array.from(this._dispatchers.values()).map(o => o._debugScopeState()),
     };
-  }
-
-  async waitForEventInfo(): Promise<void> {
-    // Instrumentation takes care of this.
   }
 }
 
@@ -202,10 +195,10 @@ export class DispatcherConnection {
   readonly _dispatchersByBucket = new Map<string, Set<string>>();
   onmessage = (message: object) => {};
   private _waitOperations = new Map<string, CallMetadata>();
-  private _isLocal: boolean;
+  private _isInProcess: boolean;
 
-  constructor(isLocal?: boolean) {
-    this._isLocal = !!isLocal;
+  constructor(isInProcess?: boolean) {
+    this._isInProcess = !!isInProcess;
   }
 
   sendEvent(dispatcher: DispatcherScope, event: string, params: any) {
@@ -231,7 +224,7 @@ export class DispatcherConnection {
   private _validatorToWireContext(): ValidatorContext {
     return {
       tChannelImpl: this._tChannelImplToWire.bind(this),
-      binary: this._isLocal ? 'buffer' : 'toBase64',
+      binary: this._isInProcess ? 'buffer' : 'toBase64',
       isUnderTest,
     };
   }
@@ -239,7 +232,7 @@ export class DispatcherConnection {
   private _validatorFromWireContext(): ValidatorContext {
     return {
       tChannelImpl: this._tChannelImplFromWire.bind(this),
-      binary: this._isLocal ? 'buffer' : 'fromBase64',
+      binary: this._isInProcess ? 'buffer' : 'fromBase64',
       isUnderTest,
     };
   }
@@ -301,6 +294,12 @@ export class DispatcherConnection {
   async dispatch(message: object) {
     const { id, guid, method, params, metadata } = message as any;
     const dispatcher = this._dispatcherByGuid.get(guid);
+    if (method === '__waitInfo__') {
+      // Fire-and-forget: silently drop if the target is gone.
+      if (dispatcher)
+        await this._dispatchWaitInfo(id, dispatcher, params, metadata);
+      return;
+    }
     if (!dispatcher) {
       this.onmessage({ id, error: serializeError(new TargetClosedError(undefined)) });
       return;
@@ -345,33 +344,6 @@ export class DispatcherConnection {
       log: [],
     };
 
-    if (params?.info?.waitId) {
-      // Process logs for waitForNavigation/waitForLoadState/etc.
-      const info = params.info;
-      switch (info.phase) {
-        case 'before': {
-          this._waitOperations.set(info.waitId, callMetadata);
-          await sdkObject.instrumentation.onBeforeCall(sdkObject, callMetadata);
-          this.onmessage({ id });
-          return;
-        } case 'log': {
-          const originalMetadata = this._waitOperations.get(info.waitId)!;
-          originalMetadata.log.push(info.message);
-          sdkObject.instrumentation.onCallLog(sdkObject, originalMetadata, 'api', info.message);
-          this.onmessage({ id });
-          return;
-        } case 'after': {
-          const originalMetadata = this._waitOperations.get(info.waitId)!;
-          originalMetadata.endTime = monotonicTime();
-          originalMetadata.error = info.error ? { error: { name: 'Error', message: info.error } } : undefined;
-          this._waitOperations.delete(info.waitId);
-          await sdkObject.instrumentation.onAfterCall(sdkObject, originalMetadata);
-          this.onmessage({ id });
-          return;
-        }
-      }
-    }
-
     await sdkObject.instrumentation.onBeforeCall(sdkObject, callMetadata);
     const response: any = { id };
     try {
@@ -394,6 +366,9 @@ export class DispatcherConnection {
           rewriteErrorMessage(e, 'Target crashed ' + e.browserLogMessage());
       }
       response.error = serializeError(e);
+      const detailsValidator = maybeFindValidator(dispatcher._type, method, 'ErrorDetails');
+      if (detailsValidator)
+        response.errorDetails = detailsValidator((e as any)?.details ?? {}, '', this._validatorToWireContext());
       // The command handler could have set error in the metadata, do not reset it if there was no exception.
       callMetadata.error = response.error;
     } finally {
@@ -412,5 +387,56 @@ export class DispatcherConnection {
     const slowMo = sdkObject.attribution.browser?.options.slowMo;
     if (slowMo)
       await new Promise(f => setTimeout(f, slowMo));
+  }
+
+  private async _dispatchWaitInfo(id: number, dispatcher: DispatcherScope, params: any, metadata: any) {
+    // Fire-and-forget notification: never reply, never throw to the caller.
+    let info: channels.WaitInfo;
+    let validMetadata: channels.Metadata;
+    try {
+      const validatorContext = this._validatorFromWireContext();
+      info = waitInfoValidator(params, '', validatorContext);
+      validMetadata = metadataValidator(metadata, '', validatorContext);
+    } catch {
+      return;
+    }
+
+    const sdkObject = dispatcher._object;
+    if (info.phase === 'before') {
+      const callMetadata: CallMetadata = {
+        id: `call@${id}`,
+        location: validMetadata.location,
+        title: validMetadata.title,
+        internal: validMetadata.internal,
+        stepId: validMetadata.stepId,
+        objectId: sdkObject.guid,
+        pageId: sdkObject.attribution?.page?.guid,
+        frameId: sdkObject.attribution?.frame?.guid,
+        startTime: monotonicTime(),
+        endTime: 0,
+        type: dispatcher._type,
+        method: '__waitInfo__',
+        params: params || {},
+        log: [],
+      };
+      this._waitOperations.set(info.waitId, callMetadata);
+      await sdkObject.instrumentation.onBeforeCall(sdkObject, callMetadata).catch(() => {});
+      return;
+    }
+
+    const originalMetadata = this._waitOperations.get(info.waitId);
+    if (!originalMetadata)
+      return;
+    if (info.phase === 'log' && info.message) {
+      originalMetadata.log.push(info.message);
+      sdkObject.instrumentation.onCallLog(sdkObject, originalMetadata, 'api', info.message);
+      return;
+    }
+    if (info.phase === 'after') {
+      originalMetadata.endTime = monotonicTime();
+      originalMetadata.error = info.error ? { error: { name: 'Error', message: info.error } } : undefined;
+      this._waitOperations.delete(info.waitId);
+      await sdkObject.instrumentation.onAfterCall(sdkObject, originalMetadata).catch(() => {});
+    }
   }
 }

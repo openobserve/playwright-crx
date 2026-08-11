@@ -22,8 +22,8 @@ await page.screencast.stop();
 ```js
 // Capture frames
 await page.screencast.start({
-  onFrame: ({ data, viewportWidth, viewportHeight }) => {
-    console.log(`frame size: ${data.length} (${viewportWidth}x${viewportHeight})`);
+  onFrame: ({ data, timestamp, viewportWidth, viewportHeight }) => {
+    console.log(`frame size: ${data.length} (${viewportWidth}x${viewportHeight}) at ${timestamp}`);
   },
   size: { width: 800, height: 600 },
 });
@@ -34,8 +34,9 @@ await page.screencast.stop();
 ### option: Screencast.start.onFrame
 * since: v1.59
 - `onFrame` <[function]\([Object]\): [Promise]>
-  - alias: ScreencastFrame
+  * alias: ScreencastFrame
   - `data` <[Buffer]> JPEG-encoded frame data.
+  - `timestamp` <[float]> The timestamp of when the frame was presented by the browser, in milliseconds since the Unix epoch.
   - `viewportWidth` <[int]> Width of the page viewport at the time the frame was captured.
   - `viewportHeight` <[int]> Height of the page viewport at the time the frame was captured.
 
@@ -55,9 +56,8 @@ The quality of the image, between 0-100.
 
 ### option: Screencast.start.size
 * since: v1.59
-* langs: js
 - `size` ?<[Object]>
-  - alias-csharp: ScreencastSize
+  * alias-csharp: ScreencastSize
   - `width` <[int]> Max frame width in pixels.
   - `height` <[int]> Max frame height in pixels.
 
@@ -134,6 +134,14 @@ Position of the action title overlay. Defaults to `"top-right"`.
 - `fontSize` ?<[int]>
 
 Font size of the action title in pixels. Defaults to `24`.
+
+### option: Screencast.showActions.cursor
+* since: v1.61
+- `cursor` ?<[ScreencastCursor]<"none"|"pointer">>
+
+Cursor decoration shown for pointer actions. `"pointer"` (the default) renders
+a mouse pointer that animates from the previous action point to the next one.
+`"none"` disables the cursor decoration.
 
 ## async method: Screencast.showOverlays
 * since: v1.59

@@ -35,6 +35,7 @@ import type { PlaywrightPipeServer } from '../remote/playwrightPipeServer';
 import type { PlaywrightWebSocketServer } from '../remote/playwrightWebSocketServer';
 import { BrowserInfo, serverRegistry } from '../serverRegistry';
 import { nullProgress } from './progress';
+import { TargetClosedError } from './errors';
 
 import type * as types from './types';
 import type { ProxySettings } from './types';
@@ -87,7 +88,7 @@ export abstract class Browser extends SdkObject {
   private _startedClosing = false;
   private _contextForReuse: { context: BrowserContext, hash: string } | undefined;
   _closeReason: string | undefined;
-  _isCollocatedWithServer: boolean = true;
+  _isBrowserCollocatedWithServer: boolean = true;
   private _server: BrowserServer;
 
   constructor(parent: SdkObject, options: BrowserOptions) {
@@ -182,6 +183,8 @@ export abstract class Browser extends SdkObject {
       context.browserClosed();
     if (this._defaultContext)
       this._defaultContext.browserClosed();
+    for (const download of this._downloads.values())
+      download.artifact.reportFinished(new TargetClosedError(undefined));
     this.stopServer(nullProgress).catch(() => {});
     this.emit(Browser.Events.Disconnected);
     this.instrumentation.onBrowserClose(this);

@@ -28,8 +28,6 @@ it('should support hasTouch option', async ({ server, launchPersistent }) => {
 });
 
 it('should work in persistent context', async ({ server, launchPersistent, browserName }) => {
-  it.skip(browserName === 'firefox', 'Firefox does not support mobile');
-
   const { page } = await launchPersistent({ viewport: { width: 320, height: 480 }, isMobile: true });
   await page.goto(server.PREFIX + '/empty.html');
   expect(await page.evaluate(() => window.innerWidth)).toBe(980);
@@ -142,6 +140,23 @@ it('should create userDataDir if it does not exist', async ({ createUserDataDir,
   const context = await browserType.launchPersistentContext(userDataDir);
   await context.close();
   expect(fs.readdirSync(userDataDir).length).toBeGreaterThan(0);
+});
+
+it('should goto about:blank on relaunched persistent context', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41216' },
+}, async ({ browserType, createUserDataDir }) => {
+  const userDataDir = await createUserDataDir();
+
+  const context1 = await browserType.launchPersistentContext(userDataDir);
+  await context1.pages()[0].goto('about:blank');
+  await context1.close();
+
+  // When relaunching with an existing profile, Firefox session restore can race with the user's goto and cause "interrupted by another navigation".
+  // This issue is timing-sensitive and might not fire on every run, so rely on CI's --repeat-each matrix for coverage.
+  const context2 = await browserType.launchPersistentContext(userDataDir);
+  await context2.pages()[0].goto('about:blank');
+  expect(context2.pages()[0].url()).toBe('about:blank');
+  await context2.close();
 });
 
 it('should have default URL when launching browser', async ({ launchPersistent }) => {

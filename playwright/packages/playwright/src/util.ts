@@ -16,7 +16,6 @@
 
 import fs from 'fs';
 import path from 'path';
-import url from 'url';
 import util from 'util';
 
 import debug from 'debug';
@@ -114,12 +113,12 @@ export function createFileMatcher(patterns: string | RegExp | (string | RegExp)[
         return true;
     }
     // Windows might still receive unix style paths from Cygwin or Git Bash.
-    // Check against the file url as well.
+    // Check against the forward-slash form as well.
     if (path.sep === '\\') {
-      const fileURL = url.pathToFileURL(filePath).href;
+      const unixPath = filePath.split(path.sep).join('/');
       for (const re of reList) {
         re.lastIndex = 0;
-        if (re.test(fileURL))
+        if (re.test(unixPath))
           return true;
       }
     }
@@ -186,16 +185,6 @@ export function expectTypes(receiver: any, types: ('APIResponse' | 'Page' | 'Loc
 }
 
 export const windowsFilesystemFriendlyLength = 60;
-
-export function trimLongString(s: string, length = 100) {
-  if (s.length <= length)
-    return s;
-  const hash = calculateSha1(s);
-  const middle = `-${hash.substring(0, 5)}-`;
-  const start = Math.floor((length - middle.length) / 2);
-  const end = length - middle.length - start;
-  return s.substring(0, start) + middle + s.slice(-end);
-}
 
 export function addSuffixToFilePath(filePath: string, suffix: string): string {
   const ext = path.extname(filePath);
@@ -285,12 +274,23 @@ export function fileIsModule(file: string): boolean {
   return folderIsModule(folder);
 }
 
+const packageJsonIsModuleCache = new Map<string, boolean>();
+
 function folderIsModule(folder: string): boolean {
   const packageJsonPath = getPackageJsonPath(folder);
   if (!packageJsonPath)
     return false;
-  // Rely on `require` internal caching logic.
-  return require(packageJsonPath).type === 'module';
+  // Note: do not `require()` the package.json here to avoid running
+  // our resolve hook from inside itself.
+  if (!packageJsonIsModuleCache.has(packageJsonPath)) {
+    let isModule = false;
+    try {
+      isModule = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')).type === 'module';
+    } catch {
+    }
+    packageJsonIsModuleCache.set(packageJsonPath, isModule);
+  }
+  return packageJsonIsModuleCache.get(packageJsonPath)!;
 }
 
 const packageJsonMainFieldCache = new Map<string, string | undefined>();

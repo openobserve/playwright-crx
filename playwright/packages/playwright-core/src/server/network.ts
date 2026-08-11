@@ -189,6 +189,7 @@ export class Request extends SdkObject {
   _responseEndTiming = -1;
   private _overrides: NormalizedContinueOverrides | undefined;
   private _bodySize: number | undefined;
+  private _wallTimeMs: number | undefined;
   _responseBodyOverride: { body: string; isBase64: boolean; } | undefined;
 
   static Events = {
@@ -196,7 +197,7 @@ export class Request extends SdkObject {
   };
 
   constructor(context: contexts.BrowserContext, frame: frames.Frame | null, serviceWorker: pages.Worker | null, redirectedFrom: Request | null, documentId: string | undefined,
-    url: string, resourceType: ResourceType, method: string, postData: Buffer | null, headers: HeadersArray) {
+    url: string, resourceType: ResourceType, method: string, postData: Buffer | null, headers: HeadersArray, wallTimeMs?: number) {
     super(frame || context, 'request');
     assert(!url.startsWith('data:'), 'Data urls should not fire requests');
     this._context = context;
@@ -211,15 +212,27 @@ export class Request extends SdkObject {
     this._method = method;
     this._postData = postData;
     this._headers = headers;
+    this._wallTimeMs = wallTimeMs;
     this._isFavicon = url.endsWith('/favicon.ico') || !!redirectedFrom?._isFavicon;
   }
 
+  wallTimeMs(): number | undefined {
+    return this._wallTimeMs;
+  }
+
+  async raceWithPageClosure<T>(progress: Progress, promise: Promise<T>): Promise<T> {
+    const scope = this._serviceWorker?.openScope ?? this._frame?._page.openScope;
+    if (scope)
+      return await progress.race(scope.race(promise));
+    return await progress.race(promise);
+  }
+
   async rawRequestHeaders(progress: Progress): Promise<HeadersArray> {
-    return await progress.race(this._rawRequestHeaders());
+    return await this.raceWithPageClosure(progress, this.internalRawRequestHeaders());
   }
 
   async response(progress: Progress): Promise<Response | null> {
-    return await progress.race(this._waitForResponse());
+    return await this.raceWithPageClosure(progress, this._waitForResponse());
   }
 
   _setFailureText(failureText: string) {
@@ -267,7 +280,7 @@ export class Request extends SdkObject {
       this._rawRequestHeadersPromise.resolve(headers || this._headers);
   }
 
-  private async _rawRequestHeaders(): Promise<HeadersArray> {
+  async internalRawRequestHeaders(): Promise<HeadersArray> {
     return this._overrides?.headers || this._rawRequestHeadersPromise;
   }
 
@@ -323,14 +336,7 @@ export class Request extends SdkObject {
   }
 
   async _requestHeadersSize(): Promise<number> {
-    let headersSize = 4; // 4 = 2 spaces + 2 line breaks (GET /path \r\n)
-    headersSize += this.method().length;
-    headersSize += (new URL(this.url())).pathname.length;
-    headersSize += 8; // httpVersion
-    const headers = await this._rawRequestHeaders();
-    for (const header of headers)
-      headersSize += header.name.length + header.value.length + 4; // 4 = ': ' + '\r\n'
-    return headersSize;
+    return requestHeadersSize(await this.internalRawRequestHeaders(), this.url(), this.method());
   }
 }
 
@@ -539,27 +545,27 @@ export class Response extends SdkObject {
   }
 
   async body(progress: Progress): Promise<Buffer> {
-    return await progress.race(this.internalBody());
+    return await this._request.raceWithPageClosure(progress, this.internalBody());
   }
 
   async securityDetails(progress: Progress): Promise<SecurityDetails | null> {
-    return await progress.race(this.internalSecurityDetails());
+    return await this._request.raceWithPageClosure(progress, this.internalSecurityDetails());
   }
 
   async serverAddr(progress: Progress): Promise<RemoteAddr | null> {
-    return (await progress.race(this._serverAddrPromise)) || null;
+    return await this._request.raceWithPageClosure(progress, this.internalServerAddr());
   }
 
   async rawResponseHeaders(progress: Progress): Promise<NameValue[]> {
-    return await progress.race(this._rawResponseHeadersPromise);
+    return await this._request.raceWithPageClosure(progress, this.internalRawResponseHeaders());
   }
 
   async httpVersion(progress: Progress): Promise<string> {
-    return await progress.race(this._httpVersion());
+    return await this._request.raceWithPageClosure(progress, this.internalHttpVersion());
   }
 
   async sizes(progress: Progress): Promise<ResourceSizes> {
-    return await progress.race(this._sizes());
+    return await this._request.raceWithPageClosure(progress, this.internalSizes());
   }
 
   _serverAddrFinished(addr?: RemoteAddr) {
@@ -628,6 +634,14 @@ export class Response extends SdkObject {
     return await this._securityDetailsPromise || null;
   }
 
+  async internalServerAddr(): Promise<RemoteAddr | null> {
+    return await this._serverAddrPromise || null;
+  }
+
+  async internalRawResponseHeaders(): Promise<HeadersArray> {
+    return await this._rawResponseHeadersPromise;
+  }
+
   internalBody(): Promise<Buffer> {
     if (!this._contentPromise) {
       this._contentPromise = this._finishedPromise.then(async () => {
@@ -655,7 +669,7 @@ export class Response extends SdkObject {
     return this._request.frame();
   }
 
-  private async _httpVersion(): Promise<string> {
+  async internalHttpVersion(): Promise<string> {
     const httpVersion = await this._httpVersionPromise || null;
     if (!httpVersion)
       return 'HTTP/1.1';
@@ -676,18 +690,10 @@ export class Response extends SdkObject {
       return availableSize;
 
     // Fallback to calculating it manually.
-    let headersSize = 4; // 4 = 2 spaces + 2 line breaks (HTTP/1.1 200 Ok\r\n)
-    headersSize += 8; // httpVersion;
-    headersSize += 3; // statusCode;
-    headersSize += this.statusText().length;
-    const headers = await this._rawResponseHeadersPromise;
-    for (const header of headers)
-      headersSize += header.name.length + header.value.length + 4; // 4 = ': ' + '\r\n'
-    headersSize += 2; // '\r\n'
-    return headersSize;
+    return responseHeadersSize(await this._rawResponseHeadersPromise, this.statusText());
   }
 
-  private async _sizes(): Promise<ResourceSizes> {
+  async internalSizes(): Promise<ResourceSizes> {
     const requestHeadersSize = await this._request._requestHeadersSize();
     const responseHeadersSize = await this.responseHeadersSize();
 
@@ -718,17 +724,24 @@ export class Response extends SdkObject {
 export class WebSocket extends SdkObject {
   private _url: string;
   private _notified = false;
+  private _wallTimeMs: number | undefined;
+  private _status: number | undefined;
+  private _statusText: string | undefined;
+  private _requestHeaders: HeadersArray | undefined;
+  private _responseHeaders: HeadersArray | undefined;
 
   static Events = {
     Close: 'close',
     SocketError: 'socketerror',
     FrameReceived: 'framereceived',
     FrameSent: 'framesent',
+    Request: 'request',
+    Response: 'response',
   };
 
   constructor(parent: SdkObject, url: string) {
     super(parent, 'ws');
-    this._url = url;
+    this._url = stripFragmentFromUrl(url);
   }
 
   markAsNotified() {
@@ -745,12 +758,28 @@ export class WebSocket extends SdkObject {
     return this._url;
   }
 
-  frameSent(opcode: number, data: string) {
-    this.emit(WebSocket.Events.FrameSent, { opcode, data });
+  wallTimeMs(): number | undefined {
+    return this._wallTimeMs;
   }
 
-  frameReceived(opcode: number, data: string) {
-    this.emit(WebSocket.Events.FrameReceived, { opcode, data });
+  setWallTimeMs(wallTimeMs: number | undefined) {
+    this._wallTimeMs = wallTimeMs;
+  }
+
+  requestSent(headers: HeadersArray) {
+    this.emit(WebSocket.Events.Request, { headers });
+  }
+
+  responseReceived(status: number, statusText: string, headers: HeadersArray) {
+    this.emit(WebSocket.Events.Response, { status, statusText, headers });
+  }
+
+  frameSent(opcode: number, data: string, wallTimeMs: number) {
+    this.emit(WebSocket.Events.FrameSent, { opcode, data, wallTimeMs });
+  }
+
+  frameReceived(opcode: number, data: string, wallTimeMs: number) {
+    this.emit(WebSocket.Events.FrameReceived, { opcode, data, wallTimeMs });
   }
 
   error(errorMessage: string) {
@@ -858,5 +887,31 @@ export function mergeHeaders(headers: (HeadersArray | undefined | null)[]): Head
   const result: HeadersArray = [];
   for (const [lower, value] of lowerCaseToValue)
     result.push({ name: lowerCaseToOriginalCase.get(lower)!, value });
+  return result;
+}
+
+function headersSize(headers: HeadersArray): number {
+  let result = 0;
+  for (const header of headers)
+    result += header.name.length + header.value.length + 4; // 4 = ': ' + '\r\n'
+  return result;
+}
+
+export function requestHeadersSize(headers: HeadersArray, url: string, method: string): number {
+  let result = 4; // 4 = 2 spaces + 2 line breaks (GET /path \r\n)
+  result += method.length;
+  result += (new URL(url)).pathname.length;
+  result += 8; // httpVersion
+  result += headersSize(headers);
+  return result;
+}
+
+export function responseHeadersSize(headers: HeadersArray, statusText: string): number {
+  let result = 4; // 4 = 2 spaces + 2 line breaks (HTTP/1.1 200 Ok\r\n)
+  result += 8; // httpVersion;
+  result += 3; // statusCode;
+  result += statusText.length;
+  result += headersSize(headers);
+  result += 2; // '\r\n'
   return result;
 }

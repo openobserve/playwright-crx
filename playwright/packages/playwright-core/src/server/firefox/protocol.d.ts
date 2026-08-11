@@ -214,6 +214,11 @@ export namespace Protocol {
           height: number;
         };
         deviceScaleFactor?: number;
+        screenSize?: {
+          width: number;
+          height: number;
+        };
+        isMobile?: boolean;
       }|null;
     };
     export type setDefaultViewportReturnValue = void;
@@ -343,6 +348,11 @@ export namespace Protocol {
         height: number;
       };
       deviceScaleFactor?: number;
+      screenSize?: {
+        width: number;
+        height: number;
+      };
+      isMobile?: boolean;
     };
     export type DOMQuad = {
       p1: {
@@ -486,12 +496,14 @@ export namespace Protocol {
       wsid: string;
       opcode: number;
       data: string;
+      timestamp: number;
     }
     export type webSocketFrameReceivedPayload = {
       frameId: string;
       wsid: string;
       opcode: number;
       data: string;
+      timestamp: number;
     }
     export type screencastFramePayload = {
       data: string;
@@ -521,6 +533,11 @@ export namespace Protocol {
         height: number;
       }|null;
       deviceScaleFactor?: number;
+      screenSize?: {
+        width: number;
+        height: number;
+      };
+      isMobile?: boolean;
     };
     export type setViewportSizeReturnValue = void;
     export type setZoomParameters = {
@@ -605,7 +622,7 @@ export namespace Protocol {
       }|null;
     };
     export type screenshotParameters = {
-      mimeType: ("image/png"|"image/jpeg");
+      mimeType: ("image/png"|"image/jpeg"|"image/webp");
       clip: {
         x: number;
         y: number;

@@ -6,6 +6,138 @@ toc_max_heading_level: 2
 
 import LiteYouTube from '@site/src/components/LiteYouTube';
 
+## Version 1.61
+
+### 🔑 WebAuthn passkeys
+
+New [Credentials] virtual authenticator, available via [`property: BrowserContext.credentials`], lets tests register passkeys and answer `navigator.credentials.create()` / `navigator.credentials.get()` ceremonies in the page — no real hardware key required, works in all browsers:
+
+```java
+BrowserContext context = browser.newContext();
+
+// Seed a passkey your backend provisioned for a test user.
+context.credentials().create("example.com", new Credentials.CreateOptions()
+    .setId(credentialId)
+    .setUserHandle(userHandle)
+    .setPrivateKey(privateKey)
+    .setPublicKey(publicKey));
+context.credentials().install();
+
+Page page = context.newPage();
+page.navigate("https://example.com/login");
+// The page's navigator.credentials.get() is answered with the seeded passkey.
+```
+
+You can also let the app register a passkey once in a setup test, read it back with [`method: Credentials.get`], and seed it into later tests — see [Credentials] for details.
+
+### 🗃️ Web Storage
+
+New [WebStorage] API, available via [`property: Page.localStorage`] and [`property: Page.sessionStorage`], reads and writes the page's storage for the current origin:
+
+```java
+page.localStorage().setItem("token", "abc");
+String token = page.localStorage().getItem("token");
+List<NameValue> items = page.sessionStorage().items();
+```
+
+### New APIs
+
+- [`method: APIResponse.securityDetails`] and [`method: APIResponse.serverAddr`] mirror the browser-side [`method: Response.securityDetails`] and [`method: Response.serverAddr`].
+- New option `artifactsDir` in [`method: BrowserType.connectOverCDP`] controls where artifacts such as traces and downloads are stored when attached to an existing browser.
+- New option `cursor` in [`method: Screencast.showActions`] controls the cursor decoration rendered for pointer actions.
+- The `onFrame` callback in [`method: Screencast.start`] now receives a `timestamp` of when the frame was presented by the browser.
+
+### 🛠️ Other improvements
+
+- Playwright now supports Ubuntu 26.04.
+- HAR and trace recordings now include WebSocket requests.
+
+### Browser Versions
+
+- Chromium 149.0.7827.55
+- Mozilla Firefox 151.0
+- WebKit 26.5
+
+This version was also tested against the following stable channels:
+
+- Google Chrome 149
+- Microsoft Edge 149
+
+
+## Version 1.60
+
+### 🌐 HAR recording on Tracing
+
+[`method: Tracing.startHar`] / [`method: Tracing.stopHar`] expose HAR recording as a first-class tracing API, with the same `content`, `mode` and `urlFilter` options as `recordHar`:
+
+```java
+context.tracing().startHar(Paths.get("trace.har"));
+Page page = context.newPage();
+page.navigate("https://playwright.dev");
+context.tracing().stopHar();
+```
+
+### 🪝 Drop API
+
+New [`method: Locator.drop`] simulates an external drag-and-drop of files or clipboard-like data onto an element. Playwright dispatches `dragenter`, `dragover`, and `drop` with a synthetic [DataTransfer] in the page context — works cross-browser and is great for testing upload zones:
+
+```java
+page.locator("#dropzone").drop(new Locator.DropPayload()
+    .setFiles(new FilePayload("note.txt", "text/plain", "hello".getBytes(StandardCharsets.UTF_8))));
+
+page.locator("#dropzone").drop(new Locator.DropPayload()
+    .setData(Map.of(
+        "text/plain", "hello world",
+        "text/uri-list", "https://example.com")));
+```
+
+### 🎯 Aria snapshots
+
+- [`method: PageAssertions.toMatchAriaSnapshot`] now works on a [Page], in addition to a [Locator] — equivalent to asserting against `page.locator("body")`.
+- New `boxes` option on [`method: Locator.ariaSnapshot`] / [`method: Page.ariaSnapshot`] appends each element's bounding box as `[box=x,y,width,height]`, useful for AI consumption.
+
+### New APIs
+
+#### Browser, Context and Page
+
+- Event [`event: Browser.context`] — fired when a new context is created on the browser.
+- [BrowserContext] now mirrors lifecycle events from its pages: [`event: BrowserContext.download`], [`event: BrowserContext.frameAttached`], [`event: BrowserContext.frameDetached`], [`event: BrowserContext.frameNavigated`], [`event: BrowserContext.pageClose`], [`event: BrowserContext.pageLoad`].
+
+#### Locators and Assertions
+
+- New option `description` in [`method: Page.getByRole`] / [`method: Locator.getByRole`] / [`method: Frame.getByRole`] / [`method: FrameLocator.getByRole`] for matching the [accessible description](https://www.w3.org/TR/wai-aria-1.2/#dfn-accessible-description).
+- New option `pseudo` in [`method: LocatorAssertions.toHaveCSS`] reads computed styles from `::before` or `::after`.
+- New option `style` in [`method: Locator.highlight`] applies extra inline CSS to the highlight overlay, plus new [`method: Page.hideHighlight`] to clear all highlights.
+
+#### Network
+
+- [`method: WebSocketRoute.protocols`] returns the WebSocket subprotocols requested by the page.
+- New option `noDefaults` in [`method: BrowserType.connectOverCDP`] disables Playwright's default overrides on the default context (download behavior, focus emulation, media emulation), so attaching to a user's daily-driver browser doesn't disturb its state.
+
+#### Errors
+
+- New [`method: WebError.location`] mirrors [`method: ConsoleMessage.location`].
+
+### 🛠️ Other improvements
+
+- Trace Viewer adds a pretty-print toggle for JSON / form request and response bodies in the network details panel.
+
+### Breaking Changes ⚠️
+
+- Removed long-deprecated `handle` option on `BrowserContext.exposeBinding` and `Page.exposeBinding`.
+
+### Browser Versions
+
+- Chromium 148.0.7778.96
+- Mozilla Firefox 150.0.2
+- WebKit 26.4
+
+This version was also tested against the following stable channels:
+
+- Google Chrome 147
+- Microsoft Edge 147
+
+
 ## Version 1.59
 
 ### 🎬 Screencast

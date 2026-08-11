@@ -80,12 +80,21 @@ function filePath(relative) {
 }
 
 /**
- * @param {string} path
+ * Resolve a CLI shipped by a node_modules package to an absolute path, so we
+ * can spawn it via `node` directly instead of going through `npx`/`npm exec`
+ * (which adds a shell + npm wrapper process per concurrent build).
+ * @param {string} pkg
+ * @param {string} binName
  * @returns {string}
  */
-function quotePath(path) {
-  return "\"" + path + "\"";
+function resolveNodeBin(pkg, binName) {
+  // Resolve via package.json (always allowed) rather than a subpath that may
+  // be excluded by the package's `exports` field.
+  const pkgJson = require.resolve(`${pkg}/package.json`, { paths: [ROOT] });
+  return path.join(path.dirname(pkgJson), require(pkgJson).bin[binName]);
 }
+const VITE_BIN = resolveNodeBin('vite', 'vite');
+const TSC_BIN = resolveNodeBin('typescript', 'tsc');
 
 class Step {
   /**
@@ -645,9 +654,11 @@ function assertCoreBundleHasNoNodeModules() {
 steps.push(new CustomCallbackStep(assertCoreBundleHasNoNodeModules));
 
 // playwright/lib/transform/esmLoader.js — bundled ESM loader registered by
-// common/esmLoaderHost.ts via node:module register. Output sits next to
-// babelBundle.js so source-relative `./babelBundle` matches the runtime
-// sibling external.
+// transform.ts via node:module register. Output sits next to babelBundle.js
+// so source-relative `./babelBundle` matches the runtime sibling external.
+// '../transform/esmLoader.js' is also external: transform.ts has a
+// require.resolve() for it (dead code in this bundle, but esbuild still
+// parses it).
 {
   const playwrightSrc = filePath('packages/playwright/src');
   steps.push(new EsbuildStep({
@@ -659,6 +670,7 @@ steps.push(new CustomCallbackStep(assertCoreBundleHasNoNodeModules));
       'playwright-core/*',
       '../package',
       '../globals',
+      '../transform/esmLoader.js',
     ],
     plugins: [],
   }, [playwrightSrc]));
@@ -854,67 +866,43 @@ const pkgSizePlugin = {
   },
 };
 
-// Build/watch trace viewer service worker.
-steps.push(new ProgramStep({
-  command: 'npx',
-  args: [
-    'vite',
-    '--config',
-    'vite.sw.config.ts',
-    'build',
-    ...(watchMode ? ['--watch', '--minify=false'] : []),
-    ...(withSourceMaps ? ['--sourcemap=inline'] : []),
-  ],
-  shell: true,
-  cwd: path.join(__dirname, '..', '..', 'packages', 'trace-viewer'),
-  concurrent: true,
-}));
-
-// Build/watch web packages.
-// HMR: in watch mode the dashboard, html-reporter, and trace viewer (incl. UI
-// mode) are served by embedded Vite dev servers, so skip their
-// `vite build --watch` steps. Set PW_HMR_STATIC=1 to keep the watch builds for
-// testing the bundled output. Recorder is not yet HMR'd. The trace viewer
-// service worker still builds via vite.sw.config.ts above — that step is not
-// in this loop.
-const hmrReplacesWebBuilds = watchMode && process.env.PW_HMR_STATIC !== '1';
-const hmrHandledPackages = new Set(['dashboard', 'html-reporter', 'trace-viewer']);
-const webPackages = ['html-reporter', 'recorder', 'trace-viewer', 'dashboard']
-    .filter(pkg => !(hmrReplacesWebBuilds && hmrHandledPackages.has(pkg)));
+// Build/watch web packages. The html-reporter, trace-viewer, and dashboard
+// also have embedded Vite dev servers used when viewing reports/traces/the
+// dashboard live, but their bundled output is consumed as a static artifact
+// in other code paths (e.g. HtmlBuilder.build() reads lib/vite/htmlReport/
+// and lib/vite/traceViewer/), so we always keep the static build alongside
+// HMR. Recorder is not yet HMR'd.
+const webPackages = ['html-reporter', 'recorder', 'trace-viewer', 'dashboard'];
 for (const webPackage of webPackages) {
   steps.push(new ProgramStep({
-    command: 'npx',
+    command: process.execPath,
     args: [
-      'vite',
+      VITE_BIN,
       'build',
       ...(watchMode ? ['--watch', '--minify=false'] : []),
       ...(withSourceMaps ? ['--sourcemap=inline'] : []),
       '--clearScreen=false',
     ],
-    shell: true,
+    shell: false,
     cwd: path.join(__dirname, '..', '..', 'packages', webPackage),
     concurrent: true,
   }));
 }
 
-// Build/watch extension UI pages and service worker.
-for (const config of ['vite.config.mts', 'vite.sw.config.mts']) {
-  steps.push(new ProgramStep({
-    command: 'npx',
-    args: [
-      'vite',
-      'build',
-      '--config',
-      config,
-      ...(watchMode ? ['--watch', '--minify=false'] : []),
-      ...(withSourceMaps ? ['--sourcemap=inline'] : []),
-      '--clearScreen=false',
-    ],
-    shell: true,
-    cwd: path.join(__dirname, '..', '..', 'packages', 'extension'),
-    concurrent: true,
-  }));
-}
+// Build/watch extension
+steps.push(new ProgramStep({
+  command: process.execPath,
+  args: [
+    VITE_BIN,
+    'build',
+    ...(watchMode ? ['--watch', '--minify=false'] : []),
+    ...(withSourceMaps ? ['--sourcemap=inline'] : []),
+    '--clearScreen=false',
+  ],
+  shell: false,
+  cwd: path.join(__dirname, '..', '..', 'packages', 'extension'),
+  concurrent: true,
+}));
 
 // Generate CLI help.
 onChanges.push({
@@ -1035,9 +1023,9 @@ copyFiles.push({
 if (watchMode) {
   // Run TypeScript for type checking.
   steps.push(new ProgramStep({
-    command: 'npx',
-    args: ['tsc', '-w', '--preserveWatchOutput', '-p', quotePath(filePath('.'))],
-    shell: true,
+    command: process.execPath,
+    args: [TSC_BIN, '-w', '--preserveWatchOutput', '-p', filePath('.')],
+    shell: false,
     concurrent: true,
   }));
 }

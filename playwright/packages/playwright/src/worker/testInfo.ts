@@ -22,11 +22,11 @@ import { captureRawStack, stringifyStackFrames } from '@isomorphic/stackTrace';
 import { escapeWithQuotes } from '@isomorphic/stringUtils';
 import { monotonicTime } from '@isomorphic/time';
 import { createGuid } from '@utils/crypto';
-import { sanitizeForFilePath } from '@utils/fileUtils';
+import { sanitizeForFilePath, trimLongString } from '@utils/fileUtils';
 import { currentZone } from '@utils/zones';
 
 import { TimeoutManager, TimeoutManagerError } from './timeoutManager';
-import { addSuffixToFilePath, filteredStackTrace, getContainedPath, normalizeAndSaveAttachment, sanitizeFilePathBeforeExtension, trimLongString, windowsFilesystemFriendlyLength } from '../util';
+import { addSuffixToFilePath, filteredStackTrace, getContainedPath, normalizeAndSaveAttachment, sanitizeFilePathBeforeExtension, windowsFilesystemFriendlyLength } from '../util';
 import { TestTracing } from './testTracing';
 import { testInfoError } from './util';
 import { ipc, transform } from '../common';
@@ -413,15 +413,23 @@ export class TestInfoImpl implements TestInfo {
       this.status = 'interrupted';
   }
 
-  _failWithError(error: Error | unknown) {
+  _failWithError(root: Error | unknown) {
     if (this.status === 'passed' || this.status === 'skipped')
-      this.status = error instanceof TimeoutManagerError ? 'timedOut' : 'failed';
-    const serialized = testInfoError(error);
-    const step: TestStepInternal | undefined = typeof error === 'object' ? (error as any)?.[stepSymbol] : undefined;
-    if (step && step.boxedStack)
-      serialized.stack = `${(error as Error).name}: ${(error as Error).message}\n${stringifyStackFrames(step.boxedStack).join('\n')}`;
-    this.errors.push(serialized);
-    this._tracing.appendForError(serialized);
+      this.status = root instanceof TimeoutManagerError ? 'timedOut' : 'failed';
+    const visit = (error: Error | unknown) => {
+      const serialized = testInfoError(error);
+      const step: TestStepInternal | undefined = error === root && typeof error === 'object' ? (error as any)?.[stepSymbol] : undefined;
+      if (step && step.boxedStack)
+        serialized.stack = `${(error as Error).name}: ${(error as Error).message}\n${stringifyStackFrames(step.boxedStack).join('\n')}`;
+      this.errors.push(serialized);
+      this._tracing.appendForError(serialized);
+      const children = (error as any)?.errors;
+      if (Array.isArray(children)) {
+        for (const child of children)
+          visit(child);
+      }
+    };
+    visit(root);
   }
 
   async _runAsStep(stepInfo: { title: string, category: 'hook' | 'fixture', location?: Location, group?: string }, cb: () => Promise<any>) {

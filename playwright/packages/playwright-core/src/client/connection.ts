@@ -42,7 +42,7 @@ import { Stream } from './stream';
 import { Tracing } from './tracing';
 import { Worker } from './worker';
 import { WritableStream } from './writableStream';
-import { ValidationError, findValidator  } from '../protocol/validator';
+import { ValidationError, findValidator, maybeFindValidator } from '../protocol/validator';
 import type { ClientInstrumentation } from './clientInstrumentation';
 import type { HeadersArray } from './types';
 import type { ValidatorContext } from '../protocol/validator';
@@ -172,6 +172,10 @@ export class Connection extends EventEmitter {
   }
 
   async sendMessageToServer(object: ChannelOwner, method: string, params: any, options: { apiName?: string, title?: string, internal?: boolean, frames?: channels.StackFrame[], stepId?: string }): Promise<any> {
+    // Fire-and-forget: server intentionally never replies to __waitInfo__,
+    // so silently drop it after the connection is closed or the object was collected.
+    if (method === '__waitInfo__' && (this._closedError || object._wasCollected))
+      return;
     if (this._closedError)
       throw this._closedError;
     if (object._wasCollected)
@@ -192,6 +196,9 @@ export class Connection extends EventEmitter {
     // We need to exit zones before calling into the server, otherwise
     // when we receive events from the server, we would be in an API zone.
     this._platform.zones.empty.run(() => this.onmessage({ ...message, metadata }));
+    // Fire-and-forget: server intentionally never replies to __waitInfo__.
+    if (method === '__waitInfo__')
+      return;
     return await new Promise((resolve, reject) => this._callbacks.set(id, { resolve, reject, title: options.title, type, method }));
   }
 
@@ -207,7 +214,7 @@ export class Connection extends EventEmitter {
     if (this._closedError)
       return;
 
-    const { id, guid, method, params, result, error, log } = message as any;
+    const { id, guid, method, params, result, error, errorDetails, log } = message as any;
     if (id) {
       if (this._platform.isLogEnabled('channel'))
         this._platform.log('channel', '<RECV ' + JSON.stringify(message));
@@ -217,7 +224,11 @@ export class Connection extends EventEmitter {
       this._callbacks.delete(id);
       if (error && !result) {
         const parsedError = parseError(error);
+        parsedError.log = log || [];
         rewriteErrorMessage(parsedError, parsedError.message + formatCallLog(this._platform, log));
+        const detailsValidator = maybeFindValidator(callback.type, callback.method, 'ErrorDetails');
+        if (detailsValidator)
+          parsedError.details = detailsValidator(errorDetails ?? {}, '', this._validatorFromWireContext());
         callback.reject(parsedError);
       } else {
         const validator = findValidator(callback.type, callback.method, 'Result');

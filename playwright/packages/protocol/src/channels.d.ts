@@ -26,25 +26,20 @@ export interface Channel {
 
 // ----------- Initializer Traits -----------
 export type InitializerTraits<T> =
-    T extends AndroidDeviceChannel ? AndroidDeviceInitializer :
-    T extends BrowserContextChannel ? BrowserContextInitializer :
-    T extends ElectronApplicationChannel ? ElectronApplicationInitializer :
     T extends ElementHandleChannel ? ElementHandleInitializer :
-    T extends WebSocketChannel ? WebSocketInitializer :
-    T extends PageChannel ? PageInitializer :
-    T extends DebuggerChannel ? DebuggerInitializer :
-    T extends WorkerChannel ? WorkerInitializer :
     T extends AndroidChannel ? AndroidInitializer :
     T extends AndroidSocketChannel ? AndroidSocketInitializer :
+    T extends AndroidDeviceChannel ? AndroidDeviceInitializer :
     T extends APIRequestContextChannel ? APIRequestContextInitializer :
     T extends ArtifactChannel ? ArtifactInitializer :
     T extends StreamChannel ? StreamInitializer :
     T extends WritableStreamChannel ? WritableStreamInitializer :
     T extends BrowserChannel ? BrowserInitializer :
+    T extends BrowserContextChannel ? BrowserContextInitializer :
     T extends BrowserTypeChannel ? BrowserTypeInitializer :
     T extends DisposableChannel ? DisposableInitializer :
-    T extends EventTargetChannel ? EventTargetInitializer :
     T extends ElectronChannel ? ElectronInitializer :
+    T extends ElectronApplicationChannel ? ElectronApplicationInitializer :
     T extends FrameChannel ? FrameInitializer :
     T extends JSHandleChannel ? JSHandleInitializer :
     T extends LocalUtilsChannel ? LocalUtilsInitializer :
@@ -52,6 +47,8 @@ export type InitializerTraits<T> =
     T extends RouteChannel ? RouteInitializer :
     T extends WebSocketRouteChannel ? WebSocketRouteInitializer :
     T extends ResponseChannel ? ResponseInitializer :
+    T extends WebSocketChannel ? WebSocketInitializer :
+    T extends PageChannel ? PageInitializer :
     T extends RootChannel ? RootInitializer :
     T extends PlaywrightChannel ? PlaywrightInitializer :
     T extends DebugControllerChannel ? DebugControllerInitializer :
@@ -59,31 +56,28 @@ export type InitializerTraits<T> =
     T extends JsonPipeChannel ? JsonPipeInitializer :
     T extends CDPSessionChannel ? CDPSessionInitializer :
     T extends BindingCallChannel ? BindingCallInitializer :
+    T extends DebuggerChannel ? DebuggerInitializer :
     T extends DialogChannel ? DialogInitializer :
     T extends TracingChannel ? TracingInitializer :
+    T extends WorkerChannel ? WorkerInitializer :
     object;
 
 // ----------- Event Traits -----------
 export type EventsTraits<T> =
-    T extends AndroidDeviceChannel ? AndroidDeviceEvents :
-    T extends BrowserContextChannel ? BrowserContextEvents :
-    T extends ElectronApplicationChannel ? ElectronApplicationEvents :
     T extends ElementHandleChannel ? ElementHandleEvents :
-    T extends WebSocketChannel ? WebSocketEvents :
-    T extends PageChannel ? PageEvents :
-    T extends DebuggerChannel ? DebuggerEvents :
-    T extends WorkerChannel ? WorkerEvents :
     T extends AndroidChannel ? AndroidEvents :
     T extends AndroidSocketChannel ? AndroidSocketEvents :
+    T extends AndroidDeviceChannel ? AndroidDeviceEvents :
     T extends APIRequestContextChannel ? APIRequestContextEvents :
     T extends ArtifactChannel ? ArtifactEvents :
     T extends StreamChannel ? StreamEvents :
     T extends WritableStreamChannel ? WritableStreamEvents :
     T extends BrowserChannel ? BrowserEvents :
+    T extends BrowserContextChannel ? BrowserContextEvents :
     T extends BrowserTypeChannel ? BrowserTypeEvents :
     T extends DisposableChannel ? DisposableEvents :
-    T extends EventTargetChannel ? EventTargetEvents :
     T extends ElectronChannel ? ElectronEvents :
+    T extends ElectronApplicationChannel ? ElectronApplicationEvents :
     T extends FrameChannel ? FrameEvents :
     T extends JSHandleChannel ? JSHandleEvents :
     T extends LocalUtilsChannel ? LocalUtilsEvents :
@@ -91,6 +85,8 @@ export type EventsTraits<T> =
     T extends RouteChannel ? RouteEvents :
     T extends WebSocketRouteChannel ? WebSocketRouteEvents :
     T extends ResponseChannel ? ResponseEvents :
+    T extends WebSocketChannel ? WebSocketEvents :
+    T extends PageChannel ? PageEvents :
     T extends RootChannel ? RootEvents :
     T extends PlaywrightChannel ? PlaywrightEvents :
     T extends DebugControllerChannel ? DebugControllerEvents :
@@ -98,31 +94,28 @@ export type EventsTraits<T> =
     T extends JsonPipeChannel ? JsonPipeEvents :
     T extends CDPSessionChannel ? CDPSessionEvents :
     T extends BindingCallChannel ? BindingCallEvents :
+    T extends DebuggerChannel ? DebuggerEvents :
     T extends DialogChannel ? DialogEvents :
     T extends TracingChannel ? TracingEvents :
+    T extends WorkerChannel ? WorkerEvents :
     undefined;
 
 // ----------- EventTarget Traits -----------
 export type EventTargetTraits<T> =
-    T extends AndroidDeviceChannel ? AndroidDeviceEventTarget :
-    T extends BrowserContextChannel ? BrowserContextEventTarget :
-    T extends ElectronApplicationChannel ? ElectronApplicationEventTarget :
     T extends ElementHandleChannel ? ElementHandleEventTarget :
-    T extends WebSocketChannel ? WebSocketEventTarget :
-    T extends PageChannel ? PageEventTarget :
-    T extends DebuggerChannel ? DebuggerEventTarget :
-    T extends WorkerChannel ? WorkerEventTarget :
     T extends AndroidChannel ? AndroidEventTarget :
     T extends AndroidSocketChannel ? AndroidSocketEventTarget :
+    T extends AndroidDeviceChannel ? AndroidDeviceEventTarget :
     T extends APIRequestContextChannel ? APIRequestContextEventTarget :
     T extends ArtifactChannel ? ArtifactEventTarget :
     T extends StreamChannel ? StreamEventTarget :
     T extends WritableStreamChannel ? WritableStreamEventTarget :
     T extends BrowserChannel ? BrowserEventTarget :
+    T extends BrowserContextChannel ? BrowserContextEventTarget :
     T extends BrowserTypeChannel ? BrowserTypeEventTarget :
     T extends DisposableChannel ? DisposableEventTarget :
-    T extends EventTargetChannel ? EventTargetEventTarget :
     T extends ElectronChannel ? ElectronEventTarget :
+    T extends ElectronApplicationChannel ? ElectronApplicationEventTarget :
     T extends FrameChannel ? FrameEventTarget :
     T extends JSHandleChannel ? JSHandleEventTarget :
     T extends LocalUtilsChannel ? LocalUtilsEventTarget :
@@ -130,6 +123,8 @@ export type EventTargetTraits<T> =
     T extends RouteChannel ? RouteEventTarget :
     T extends WebSocketRouteChannel ? WebSocketRouteEventTarget :
     T extends ResponseChannel ? ResponseEventTarget :
+    T extends WebSocketChannel ? WebSocketEventTarget :
+    T extends PageChannel ? PageEventTarget :
     T extends RootChannel ? RootEventTarget :
     T extends PlaywrightChannel ? PlaywrightEventTarget :
     T extends DebugControllerChannel ? DebugControllerEventTarget :
@@ -137,8 +132,10 @@ export type EventTargetTraits<T> =
     T extends JsonPipeChannel ? JsonPipeEventTarget :
     T extends CDPSessionChannel ? CDPSessionEventTarget :
     T extends BindingCallChannel ? BindingCallEventTarget :
+    T extends DebuggerChannel ? DebuggerEventTarget :
     T extends DialogChannel ? DialogEventTarget :
     T extends TracingChannel ? TracingEventTarget :
+    T extends WorkerChannel ? WorkerEventTarget :
     undefined;
 
 // ----------- Android -----------
@@ -207,7 +204,7 @@ export interface AndroidDeviceEventTarget {
   on(event: 'webViewAdded', callback: (params: AndroidDeviceWebViewAddedEvent) => void): this;
   on(event: 'webViewRemoved', callback: (params: AndroidDeviceWebViewRemovedEvent) => void): this;
 }
-export interface AndroidDeviceChannel extends AndroidDeviceEventTarget, EventTargetChannel {
+export interface AndroidDeviceChannel extends AndroidDeviceEventTarget, Channel {
   _type_AndroidDevice: boolean;
   wait(params: AndroidDeviceWaitParams, progress?: Progress): Promise<AndroidDeviceWaitResult>;
   fill(params: AndroidDeviceFillParams, progress?: Progress): Promise<AndroidDeviceFillResult>;
@@ -446,6 +443,7 @@ export type AndroidDeviceLaunchBrowserParams = {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
+      cursor?: 'none' | 'pointer',
     },
   },
   strictSelectors?: boolean,
@@ -517,6 +515,7 @@ export type AndroidDeviceLaunchBrowserOptions = {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
+      cursor?: 'none' | 'pointer',
     },
   },
   strictSelectors?: boolean,
@@ -739,6 +738,8 @@ export type APIResponse = {
   status: number,
   statusText: string,
   headers: NameValue[],
+  securityDetails?: SecurityDetails,
+  serverAddr?: RemoteAddr,
 };
 
 // ----------- Artifact -----------
@@ -960,6 +961,7 @@ export type BrowserNewContextParams = {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
+      cursor?: 'none' | 'pointer',
     },
   },
   strictSelectors?: boolean,
@@ -1033,6 +1035,7 @@ export type BrowserNewContextOptions = {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
+      cursor?: 'none' | 'pointer',
     },
   },
   strictSelectors?: boolean,
@@ -1109,6 +1112,7 @@ export type BrowserNewContextForReuseParams = {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
+      cursor?: 'none' | 'pointer',
     },
   },
   strictSelectors?: boolean,
@@ -1182,6 +1186,7 @@ export type BrowserNewContextForReuseOptions = {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
+      cursor?: 'none' | 'pointer',
     },
   },
   strictSelectors?: boolean,
@@ -1297,6 +1302,7 @@ export type BrowserContextInitializer = {
         duration?: number,
         position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
         fontSize?: number,
+        cursor?: 'none' | 'pointer',
       },
     },
     strictSelectors?: boolean,
@@ -1321,7 +1327,7 @@ export interface BrowserContextEventTarget {
   on(event: 'response', callback: (params: BrowserContextResponseEvent) => void): this;
   on(event: 'recorderEvent', callback: (params: BrowserContextRecorderEventEvent) => void): this;
 }
-export interface BrowserContextChannel extends BrowserContextEventTarget, EventTargetChannel {
+export interface BrowserContextChannel extends BrowserContextEventTarget, Channel {
   _type_BrowserContext: boolean;
   addCookies(params: BrowserContextAddCookiesParams, progress?: Progress): Promise<BrowserContextAddCookiesResult>;
   addInitScript(params: BrowserContextAddInitScriptParams, progress?: Progress): Promise<BrowserContextAddInitScriptResult>;
@@ -1356,6 +1362,10 @@ export interface BrowserContextChannel extends BrowserContextEventTarget, EventT
   clockRunFor(params: BrowserContextClockRunForParams, progress?: Progress): Promise<BrowserContextClockRunForResult>;
   clockSetFixedTime(params: BrowserContextClockSetFixedTimeParams, progress?: Progress): Promise<BrowserContextClockSetFixedTimeResult>;
   clockSetSystemTime(params: BrowserContextClockSetSystemTimeParams, progress?: Progress): Promise<BrowserContextClockSetSystemTimeResult>;
+  credentialsInstall(params?: BrowserContextCredentialsInstallParams, progress?: Progress): Promise<BrowserContextCredentialsInstallResult>;
+  credentialsCreate(params: BrowserContextCredentialsCreateParams, progress?: Progress): Promise<BrowserContextCredentialsCreateResult>;
+  credentialsGet(params: BrowserContextCredentialsGetParams, progress?: Progress): Promise<BrowserContextCredentialsGetResult>;
+  credentialsDelete(params: BrowserContextCredentialsDeleteParams, progress?: Progress): Promise<BrowserContextCredentialsDeleteResult>;
 }
 export type BrowserContextBindingCallEvent = {
   binding: BindingCallChannel,
@@ -1737,6 +1747,43 @@ export type BrowserContextClockSetSystemTimeOptions = {
   timeString?: string,
 };
 export type BrowserContextClockSetSystemTimeResult = void;
+export type BrowserContextCredentialsInstallParams = {};
+export type BrowserContextCredentialsInstallOptions = {};
+export type BrowserContextCredentialsInstallResult = void;
+export type BrowserContextCredentialsCreateParams = {
+  rpId: string,
+  id?: string,
+  userHandle?: string,
+  privateKey?: string,
+  publicKey?: string,
+};
+export type BrowserContextCredentialsCreateOptions = {
+  id?: string,
+  userHandle?: string,
+  privateKey?: string,
+  publicKey?: string,
+};
+export type BrowserContextCredentialsCreateResult = {
+  credential: VirtualCredential,
+};
+export type BrowserContextCredentialsGetParams = {
+  rpId?: string,
+  id?: string,
+};
+export type BrowserContextCredentialsGetOptions = {
+  rpId?: string,
+  id?: string,
+};
+export type BrowserContextCredentialsGetResult = {
+  credentials: VirtualCredential[],
+};
+export type BrowserContextCredentialsDeleteParams = {
+  id: string,
+};
+export type BrowserContextCredentialsDeleteOptions = {
+
+};
+export type BrowserContextCredentialsDeleteResult = void;
 
 export interface BrowserContextEvents {
   'bindingCall': BrowserContextBindingCallEvent;
@@ -1902,6 +1949,7 @@ export type BrowserTypeLaunchPersistentContextParams = {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
+      cursor?: 'none' | 'pointer',
     },
   },
   strictSelectors?: boolean,
@@ -1989,6 +2037,7 @@ export type BrowserTypeLaunchPersistentContextOptions = {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
+      cursor?: 'none' | 'pointer',
     },
   },
   strictSelectors?: boolean,
@@ -2002,18 +2051,23 @@ export type BrowserTypeLaunchPersistentContextResult = {
   context: BrowserContextChannel,
 };
 export type BrowserTypeConnectOverCDPParams = {
-  endpointURL: string,
+  endpointURL?: string,
   headers?: NameValue[],
   slowMo?: number,
   timeout: number,
   isLocal?: boolean,
   noDefaults?: boolean,
+  artifactsDir?: string,
+  transport?: Binary,
 };
 export type BrowserTypeConnectOverCDPOptions = {
+  endpointURL?: string,
   headers?: NameValue[],
   slowMo?: number,
   isLocal?: boolean,
   noDefaults?: boolean,
+  artifactsDir?: string,
+  transport?: Binary,
 };
 export type BrowserTypeConnectOverCDPResult = {
   browser: BrowserChannel,
@@ -2065,30 +2119,13 @@ export type DisposableDisposeResult = void;
 export interface DisposableEvents {
 }
 
-// ----------- EventTarget -----------
-export type EventTargetInitializer = {};
-export interface EventTargetEventTarget {
-}
-export interface EventTargetChannel extends EventTargetEventTarget, Channel {
-  _type_EventTarget: boolean;
-  waitForEventInfo(params: EventTargetWaitForEventInfoParams, progress?: Progress): Promise<EventTargetWaitForEventInfoResult>;
-}
-export type EventTargetWaitForEventInfoParams = {
-  info: {
-    waitId: string,
-    phase: 'before' | 'after' | 'log',
-    event?: string,
-    message?: string,
-    error?: string,
-  },
+export type WaitInfo = {
+  waitId: string,
+  phase: 'before' | 'after' | 'log',
+  event?: string,
+  message?: string,
+  error?: string,
 };
-export type EventTargetWaitForEventInfoOptions = {
-
-};
-export type EventTargetWaitForEventInfoResult = void;
-
-export interface EventTargetEvents {
-}
 
 // ----------- Electron -----------
 export type ElectronInitializer = {};
@@ -2132,6 +2169,7 @@ export type ElectronLaunchParams = {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
+      cursor?: 'none' | 'pointer',
     },
   },
   strictSelectors?: boolean,
@@ -2174,6 +2212,7 @@ export type ElectronLaunchOptions = {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
+      cursor?: 'none' | 'pointer',
     },
   },
   strictSelectors?: boolean,
@@ -2198,7 +2237,7 @@ export interface ElectronApplicationEventTarget {
   on(event: 'close', callback: (params: ElectronApplicationCloseEvent) => void): this;
   on(event: 'console', callback: (params: ElectronApplicationConsoleEvent) => void): this;
 }
-export interface ElectronApplicationChannel extends ElectronApplicationEventTarget, EventTargetChannel {
+export interface ElectronApplicationChannel extends ElectronApplicationEventTarget, Channel {
   _type_ElectronApplication: boolean;
   browserWindow(params: ElectronApplicationBrowserWindowParams, progress?: Progress): Promise<ElectronApplicationBrowserWindowResult>;
   evaluateExpression(params: ElectronApplicationEvaluateExpressionParams, progress?: Progress): Promise<ElectronApplicationEvaluateExpressionResult>;
@@ -2981,15 +3020,14 @@ export type FrameExpectOptions = {
   expectedValue?: SerializedArgument,
   useInnerText?: boolean,
 };
-export type FrameExpectResult = {
-  matches: boolean,
+export type FrameExpectResult = void;
+export type FrameExpectErrorDetails = {
   received?: {
     value?: SerializedValue,
     ariaSnapshot?: string,
   },
   timedOut?: boolean,
-  errorMessage?: string,
-  log?: string[],
+  customErrorMessage?: string,
 };
 
 export interface FrameEvents {
@@ -3945,7 +3983,7 @@ export interface WebSocketEventTarget {
   on(event: 'socketError', callback: (params: WebSocketSocketErrorEvent) => void): this;
   on(event: 'close', callback: (params: WebSocketCloseEvent) => void): this;
 }
-export interface WebSocketChannel extends WebSocketEventTarget, EventTargetChannel {
+export interface WebSocketChannel extends WebSocketEventTarget, Channel {
   _type_WebSocket: boolean;
 }
 export type WebSocketOpenEvent = {};
@@ -3997,10 +4035,11 @@ export interface PageEventTarget {
   on(event: 'webSocket', callback: (params: PageWebSocketEvent) => void): this;
   on(event: 'worker', callback: (params: PageWorkerEvent) => void): this;
 }
-export interface PageChannel extends PageEventTarget, EventTargetChannel {
+export interface PageChannel extends PageEventTarget, Channel {
   _type_Page: boolean;
   addInitScript(params: PageAddInitScriptParams, progress?: Progress): Promise<PageAddInitScriptResult>;
   close(params: PageCloseParams, progress?: Progress): Promise<PageCloseResult>;
+  runBeforeUnload(params?: PageRunBeforeUnloadParams, progress?: Progress): Promise<PageRunBeforeUnloadResult>;
   clearConsoleMessages(params?: PageClearConsoleMessagesParams, progress?: Progress): Promise<PageClearConsoleMessagesResult>;
   consoleMessages(params: PageConsoleMessagesParams, progress?: Progress): Promise<PageConsoleMessagesResult>;
   emulateMedia(params: PageEmulateMediaParams, progress?: Progress): Promise<PageEmulateMediaResult>;
@@ -4051,6 +4090,11 @@ export interface PageChannel extends PageEventTarget, EventTargetChannel {
   screencastStop(params?: PageScreencastStopParams, progress?: Progress): Promise<PageScreencastStopResult>;
   updateSubscription(params: PageUpdateSubscriptionParams, progress?: Progress): Promise<PageUpdateSubscriptionResult>;
   setDockTile(params: PageSetDockTileParams, progress?: Progress): Promise<PageSetDockTileResult>;
+  webStorageItems(params: PageWebStorageItemsParams, progress?: Progress): Promise<PageWebStorageItemsResult>;
+  webStorageGetItem(params: PageWebStorageGetItemParams, progress?: Progress): Promise<PageWebStorageGetItemResult>;
+  webStorageSetItem(params: PageWebStorageSetItemParams, progress?: Progress): Promise<PageWebStorageSetItemResult>;
+  webStorageRemoveItem(params: PageWebStorageRemoveItemParams, progress?: Progress): Promise<PageWebStorageRemoveItemResult>;
+  webStorageClear(params: PageWebStorageClearParams, progress?: Progress): Promise<PageWebStorageClearResult>;
 }
 export type PageBindingCallEvent = {
   binding: BindingCallChannel,
@@ -4086,6 +4130,7 @@ export type PageRouteEvent = {
 };
 export type PageScreencastFrameEvent = {
   data: Binary,
+  timestamp: number,
   viewportWidth: number,
   viewportHeight: number,
 };
@@ -4108,14 +4153,15 @@ export type PageAddInitScriptResult = {
   disposable: DisposableChannel,
 };
 export type PageCloseParams = {
-  runBeforeUnload?: boolean,
   reason?: string,
 };
 export type PageCloseOptions = {
-  runBeforeUnload?: boolean,
   reason?: string,
 };
 export type PageCloseResult = void;
+export type PageRunBeforeUnloadParams = {};
+export type PageRunBeforeUnloadOptions = {};
+export type PageRunBeforeUnloadResult = void;
 export type PageClearConsoleMessagesParams = {};
 export type PageClearConsoleMessagesOptions = {};
 export type PageClearConsoleMessagesResult = void;
@@ -4269,8 +4315,11 @@ export type PageExpectScreenshotOptions = {
   style?: string,
 };
 export type PageExpectScreenshotResult = {
+  actual?: Binary,
+};
+export type PageExpectScreenshotErrorDetails = {
   diff?: Binary,
-  errorMessage?: string,
+  customErrorMessage?: string,
   actual?: Binary,
   previous?: Binary,
   timedOut?: boolean,
@@ -4606,11 +4655,13 @@ export type PageScreencastShowActionsParams = {
   duration?: number,
   position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
   fontSize?: number,
+  cursor?: 'none' | 'pointer',
 };
 export type PageScreencastShowActionsOptions = {
   duration?: number,
   position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
   fontSize?: number,
+  cursor?: 'none' | 'pointer',
 };
 export type PageScreencastShowActionsResult = void;
 export type PageScreencastHideActionsParams = {};
@@ -4655,6 +4706,49 @@ export type PageSetDockTileOptions = {
 
 };
 export type PageSetDockTileResult = void;
+export type PageWebStorageItemsParams = {
+  kind: 'local' | 'session',
+};
+export type PageWebStorageItemsOptions = {
+
+};
+export type PageWebStorageItemsResult = {
+  items: NameValue[],
+};
+export type PageWebStorageGetItemParams = {
+  kind: 'local' | 'session',
+  name: string,
+};
+export type PageWebStorageGetItemOptions = {
+
+};
+export type PageWebStorageGetItemResult = {
+  value?: string,
+};
+export type PageWebStorageSetItemParams = {
+  kind: 'local' | 'session',
+  name: string,
+  value: string,
+};
+export type PageWebStorageSetItemOptions = {
+
+};
+export type PageWebStorageSetItemResult = void;
+export type PageWebStorageRemoveItemParams = {
+  kind: 'local' | 'session',
+  name: string,
+};
+export type PageWebStorageRemoveItemOptions = {
+
+};
+export type PageWebStorageRemoveItemResult = void;
+export type PageWebStorageClearParams = {
+  kind: 'local' | 'session',
+};
+export type PageWebStorageClearOptions = {
+
+};
+export type PageWebStorageClearResult = void;
 
 export interface PageEvents {
   'bindingCall': PageBindingCallEvent;
@@ -5139,7 +5233,7 @@ export type DebuggerInitializer = {};
 export interface DebuggerEventTarget {
   on(event: 'pausedStateChanged', callback: (params: DebuggerPausedStateChangedEvent) => void): this;
 }
-export interface DebuggerChannel extends DebuggerEventTarget, EventTargetChannel {
+export interface DebuggerChannel extends DebuggerEventTarget, Channel {
   _type_Debugger: boolean;
   requestPause(params?: DebuggerRequestPauseParams, progress?: Progress): Promise<DebuggerRequestPauseResult>;
   resume(params?: DebuggerResumeParams, progress?: Progress): Promise<DebuggerResumeResult>;
@@ -5260,6 +5354,14 @@ export type StackFrame = {
   line: number,
   column: number,
   function?: string,
+};
+
+export type VirtualCredential = {
+  id: string,
+  rpId: string,
+  userHandle: string,
+  privateKey: string,
+  publicKey: string,
 };
 
 export type Point = {
@@ -5394,7 +5496,7 @@ export interface WorkerEventTarget {
   on(event: 'console', callback: (params: WorkerConsoleEvent) => void): this;
   on(event: 'close', callback: (params: WorkerCloseEvent) => void): this;
 }
-export interface WorkerChannel extends WorkerEventTarget, EventTargetChannel {
+export interface WorkerChannel extends WorkerEventTarget, Channel {
   _type_Worker: boolean;
   disconnect(params: WorkerDisconnectParams, progress?: Progress): Promise<WorkerDisconnectResult>;
   evaluateExpression(params: WorkerEvaluateExpressionParams, progress?: Progress): Promise<WorkerEvaluateExpressionResult>;

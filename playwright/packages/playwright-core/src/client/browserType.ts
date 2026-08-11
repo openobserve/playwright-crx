@@ -138,26 +138,43 @@ export class BrowserType extends ChannelOwner<channels.BrowserTypeChannel> imple
 
   async connectOverCDP(options: api.ConnectOverCDPOptions  & { wsEndpoint?: string }): Promise<api.Browser>;
   async connectOverCDP(endpointURL: string, options?: api.ConnectOverCDPOptions): Promise<api.Browser>;
-  async connectOverCDP(endpointURLOrOptions: (api.ConnectOverCDPOptions & { wsEndpoint?: string })|string, options?: api.ConnectOverCDPOptions) {
-    if (typeof endpointURLOrOptions === 'string')
-      return await this._connectOverCDP(endpointURLOrOptions, options);
-    const endpointURL = 'endpointURL' in endpointURLOrOptions ? endpointURLOrOptions.endpointURL : endpointURLOrOptions.wsEndpoint;
-    assert(endpointURL, 'Cannot connect over CDP without wsEndpoint.');
-    return await this.connectOverCDP(endpointURL, endpointURLOrOptions);
-  }
+  async connectOverCDP(transport: api.ConnectOverCDPTransport, options?: api.ConnectOverCDPOptions): Promise<api.Browser>;
+  async connectOverCDP(overloaded: (api.ConnectOverCDPOptions & { wsEndpoint?: string }) | string | api.ConnectOverCDPTransport, options?: api.ConnectOverCDPOptions): Promise<Browser> {
+    let endpointURL: string | undefined;
+    let transport: api.ConnectOverCDPTransport | undefined;
+    let params: api.ConnectOverCDPOptions;
+    if (typeof overloaded === 'string') {
+      endpointURL = overloaded;
+      params = options ?? {};
+    } else if (isConnectionTransport(overloaded)) {
+      if (this.name() !== 'chromium' && this.name() !== 'webkit')
+        throw new Error('Connecting over CDP is only supported in Chromium and WebKit.');
+      if (this._connection.isRemote())
+        throw new Error('Passing a ConnectionTransport to connectOverCDP is not supported when connecting remotely.');
+      transport = overloaded;
+      params = options ?? {};
+    } else {
+      endpointURL = 'endpointURL' in overloaded ? (overloaded as any).endpointURL : overloaded.wsEndpoint;
+      assert(endpointURL, 'Cannot connect over CDP without wsEndpoint.');
+      params = overloaded;
+    }
+    if (endpointURL && this.name() !== 'chromium' && this.name() !== 'webkit')
+      throw new Error('Connecting over CDP is only supported in Chromium and WebKit.');
 
-  async _connectOverCDP(endpointURL: string, params: api.ConnectOverCDPOptions = {}): Promise<Browser>  {
-    if (this.name() !== 'chromium')
-      throw new Error('Connecting over CDP is only supported in Chromium.');
-    const headers = params.headers ? headersObjectToArray(params.headers) : undefined;
     const result = await this._channel.connectOverCDP({
       endpointURL,
-      headers,
+      transport: transport as any,
+      headers: params.headers ? headersObjectToArray(params.headers) : undefined,
       slowMo: params.slowMo,
       timeout: new TimeoutSettings(this._platform).timeout(params),
       isLocal: params.isLocal,
       noDefaults: params.noDefaults,
+      artifactsDir: params.artifactsDir,
     });
+    return await this._browserFromConnectResult(result);
+  }
+
+  private async _browserFromConnectResult(result: { browser: channels.BrowserChannel, defaultContext?: channels.BrowserContextChannel }): Promise<Browser> {
     const browser = Browser.from(result.browser);
     browser._connectToBrowserType(this, {}, undefined);
     if (result.defaultContext)
@@ -174,5 +191,8 @@ export class BrowserType extends ChannelOwner<channels.BrowserTypeChannel> imple
     });
     return Worker.from(result.worker);
   }
+}
 
+function isConnectionTransport(value: any): value is api.ConnectOverCDPTransport {
+  return !!value && typeof value === 'object' && typeof value.send === 'function' && typeof value.close === 'function';
 }

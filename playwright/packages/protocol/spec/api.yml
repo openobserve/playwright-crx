@@ -87,6 +87,8 @@ APIRequestContext:
       internal: true
       parameters:
         reason: string?
+      flags:
+        potentiallyClosesScope: true
 
 APIResponse:
   type: object
@@ -98,3 +100,5 @@ APIResponse:
     headers:
       type: array
       items: NameValue
+    securityDetails: SecurityDetails?
+    serverAddr: RemoteAddr?

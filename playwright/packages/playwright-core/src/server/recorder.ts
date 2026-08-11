@@ -81,6 +81,7 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
   private _highlightedElement: { selector?: string, ariaTemplate?: AriaTemplateNode } = {};
   private _overlayState: OverlayState = { offsetX: 0 };
   private _currentCallsMetadata = new Map<CallMetadata, SdkObject>();
+  private _actionPoints = new Map<string, Point>();
   private _userSources = new Map<string, Source>();
   private _debugger: Debugger;
   private _omitCallTracking = false;
@@ -175,7 +176,7 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
           actionSelector = await this._scopeHighlightedSelectorToFrame(source.frame);
           for (const [metadata, sdkObject] of this._currentCallsMetadata) {
             if (source.page === sdkObject.attribution.page) {
-              actionPoint = metadata.point || actionPoint;
+              actionPoint = this._actionPoints.get(metadata.id) || actionPoint;
               actionSelector = actionSelector || metadata.params.selector;
             }
           }
@@ -300,7 +301,7 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
         await this.setMode('inspecting');
         return await selectorPromise;
       };
-      return await progress.race(doPickLocator());
+      return await progress.race(page.openScope.race(doPickLocator()));
     } finally {
       eventsHelper.removeEventListeners(listeners);
       this._pickLocatorPage = undefined;
@@ -421,6 +422,7 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
   }
 
   async onAfterCall(sdkObject: SdkObject, metadata: CallMetadata) {
+    this._actionPoints.delete(metadata.id);
     if (this._omitCallTracking || this._isRecording())
       return;
     if (!metadata.error)
@@ -429,12 +431,19 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
     this._updateCallLog([metadata]);
   }
 
+  // patch(playwright-crx): the crx player clears stale errors before each replay, which
+  // upstream has no equivalent for — its recorder only ever drops them implicitly.
   clearErrors() {
     const errors = [...this._currentCallsMetadata.keys()].filter(c => c.error);
     for (const error of errors)
       this._currentCallsMetadata.delete(error);
 
     this._updateUserSources();
+  }
+
+  async onBeforeInputAction(sdkObject: SdkObject, metadata: CallMetadata, point?: Point): Promise<void> {
+    if (point)
+      this._actionPoints.set(metadata.id, point);
   }
 
   private _updateUserSources() {
@@ -595,9 +604,12 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
   private async _performAction(progress: Progress, frame: Frame, action: actions.PerformOnRecordAction) {
     const actionInContext = await this._createActionInContext(progress, frame, action);
     this._signalProcessor.addAction(actionInContext);
-    if (actionInContext.action.name !== 'openPage' && actionInContext.action.name !== 'closePage')
-      await performAction(progress, this._pageAliases, actionInContext);
-    actionInContext.endTime = monotonicTime();
+    try {
+      if (actionInContext.action.name !== 'openPage' && actionInContext.action.name !== 'closePage')
+        await performAction(progress, this._pageAliases, actionInContext);
+    } finally {
+      actionInContext.endTime = monotonicTime();
+    }
   }
 
   private async _recordAction(progress: Progress, frame: Frame, action: actions.Action) {

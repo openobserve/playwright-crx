@@ -22,7 +22,7 @@ import http from 'http';
 import { HttpServer } from '@utils/httpServer';
 import { makeSocketPath } from '@utils/fileUtils';
 import { gracefullyProcessExitDoNotHang } from '@utils/processLauncher';
-import { monotonicTime } from '@isomorphic/time';
+import { ManualPromise } from '@isomorphic/manualPromise';
 import { libPath } from '../../package';
 import { playwright } from '../../inprocess';
 import { findChromiumChannelBestEffort, registryDirectory } from '../../server/registry/index';
@@ -32,7 +32,7 @@ import { RegistrySessionProvider } from './registrySessionProvider';
 import { IdentitySessionProvider } from './identitySessionProvider';
 
 import type * as api from '../../..';
-import type { SubmittedAnnotationFrame } from '@dashboard/dashboardChannel';
+import type { AnnotateResult } from './dashboardController';
 import type { SessionProvider } from './sessionProvider';
 
 // HMR: build-time flag — `true` in watch builds, `false` in release. esbuild
@@ -42,45 +42,28 @@ declare const __PW_HMR__: boolean;
 
 type DashboardServer = {
   url: string;
-  reveal: (options: DashboardOptions) => void;
-  triggerAnnotate: () => void;
-  registerAnnotateWaiter: (socket: net.Socket) => void;
+  reveal: (options: DashboardOptions) => Promise<void>;
+  triggerAnnotate: (signal: AbortSignal) => Promise<AnnotateResult>;
   close: () => Promise<void>;
 };
 
 async function startDashboardServer(provider: SessionProvider, options: DashboardOptions): Promise<DashboardServer> {
-  const httpServer = new HttpServer();
   const dashboardDir = libPath('vite', 'dashboard');
+  const httpServer = new HttpServer(dashboardDir);
 
   const connections = new Set<DashboardConnection>();
-  let currentReveal: DashboardOptions = options;
-  let pendingAnnotate = false;
-  const waitingSockets = new Set<net.Socket>();
-
-  const submitAnnotation = (frames: SubmittedAnnotationFrame[], feedback: string) => {
-    if (waitingSockets.size === 0)
-      return;
-    const payload = JSON.stringify({ frames, feedback });
-    for (const socket of waitingSockets) {
-      socket.write(payload);
-      socket.end();
-    }
-    waitingSockets.clear();
-  };
+  let connectionLanded = new ManualPromise<void>();
 
   httpServer.createWebSocket(() => {
     let connection: DashboardConnection;
     // eslint-disable-next-line prefer-const
-    connection = new DashboardConnection(provider, () => connections.delete(connection), () => {
-      if (currentReveal.pageId)
-        connection.revealPage(currentReveal.pageId);
-      else if (currentReveal.sessionName)
-        connection.revealSession(currentReveal.sessionName, currentReveal.workspaceDir);
-      if (pendingAnnotate) {
-        pendingAnnotate = false;
-        connection.emitAnnotate();
-      }
-    }, submitAnnotation);
+    connection = new DashboardConnection(provider, () => {
+      connections.delete(connection);
+      if (connections.size === 0)
+        connectionLanded = new ManualPromise<void>();
+    }, () => {
+      connectionLanded.resolve();
+    });
     connections.add(connection);
     return connection;
   });
@@ -103,48 +86,33 @@ async function startDashboardServer(provider: SessionProvider, options: Dashboar
     attachDashboardStaticServer(httpServer, dashboardDir);
   await httpServer.start({ port: options.port, host: options.host });
 
-  const reveal = (next: DashboardOptions) => {
-    currentReveal = next;
-    if (next.pageId) {
-      for (const connection of connections)
-        connection.revealPage(next.pageId);
-      return;
-    }
-    if (!next.sessionName)
-      return;
-    for (const connection of connections)
-      connection.revealSession(next.sessionName, next.workspaceDir);
+  const reveal = async (next: DashboardOptions): Promise<void> => {
+    await connectionLanded;
+    await Promise.all([...connections].map(async c => {
+      if (next.pageId)
+        await c.revealPage(next.pageId);
+      else if (next.sessionName)
+        await c.revealSession(next.sessionName, next.workspaceDir);
+    }));
   };
 
-  const triggerAnnotate = () => {
-    if (connections.size === 0) {
-      pendingAnnotate = true;
-      return;
-    }
-    for (const connection of connections)
-      connection.emitAnnotate();
+  const triggerAnnotate = async (cancellation: AbortSignal): Promise<AnnotateResult> => {
+    await connectionLanded;
+    if (cancellation.aborted || connections.size === 0)
+      return { type: 'cancelled' };
+    // Multiple dashboard connections is theoretical today (one UI per daemon), server mode does not support annotate.
+    // If two ever land, the first to submit wins but the losers stay in
+    // annotation mode until their UI reloads — revisit if that becomes a real
+    // scenario.
+    return await Promise.race([...connections].map(c => c.emitAnnotate({ signal: cancellation })));
   };
 
-  const notifyAnnotateEnded = () => {
-    pendingAnnotate = false;
-    for (const connection of connections)
-      connection.emitCancelAnnotate();
+  const close = async () => {
+    for (const c of connections)
+      c.close?.();
+    await httpServer.stop();
   };
-
-  const registerAnnotateWaiter = (socket: net.Socket) => {
-    waitingSockets.add(socket);
-    const cleanup = () => {
-      if (!waitingSockets.delete(socket))
-        return;
-      if (waitingSockets.size === 0)
-        notifyAnnotateEnded();
-    };
-    socket.on('close', cleanup);
-    socket.on('error', cleanup);
-  };
-
-  const close = () => httpServer.stop();
-  return { url: httpServer.urlPrefix('human-readable'), reveal, triggerAnnotate, registerAnnotateWaiter, close };
+  return { url: httpServer.urlPrefix('human-readable'), reveal, triggerAnnotate, close };
 }
 
 function attachDashboardStaticServer(httpServer: HttpServer, dashboardDir: string) {
@@ -152,8 +120,6 @@ function attachDashboardStaticServer(httpServer: HttpServer, dashboardDir: strin
     const pathname = new URL(request.url!, `http://${request.headers.host}`).pathname;
     const filePath = pathname === '/' ? 'index.html' : pathname.substring(1);
     const resolved = path.join(dashboardDir, filePath);
-    if (!resolved.startsWith(dashboardDir))
-      return false;
     return httpServer.serveFile(request, response, resolved);
   });
 }
@@ -171,6 +137,7 @@ async function attachDashboardDevServer(httpServer: HttpServer) {
 
 async function innerOpenDashboardApp(options: DashboardOptions): Promise<{ page: api.Page; server: DashboardServer }> {
   const server = await startDashboardServer(new RegistrySessionProvider(), options);
+  void server.reveal(options).catch(() => {});
   const { page } = await launchApp('dashboard', { onClose: () => gracefullyProcessExitDoNotHang(0) });
   await page.goto(server.url);
   return { page, server };
@@ -269,25 +236,38 @@ function parseOpenArgs(): DashboardOptions {
   };
 }
 
-async function acquireSingleton(options: DashboardOptions): Promise<net.Server> {
+type AcquireResult =
+  | { role: 'winner', server: net.Server }
+  | { role: 'loser', daemonPid: number };
+
+async function acquireSingleton(options: DashboardOptions): Promise<AcquireResult> {
   const socketPath = dashboardSocketPath();
   if (process.platform !== 'win32')
     await fs.promises.mkdir(path.dirname(socketPath), { recursive: true });
 
   return await new Promise((resolve, reject) => {
     const server = net.createServer();
-    server.listen(socketPath, () => resolve(server));
+    server.listen(socketPath, () => resolve({ role: 'winner', server }));
     server.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code !== 'EADDRINUSE')
+      if (err.code !== 'EADDRINUSE' && err.code !== 'EEXIST')
         return reject(err);
+      let ackBuffer = '';
       const client = net.connect(socketPath, () => {
         client.write(JSON.stringify(options) + '\n');
-        reject(new Error('already running'));
+      });
+      client.on('data', chunk => { ackBuffer += chunk.toString(); });
+      client.on('end', () => {
+        try {
+          const { pid } = JSON.parse(ackBuffer.trim());
+          resolve({ role: 'loser', daemonPid: pid });
+        } catch (e) {
+          reject(e);
+        }
       });
       client.on('error', () => {
         if (process.platform !== 'win32')
           fs.unlinkSync(socketPath);
-        server.listen(socketPath, () => resolve(server));
+        server.listen(socketPath, () => resolve({ role: 'winner', server }));
       });
     });
   });
@@ -308,23 +288,47 @@ export async function openDashboardApp() {
     console.error('Unhandled promise rejection:', error);
   });
   if (options.port !== undefined) {
-    const { url } = await startDashboardServer(new RegistrySessionProvider(), options);
+    const server = await startDashboardServer(new RegistrySessionProvider(), options);
+    void server.reveal(options).catch(() => {});
     // eslint-disable-next-line no-console
-    console.log(`Listening on ${url}`);
+    console.log(`Listening on ${server.url}`);
+    // eslint-disable-next-line no-restricted-properties
+    await new Promise(f => process.stdout.write('', f));  // Make sure stdout is flushed.
     selfDestructOnParentGone();
     return;
   }
-  let server: net.Server | undefined;
-  process.on('exit', () => server?.close());
-  try {
-    server = await acquireSingleton(options);
-  } catch {
+  // Self-destruct if the parent CLI dies before we signal READY. Unregistered
+  // before we signal so the daemon outlives the parent.
+  const stopSelfDestruct = selfDestructOnParentGone();
+  const acquired = await acquireSingleton(options);
+  if (acquired.role === 'loser') {
+    // Another daemon is already running, signal success.
+    stopSelfDestruct();
+    // eslint-disable-next-line no-console
+    console.log(`Dashboard is running pid=${acquired.daemonPid}`);
+    // eslint-disable-next-line no-restricted-properties
+    await new Promise(f => process.stdout.write('', f));  // Make sure stdout is flushed.
     return;
   }
+  const { server } = acquired;
+  process.on('exit', () => server.close());
+  try {
+    await startApp(server, options);
+    stopSelfDestruct();
+    // eslint-disable-next-line no-console
+    console.log(`Dashboard is running pid=${process.pid}`);
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.log(error);
+    gracefullyProcessExitDoNotHang(1);
+  }
+}
+
+async function startApp(server: net.Server, options: DashboardOptions) {
   const statePromise = innerOpenDashboardApp(options);
-  server?.on('connection', socket => {
+  server.on('connection', socket => {
     let buffer = '';
-    socket.on('data', data => {
+    socket.on('data', async data => {
       buffer += data.toString();
       const newlineIndex = buffer.indexOf('\n');
       if (newlineIndex === -1)
@@ -341,27 +345,31 @@ export async function openDashboardApp() {
         socket.end();
         return;
       }
-      if (parsed.kill) {
-        // Write our PID so the kill client can wait for the process to fully exit,
-        // which guarantees the named pipe is released (especially on Windows).
-        // Start graceful shutdown only after the socket data has been flushed, so the
-        // kill client is guaranteed to receive the PID before we begin tearing down.
-        server?.close();
-        socket.end(JSON.stringify({ pid: process.pid }) + '\n', () => gracefullyProcessExitDoNotHang(0));
-        return;
-      }
-      void statePromise.then(({ page, server: dashboard }) => {
-        if (parsed.annotate) {
-          page?.bringToFront().catch(() => {});
-          dashboard.reveal(parsed);
-          dashboard.triggerAnnotate();
-          dashboard.registerAnnotateWaiter(socket);
-        } else {
-          page?.bringToFront().catch(() => {});
-          dashboard.reveal(parsed);
-          socket.end();
+      const { page, server: dashboard } = await statePromise;
+      if (parsed.annotate) {
+        const cancellation = new AbortController();
+        socket.on('close', () => cancellation.abort());
+        socket.on('error', () => cancellation.abort());
+        try {
+          await page?.bringToFront();
+          await dashboard.reveal(parsed);
+          const result = await dashboard.triggerAnnotate(cancellation.signal);
+          socket.end(JSON.stringify(result));
+        } catch (e) {
+          socket.end(e);
         }
-      });
+      } else if (parsed.kill) {
+        await dashboard.close().catch(() => {});
+        gracefullyProcessExitDoNotHang(0, () => new Promise(r => socket.end(r)));
+      } else {
+        try {
+          await page?.bringToFront();
+          await dashboard.reveal(parsed);
+          socket.end(JSON.stringify({ pid: process.pid }) + '\n');
+        } catch (e) {
+          socket.end(e);
+        }
+      }
     });
   });
   await statePromise;
@@ -385,37 +393,14 @@ export async function openDashboardForContext(context: api.BrowserContext): Prom
 
 async function runKillClient(): Promise<void> {
   const socketPath = dashboardSocketPath();
-  const pid = await new Promise<number | undefined>((resolve, reject) => {
+  await new Promise<void>(resolve => {
     const client = net.connect(socketPath);
-    let data = '';
     client.once('connect', () => {
       client.write(JSON.stringify({ kill: true }) + '\n');
     });
-    client.on('data', chunk => { data += chunk; });
-    client.once('end', () => {
-      let pid: number | undefined;
-      try { pid = JSON.parse(data.trim()).pid; } catch { }
-      if (pid === undefined)
-        reject(new Error('Dashboard did not return its PID'));
-      else
-        resolve(pid);
-    });
-    client.once('error', () => resolve(undefined));
+    client.once('end', () => resolve());
+    client.once('error', () => resolve());
   });
-  if (pid === undefined)
-    return;
-  // Poll until the daemon process exits — at that point the OS has released all
-  // its handles, including the named pipe, so the next acquisition won't see a stale pipe.
-  const deadline = monotonicTime() + 35000;
-  while (monotonicTime() < deadline) {
-    try {
-      process.kill(pid, 0);
-    } catch {
-      return;
-    }
-    await new Promise(r => setTimeout(r, 50));
-  }
-  throw new Error(`Dashboard process ${pid} did not exit within the deadline`);
 }
 
 async function runAnnotateClient(options: DashboardOptions): Promise<void> {
@@ -457,8 +442,8 @@ async function runAnnotateClient(options: DashboardOptions): Promise<void> {
   console.log(text);
 }
 
-function selfDestructOnParentGone() {
-  process.stdin.on('close', () => {
-    gracefullyProcessExitDoNotHang(0);
-  });
+function selfDestructOnParentGone(): () => void {
+  const onClose = () => gracefullyProcessExitDoNotHang(0);
+  process.stdin.on('close', onClose);
+  return () => process.stdin.off('close', onClose);
 }

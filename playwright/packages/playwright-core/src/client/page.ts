@@ -28,12 +28,13 @@ import { Coverage } from './coverage';
 import { DisposableObject, DisposableStub } from './disposable';
 import { Download } from './download';
 import { ElementHandle, determineScreenshotType } from './elementHandle';
-import { TargetClosedError, isTargetClosedError, parseError, serializeError } from './errors';
+import { PlaywrightError, TargetClosedError, isTargetClosedError, parseError, serializeError } from './errors';
 import { Events } from './events';
 import { FileChooser } from './fileChooser';
 import { Frame, verifyLoadState } from './frame';
 import { HarRouter } from './harRouter';
 import { Keyboard, Mouse, Touchscreen } from './input';
+import { WebStorage } from './webStorage';
 import { assertMaxArguments, parseResult, serializeArgument } from './jsHandle';
 import { Request, Response, Route, RouteHandler, WebSocket,  WebSocketRoute, WebSocketRouteHandler, validateHeaders } from './network';
 import { Video } from './video';
@@ -97,6 +98,8 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
   readonly touchscreen: Touchscreen;
   readonly clock: Clock;
   readonly screencast: Screencast;
+  readonly localStorage: WebStorage;
+  readonly sessionStorage: WebStorage;
 
 
   readonly _bindings = new Map<string, (source: structs.BindingSource, ...args: any[]) => any>();
@@ -128,6 +131,8 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
     this.request = this._browserContext.request;
     this.touchscreen = new Touchscreen(this);
     this.clock = this._browserContext.clock;
+    this.localStorage = new WebStorage(this, 'local');
+    this.sessionStorage = new WebStorage(this, 'session');
 
     this._mainFrame = Frame.from(initializer.mainFrame);
     this._mainFrame._page = this;
@@ -620,12 +625,20 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
       frame: (options.locator as Locator)._frame._channel,
       selector: (options.locator as Locator)._selector,
     } : undefined;
-    return await this._channel.expectScreenshot({
-      ...options,
-      isNot: !!options.isNot,
-      locator,
-      mask,
-    });
+    try {
+      const result = await this._channel.expectScreenshot({
+        ...options,
+        isNot: !!options.isNot,
+        locator,
+        mask,
+      });
+      return { actual: result.actual };
+    } catch (e) {
+      if (!(e instanceof PlaywrightError))
+        throw e;
+      const details = e.details as channels.PageExpectScreenshotErrorDetails;
+      return { ...details, errorMessage: details.customErrorMessage };
+    }
   }
 
   async title(): Promise<string> {
@@ -647,8 +660,10 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
     try {
       if (this._ownedContext)
         await this._ownedContext.close();
+      else if (options.runBeforeUnload)
+        await this._channel.runBeforeUnload();
       else
-        await this._channel.close(options);
+        await this._channel.close({ reason: options.reason });
     } catch (e) {
       if (isTargetClosedError(e) && !options.runBeforeUnload)
         return;

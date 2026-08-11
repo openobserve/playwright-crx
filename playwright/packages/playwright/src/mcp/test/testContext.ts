@@ -108,7 +108,7 @@ export class TestContext {
 
   private async _enqueue<T>(fn: () => Promise<T>): Promise<T> {
     const next = this._testOpQueue.then(fn);
-    this._testOpQueue = next.then(() => {});
+    this._testOpQueue = next.then(() => {}, () => {});
     return await next;
   }
 
@@ -233,8 +233,9 @@ export class TestContext {
       }
     };
 
-    const abortPromise = signal
-      ? signalToPromise(signal).promise.then(() => 'interrupted' as const)
+    const abort = signal ? signalToPromise(signal) : undefined;
+    const abortPromise = abort
+      ? abort.promise.then(() => 'interrupted' as const)
       : new Promise<never>(() => {});
 
     try {
@@ -263,6 +264,8 @@ export class TestContext {
       testRunnerAndScreen.output.push(String(e));
       await cleanup();
       return { output: testRunnerAndScreen.output.join('\n'), status };
+    } finally {
+      abort?.dispose();
     }
 
     await cleanup();

@@ -418,17 +418,6 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures, UtilityTestFixt
       } : {};
       const context = await browser.newContext({ ...videoOptions, ...options }) as BrowserContextImpl;
 
-      if (process.env.PW_CLOCK === 'frozen') {
-        await context._wrapApiCall(async () => {
-          await context.clock.install({ time: 0 });
-          await context.clock.pauseAt(1000);
-        }, { internal: true });
-      } else if (process.env.PW_CLOCK === 'realtime') {
-        await context._wrapApiCall(async () => {
-          await context.clock.install({ time: 0 });
-        }, { internal: true });
-      }
-
       let closed = false;
       const close = async () => {
         if (closed)
@@ -436,8 +425,7 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures, UtilityTestFixt
         closed = true;
         const closeReason = testInfo.status === 'timedOut' ? 'Test timeout of ' + testInfo.timeout + 'ms exceeded.' : 'Test ended.';
         await context.close({ reason: closeReason });
-        const testFailed = testInfo.status !== testInfo.expectedStatus;
-        const preserveVideo = captureVideo && (videoMode === 'on' || (testFailed && videoMode === 'retain-on-failure') || (videoMode === 'on-first-retry' && testInfo.retry === 1));
+        const preserveVideo = captureVideo && shouldPreserveVideo(videoMode, testInfo);
         if (preserveVideo) {
           const { pagesWithVideo: pagesForVideo } = contexts.get(context)!;
           const videos = pagesForVideo.map(p => p.video()).filter(video => !!video);
@@ -521,7 +509,29 @@ function normalizeVideoMode(video: VideoMode | 'retry-with-video' | { mode: Vide
 }
 
 function shouldCaptureVideo(videoMode: VideoMode, testInfo: TestInfo) {
-  return (videoMode === 'on' || videoMode === 'retain-on-failure' || (videoMode === 'on-first-retry' && testInfo.retry === 1));
+  return videoMode === 'on'
+    || videoMode === 'retain-on-failure'
+    || videoMode === 'retain-on-failure-and-retries'
+    || (videoMode === 'on-first-retry' && testInfo.retry === 1)
+    || (videoMode === 'on-all-retries' && testInfo.retry > 0)
+    || (videoMode === 'retain-on-first-failure' && testInfo.retry === 0);
+}
+
+function shouldPreserveVideo(videoMode: VideoMode, testInfo: TestInfo) {
+  const testFailed = testInfo.status !== testInfo.expectedStatus;
+  switch (videoMode) {
+    case 'on':
+    case 'on-first-retry':
+    case 'on-all-retries':
+      return true;
+    case 'retain-on-failure':
+    case 'retain-on-first-failure':
+      return testFailed;
+    case 'retain-on-failure-and-retries':
+      return testFailed || testInfo.retry > 0;
+    default:
+      return false;
+  }
 }
 
 function normalizeScreenshotMode(screenshot: ScreenshotOption): ScreenshotMode {
