@@ -329,6 +329,41 @@ export class SyntheticsRecorderApp extends EventEmitter {
     this._sendMessage({ type: 'recorder', method: 'setMode', mode });
   }
 
+  /**
+   * Drop everything the action collection has accumulated so far, so the next
+   * recorded action is step one.
+   *
+   * This is the counterpart of the note in `open()`: setOutput restarts the
+   * collection and destroys the initial `openPage` that install() generated. For a
+   * fresh recording that step IS the journey's first navigate, which is why open()
+   * must not call it. For a restore-then-record session the opposite is true — the
+   * prefix has already navigated, and the `openPage`/`closePage` entries the
+   * collection logs past its own `_enabled` guard (recorderCollection.addRecordedAction)
+   * are artifacts of the restore that would otherwise be handed back as the author's
+   * first recorded step.
+   *
+   * Deliberately a reset rather than a count of what to skip: the artifacts are not
+   * distinguishable from a real first action once they are in the list, so the boundary
+   * has to be drawn at the moment the restore finishes.
+   *
+   * Reimplemented for 1.62. This used to call `Recorder.setOutput('playwright-test',
+   * undefined)`, whose side effect was restarting the recorder-side collection — but
+   * 1.54 removed `setOutput` (it became `setLanguage`), and by 1.62 there is no
+   * recorder-side collection left to restart: the Recorder emits `ActionAdded` and *this
+   * app* is the collection, accumulating into `_recordedActions`. So the reset is a
+   * direct one, which is also what it always meant.
+   *
+   * The network buffer goes with it. The restore replays the prefix steps, and the
+   * traffic that generates is in the buffer with timestamps that fall before the
+   * author's first real action — close enough to land in its window and be handed back
+   * as that step's settle evidence. Keeping it would attribute the restore's requests to
+   * the author's first click.
+   */
+  resetCapture() {
+    this._recordedActions = [];
+    this._network.clear();
+  }
+
   async setRunningFile() {
     // Not applicable — no file-based code editor
   }

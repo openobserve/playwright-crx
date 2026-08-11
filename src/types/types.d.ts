@@ -801,6 +801,13 @@ export class SyntheticsRecorderApp {
   close(): Promise<void>;
   setMode(mode: Mode): Promise<void>;
   setPaused(paused: boolean): Promise<void>;
+  /**
+   * Drop everything captured so far and treat what follows as a fresh recording.
+   *
+   * Used by restore-then-record: the prefix steps are replayed to reach a starting state,
+   * and only what the author does after that should be recorded.
+   */
+  resetCapture(): void;
   setSources(sources: Source[]): Promise<void>;
   setActions(actions: ActionInContext[], sources: Source[]): Promise<void>;
   elementPicked(elementInfo: ElementInfo, userGesture?: boolean): Promise<void>;
