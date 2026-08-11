@@ -23,8 +23,16 @@ import { Download } from './download';
 import { SdkObject } from './instrumentation';
 import { Page } from './page';
 import { ClientCertificatesProxy } from './socksClientCertificatesInterceptor';
-import { PlaywrightPipeServer } from '../remote/playwrightPipeServer';
-import { PlaywrightWebSocketServer } from '../remote/playwrightWebSocketServer';
+// patch(playwright-crx): type-only, plus a lazy import at the one place these are
+// constructed. 1.60 made server/browser.ts import these two eagerly, which closes a cycle
+// — browser.ts -> remote/playwrightPipeServer -> playwrightConnection -> crBrowser ->
+// browser.ts — and Rollup then evaluated `class CRBrowser extends Browser` before Browser
+// existed: "Cannot access 'Browser$1' before initialization", thrown at module scope, so
+// the extension's service worker died before it activated. BrowserServer.start() is
+// already async and is the only user, so deferring costs nothing. crx cannot reach it at
+// all: an extension attaches over chrome.debugger and never launches a browser server.
+import type { PlaywrightPipeServer } from '../remote/playwrightPipeServer';
+import type { PlaywrightWebSocketServer } from '../remote/playwrightWebSocketServer';
 import { BrowserInfo, serverRegistry } from '../serverRegistry';
 import { nullProgress } from './progress';
 
@@ -217,9 +225,11 @@ export class BrowserServer {
 
     let endpoint: string;
     if (options.host !== undefined || options.port !== undefined) {
+      const { PlaywrightWebSocketServer } = await import('../remote/playwrightWebSocketServer');
       this._wsServer = new PlaywrightWebSocketServer(this._browser, '/');
       endpoint = await this._wsServer.listen(options.port ?? 0, options.host, '/' + createGuid());
     } else {
+      const { PlaywrightPipeServer } = await import('../remote/playwrightPipeServer');
       this._pipeServer = new PlaywrightPipeServer(this._browser);
       this._pipeSocketPath = await this._socketPath();
       await this._pipeServer.listen(this._pipeSocketPath);

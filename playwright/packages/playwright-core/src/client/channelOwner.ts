@@ -26,7 +26,9 @@ import type { Logger } from './types';
 import type { ValidatorContext } from '../protocol/validator';
 import type { Platform } from '@isomorphic/platform';
 import type * as channels from '@protocol/channels';
-import { currentZone } from '../utils';
+// patch(playwright-crx): 1.60 moved utils out of playwright-core; `../utils` is now
+// the top-level package.
+import { currentZone } from '@utils/zones';
 
 type Listener = (...args: any[]) => void;
 

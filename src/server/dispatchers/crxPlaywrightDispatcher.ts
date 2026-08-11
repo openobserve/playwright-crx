@@ -41,9 +41,9 @@ export class CrxPlaywrightDispatcher extends Dispatcher<Playwright, channels.Pla
       chromium: new BrowserTypeDispatcher(scope, playwright.chromium, denyLaunch),
       firefox: new BrowserTypeDispatcher(scope, playwright.firefox, denyLaunch),
       webkit: new BrowserTypeDispatcher(scope, playwright.webkit, denyLaunch),
-      // 1.55 dropped denyLaunch from AndroidDispatcher — it stored the flag and never
-      // read it, so there is nothing to preserve here.
-      android: new AndroidDispatcher(scope, playwright.android),
+      // 1.55 dropped denyLaunch from AndroidDispatcher and 1.60 reinstated it, this time
+      // actually reading it. Passing the same flag as every other browser type.
+      android: new AndroidDispatcher(scope, playwright.android, denyLaunch),
       electron: new ElectronDispatcher(scope, playwright.electron, denyLaunch),
       utils: new LocalUtilsDispatcher(scope, playwright),
       _crx: new CrxDispatcher(scope, playwright._crx),

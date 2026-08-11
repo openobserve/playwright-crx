@@ -37,7 +37,7 @@ import { mapActionsToBrowserSteps } from './actionMapper';
 import type { BrowserStep } from './actionMapper';
 import { BrowserContext } from 'playwright-core/lib/server/browserContext';
 import type { Response } from 'playwright-core/lib/server/network';
-import { monotonicTime } from 'playwright-core/lib/utils';
+import { monotonicTime } from '@isomorphic/time';
 import { NetworkRecorder, buildSettlePatterns, captureWindows } from './networkCapture';
 
 

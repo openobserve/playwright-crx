@@ -16,10 +16,15 @@
 
 import path from 'path';
 
-// Use a dynamic path so esbuild does not statically resolve and inline
-// package.json into coreBundle.js.
+import packageJSONStatic from '../package.json';
+
+// patch(playwright-crx): upstream builds this path dynamically *so that* esbuild
+// cannot inline package.json. A browser bundle needs the opposite — there is no
+// filesystem to require from at runtime, so the dynamic form throws while the
+// service worker is still evaluating and the extension never starts. Imported
+// statically instead, which inlines the JSON and keeps `version` correct.
 export const packageRoot = path.join(__dirname, '..');
-export const packageJSON = require(path.join(packageRoot, 'package.json'));
+export const packageJSON = packageJSONStatic;
 export const binPath = path.join(packageRoot, 'bin');
 
 export function libPath(...parts: string[]): string {

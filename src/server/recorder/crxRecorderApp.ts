@@ -27,7 +27,7 @@ import { parse } from './parser';
 import { generateCode } from 'playwright-core/lib/server/codegen/language';
 import { languageSet } from 'playwright-core/lib/server/codegen/languages';
 import { collapseActions, metadataToCallLog } from 'playwright-core/lib/server/recorder/recorderUtils';
-import { monotonicTime } from 'playwright-core/lib/utils';
+import { monotonicTime } from '@isomorphic/time';
 import type { CallMetadata } from '@protocol/callMetadata';
 import type { Crx } from '../crx';
 import type { LanguageGeneratorOptions } from 'playwright-core/lib/server/codegen/types';

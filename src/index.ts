@@ -27,17 +27,21 @@ import { CrxPlaywrightDispatcher } from './server/dispatchers/crxPlaywrightDispa
 import { PageBinding } from 'playwright-core/lib/server/page';
 
 import { wrapClientApis } from './client/crxZone';
-import { nodePlatform } from 'playwright-core/lib/utils';
+import { nodePlatform } from '@utils/nodePlatform';
 
 export { debug as _debug } from 'debug';
-export { setUnderTest as _setUnderTest, isUnderTest as _isUnderTest } from 'playwright-core/lib/utils';
+export { setUnderTest as _setUnderTest, isUnderTest as _isUnderTest } from '@utils/debug';
 
 // avoid conflicts with playwright when testing
 PageBinding.kBindingName = '__crx__binding__';
 
 const playwright = new CrxPlaywright();
 
-const clientConnection = new CrxConnection(nodePlatform);
+// 1.60 turned nodePlatform into a factory taking the package root, which it uses only
+// to strip that prefix from boxed stack traces. There is no package root in an
+// extension — the bundle is one file served from a chrome-extension:// origin — so it
+// gets the empty string, which strips nothing.
+const clientConnection = new CrxConnection(nodePlatform(''));
 const dispatcherConnection = new DispatcherConnection(true /* local */);
 
 // Dispatch synchronously at first.

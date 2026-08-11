@@ -16,7 +16,7 @@
 
 import type { EventEmitter } from 'events';
 import type * as channels from '@protocol/channels';
-import { RecentLogsCollector } from 'playwright-core/lib/server/utils/debugLogger';
+import { RecentLogsCollector } from '@utils/debugLogger';
 import type { BrowserOptions, BrowserProcess } from 'playwright-core/lib/server/browser';
 import { CRBrowser, CRBrowserContext } from 'playwright-core/lib/server/chromium/crBrowser';
 import type { CRPage } from 'playwright-core/lib/server/chromium/crPage';
@@ -26,7 +26,8 @@ import type { InstrumentationListener } from 'playwright-core/lib/server/instrum
 import { Page } from 'playwright-core/lib/server/page';
 import type { Playwright } from 'playwright-core/lib/server/playwright';
 import { Recorder } from 'playwright-core/lib/server/recorder';
-import { assert } from 'playwright-core/lib/utils';
+import { assert } from '@isomorphic/assert';
+import { nullProgress } from 'playwright-core/lib/server/progress';
 import type * as crxchannels from '../protocol/channels';
 import { CrxRecorderApp } from './recorder/crxRecorderApp';
 import { CrxTransport } from './transport/crxTransport';
@@ -173,7 +174,8 @@ export class Crx extends SdkObject {
       // ensure we create and initialize the new context before the Target.attachedToTarget event is emitted
       assert(browserContextId);
       context = new CRBrowserContext(browser, browserContextId, options ?? {});
-      await context._initialize();
+      // 1.60 made BrowserContext._initialize public as initialize().
+      await context.initialize();
       browser._contexts.set(browserContextId, context);
     });
     context.on(BrowserContext.Events.Close, () => {
@@ -377,7 +379,8 @@ export class CrxApplication extends SdkObject {
       await Promise.all(this._crPages().map(crPage => options?.closePages ? crPage.closePage(false) : this._doDetach(crPage._targetId)));
     }
 
-    await this._context.close({});
+    // 1.60 made BrowserContext.close take a Progress.
+    await this._context.close(nullProgress, {});
   }
 
   list(code: string) {

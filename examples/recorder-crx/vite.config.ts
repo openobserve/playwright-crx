@@ -23,7 +23,9 @@ import sourcemaps from 'rollup-plugin-sourcemaps';
 export default defineConfig({
   resolve: {
     alias: {
-      '@isomorphic': path.resolve(__dirname, '../../playwright/packages/playwright-core/src/utils/isomorphic'),
+      // 1.60 moved isomorphic and utils out of playwright-core into top-level packages.
+      '@isomorphic': path.resolve(__dirname, '../../playwright/packages/isomorphic'),
+      '@utils': path.resolve(__dirname, '../../playwright/packages/utils'),
       '@protocol': path.resolve(__dirname, '../../playwright/packages/protocol/src'),
       '@web': path.resolve(__dirname, '../../playwright/packages/web/src'),
       '@recorder': path.resolve(__dirname, '../../playwright/packages/recorder/src'),

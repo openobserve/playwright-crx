@@ -17,7 +17,10 @@
 import EventEmitter from 'events';
 import type { BrowserContext } from 'playwright-core/lib/server/browserContext';
 import { Page } from 'playwright-core/lib/server/page';
-import { isUnderTest, ManualPromise, monotonicTime, serializeExpectedTextValues } from 'playwright-core/lib/utils';
+import { isUnderTest } from '@utils/debug';
+import { ManualPromise } from '@isomorphic/manualPromise';
+import { monotonicTime } from '@isomorphic/time';
+import { serializeExpectedTextValues } from '@isomorphic/expectUtils';
 import { serializeError } from 'playwright-core/lib/server/errors';
 import { buildFullSelector } from 'playwright-core/lib/server/recorder/recorderUtils';
 import { toKeyboardModifiers } from 'playwright-core/lib/server/codegen/language';
@@ -25,13 +28,15 @@ import type { ActionInContextWithLocation, Location } from './parser';
 import type { FrameDescription } from '@recorder/actions';
 import type { StructuredError } from './syntheticsRecorderApp';
 import { toClickOptions } from 'playwright-core/lib/server/recorder/recorderRunner';
-import { parseAriaSnapshotUnsafe } from 'playwright-core/lib/utils/isomorphic/ariaSnapshot';
-import { ProgressController } from 'playwright-core/lib/server/progress';
+import { parseAriaSnapshotUnsafe } from '@isomorphic/ariaSnapshot';
+import { nullProgress, ProgressController } from 'playwright-core/lib/server/progress';
 import type { CallMetadata } from 'playwright-core/lib/server/instrumentation';
 import type { Progress } from 'playwright-core/lib/server/progress';
 import type { Crx } from '../crx';
 import type { InstrumentationListener, SdkObject } from 'playwright-core/lib/server/instrumentation';
-import { yaml } from 'playwright-core/lib/utilsBundle';
+// Namespace import, not default: `YamlLibrary` in @isomorphic/ariaSnapshot is the
+// module's shape (parseDocument, Scalar, YAMLMap, ...), which is the namespace.
+import * as yaml from 'yaml';
 
 class Stopped extends Error {}
 
@@ -320,7 +325,10 @@ export default class CrxPlayer extends EventEmitter {
 
     if (action.name === 'closePage') {
       pageAliases.delete(page);
-      await page.close({ runBeforeUnload: true });
+      // 1.60 made Page.close take a Progress. There is nothing to cancel here — the
+      // step is closing a page it already owns — so it runs unbounded, which is what
+      // the untimed close did before.
+      await page.close(nullProgress, { runBeforeUnload: true });
       return;
     }
 

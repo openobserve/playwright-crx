@@ -57,7 +57,7 @@ import {
   CrxApplication,
   CrxRecorder,
 } from './crx';
-import { currentZone } from 'playwright-core/lib/utils';
+import { currentZone } from '@utils/zones';
 
 type ApiTypeMap = {
   // 'accessibility' left with page.accessibility, removed upstream in 1.57.
@@ -198,6 +198,9 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
     allTextContents: true,
     waitFor: true,
     normalize: true,
+    // added to Locator in 1.60
+    drop: true,
+    hideHighlight: true,
   }],
   frameLocator: [FrameLocator.prototype, {}],
   elementHandle: [ElementHandle.prototype, {
@@ -392,9 +395,12 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
     cancelPickLocator: true,
     clearConsoleMessages: true,
     clearPageErrors: true,
+    // added to Page in 1.60
+    hideHighlight: true,
   }],
   selectors: [Selectors.prototype, { register: true }],
-  tracing: [Tracing.prototype, { group: true, groupEnd: true, start: true, startChunk: true, stop: true, stopChunk: true }],
+  // startHar/stopHar added to Tracing in 1.60
+  tracing: [Tracing.prototype, { group: true, groupEnd: true, start: true, startChunk: true, stop: true, stopChunk: true, startHar: true, stopHar: true }],
   video: [Video.prototype, { delete: true, path: true, saveAs: true }],
   // waitForEvent added to Worker in 1.57.
   worker: [Worker.prototype, { evaluate: true, evaluateHandle: true, waitForEvent: true }],

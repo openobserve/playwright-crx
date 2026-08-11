@@ -38,6 +38,7 @@ import { packageRoot, binPath } from '../../package';
 
 import type { DependencyGroup } from './dependencies';
 import type { HostPlatform } from '@utils/hostPlatform';
+import browsersJSONStatic from '../../../browsers.json';
 
 export { writeDockerVersion } from './dependencies';
 
@@ -1541,6 +1542,11 @@ function lowercaseAllKeys(json: any): any {
   return result;
 }
 
-export const registry = new Registry(require(path.join(packageRoot, 'browsers.json')));
+// patch(playwright-crx): static import for the same reason as package.ts — a dynamic
+// require has nothing to resolve against inside an extension, and this one runs at module
+// scope, so it kills the service worker before it activates. crx never downloads a
+// browser (it attaches to the one it is running in), but this module is still in the
+// graph and its top level still executes.
+export const registry = new Registry(browsersJSONStatic);
 
 export { runOopDownloadBrowserMain } from './oopDownloadBrowserMain';

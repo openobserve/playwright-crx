@@ -20,7 +20,7 @@ import type { AwaitExpression, Expression, ExpressionStatement } from 'acorn';
 import * as walk from 'acorn-walk';
 import { fromKeyboardModifiers } from 'playwright-core/lib/server/codegen/language';
 import type { BrowserContextOptions, SmartKeyboardModifier } from 'playwright-core/lib/server/types';
-import { locatorOrSelectorAsSelector } from 'playwright-core/lib/utils/isomorphic/locatorParser';
+import { locatorOrSelectorAsSelector } from '@isomorphic/locatorParser';
 import type { CallMetadata } from '@protocol/callMetadata';
 
 export type Location = CallMetadata['location'];

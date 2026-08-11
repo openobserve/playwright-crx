@@ -18,7 +18,7 @@ import { Connection } from 'playwright-core/lib/client/connection';
 import { Crx, CrxApplication } from './crx';
 import { CrxPlaywright } from './crxPlaywright';
 import { findValidator } from 'playwright-core/lib/protocol/validatorPrimitives';
-import { Platform } from 'playwright-core/lib/client/platform';
+import type { Platform } from '@isomorphic/platform';
 
 export class CrxConnection extends Connection {
   constructor(platform: Platform) {

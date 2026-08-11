@@ -26,32 +26,28 @@ const baseDir = __dirname.replace(/\\/g, '/');
 export default defineConfig({
   resolve: {
     alias: {
+      // 1.60 moved utils and isomorphic out of playwright-core into top-level packages,
+      // and upstream reaches them through these aliases; src/ now does the same.
+      // Same reason as the tsconfig path: one yaml, the one the vendored tree uses.
+      'yaml': path.resolve(__dirname, './playwright/node_modules/yaml'),
+      '@isomorphic': path.resolve(__dirname, './playwright/packages/isomorphic'),
+      '@utils': path.resolve(__dirname, './playwright/packages/utils'),
+      '@injected': path.resolve(__dirname, './playwright/packages/injected/src'),
+      '@protocol': path.resolve(__dirname, './playwright/packages/protocol/src'),
+      '@recorder': path.resolve(__dirname, './playwright/packages/recorder/src'),
+      '@web': path.resolve(__dirname, './playwright/packages/web/src'),
+      '@trace': path.resolve(__dirname, './playwright/packages/trace/src'),
       'playwright-core/lib': path.resolve(__dirname, './playwright/packages/playwright-core/src'),
       '@playwright/test/lib': path.resolve(__dirname, './playwright/packages/playwright/src'),
       'playwright-core': path.resolve(__dirname, './src/index'),
 
-      // for bundles, we use relative paths because different utilsBundleImpl exists in both playwright-core and playwright
-      './utilsBundleImpl': '../bundles/utils/src/utilsBundleImpl',
-      './zipBundleImpl': '../bundles/zip/src/zipBundleImpl',
-      // 1.58 moved the MCP bundle into playwright-core and made `nodePlatform` — which
-      // src/index.ts imports — depend on its zod. Unlike the 1.56 case there is no single
-      // edge to cut any more, so the bundle is built in.
-      './mcpBundleImpl': '../bundles/mcp/src/mcpBundleImpl',
-      './babelBundleImpl': '../../bundles/babel/src/babelBundleImpl',
-      './expectBundleImpl': '../../bundles/expect/src/expectBundleImpl',
-
-      // 1.59 replaced the vendored expect implementation with the real `expect` package
-      // (v30), whose ESM entry is a wrapper: `import cjs from './index.js'; export default
-      // cjs.default`. Node's CJS interop hands that wrapper the whole module.exports, so
-      // `cjs.default` is the expect function and it works. Rollup honours the CJS bundle's
-      // `__esModule` flag instead and hands it `exports.default` — already the expect
-      // function — whose own `.default` is undefined. `expectLibrary.setState({...})` then
-      // threw at module scope, killing the extension's service worker before it could
-      // activate and failing every test in fixture setup, with no build or type error
-      // anywhere. Resolving to the CJS entry skips the wrapper.
-      // Safe as a prefix alias: `expect` is imported bare from exactly one place and no
-      // subpath of it is imported at all.
-      'expect': path.resolve(__dirname, './playwright/packages/playwright/bundles/expect/node_modules/expect/build/index.js'),
+      // No *BundleImpl aliases here any more. Through 1.59 each vendored dependency was
+      // reached through a per-bundle indirection (`./utilsBundleImpl` -> a sub-package with
+      // its own node_modules), and every one needed an alias because two different
+      // utilsBundleImpl existed. 1.60 (playwright#40074, #40102) deleted that layer
+      // outright: utilsBundle.ts and friends now import `colors`, `mime`, `expect` and the
+      // rest directly, resolved from playwright/node_modules. `npm run ci:pw:bundles`
+      // installs that one tree, and ordinary resolution does the rest.
 
       // 1.56 made `playwright/src/index.ts` import the MCP test backend, which drags the
       // whole MCP tree — SDK, zod, zod-to-json-schema, node built-ins — into the service
@@ -157,9 +153,12 @@ export default defineConfig({
       ],
       include: [
         path.resolve(__dirname, './playwright/packages/playwright/src/**/*'),
-        path.resolve(__dirname, './playwright/packages/playwright/bundles/*/src/**/*'),
         path.resolve(__dirname, './playwright/packages/playwright-core/src/**/*'),
-        path.resolve(__dirname, './playwright/packages/playwright-core/bundles/*/src/**/*'),
+        // 1.60 moved these out of playwright-core, and they carry vendored CJS of their
+        // own (utils/third_party/pixelmatch.js). Without them here the CommonJS transform
+        // skips those files and a default import of one resolves to nothing.
+        path.resolve(__dirname, './playwright/packages/utils/**/*'),
+        path.resolve(__dirname, './playwright/packages/isomorphic/**/*'),
         /node_modules/,
       ],
     }
