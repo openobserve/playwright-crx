@@ -29,6 +29,8 @@ export class JavaScriptLanguageGenerator implements LanguageGenerator {
   name: string;
   highlighter = 'javascript' as Language;
   private _isTest: boolean;
+  // patch(playwright-crx): see usesContext().
+  private _emittedNewPage = false;
   private _pageAliases = new Map<string, string>();
 
   constructor(isTest: boolean) {
@@ -39,12 +41,17 @@ export class JavaScriptLanguageGenerator implements LanguageGenerator {
 
   reset() {
     this._pageAliases.clear();
+    this._emittedNewPage = false;
   }
 
-  // patch(playwright-crx): true once a second page has been named, which is exactly
-  // when the generated test needs `context` alongside `page`.
+  // patch(playwright-crx): true once we have actually emitted `context.newPage()`, which
+  // is exactly when the generated test needs `context` alongside `page`.
+  //
+  // Not "more than one page has been named": a popup is a second named page (its alias is
+  // resolved to write `const page1 = await page1Promise`) that the context never opens, so
+  // counting aliases declared a `context` fixture the body never used.
   usesContext(): boolean {
-    return this._pageAliases.size > 1;
+    return this._emittedNewPage;
   }
 
   private _pageAlias(pageGuid: string): string {
@@ -69,6 +76,7 @@ export class JavaScriptLanguageGenerator implements LanguageGenerator {
     const formatter = new JavaScriptFormatter(2);
 
     if (action.name === 'openPage') {
+      this._emittedNewPage = true;
       formatter.add(`const ${pageAlias} = await context.newPage();`);
       if (action.url && action.url !== 'about:blank' && action.url !== 'chrome://newtab/')
         formatter.add(`await ${pageAlias}.goto(${quote(action.url)});`);

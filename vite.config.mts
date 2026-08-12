@@ -68,6 +68,8 @@ export default defineConfig({
       'buffer': path.resolve(__dirname, './node_modules/buffer'),
       'child_process': path.resolve(__dirname, './src/shims/child_process'),
       'chokidar': path.resolve(__dirname, './src/shims/chokidar'),
+      // The CLI argument parser, re-exported by utilsBundle. No argv here — see the shim.
+      'commander': path.resolve(__dirname, './src/shims/commander'),
       'constants': path.resolve(__dirname, './node_modules/constants-browserify'),
       'crypto': path.resolve(__dirname, './node_modules/crypto-browserify'),
       'debug': path.resolve(__dirname, './node_modules/debug'),
@@ -81,8 +83,13 @@ export default defineConfig({
       // Node's inspector module — and, more importantly, NOT the unrelated npm package of
       // the same name that sits in devDependencies and cannot load in a browser.
       'inspector': path.resolve(__dirname, './src/shims/inspector'),
+      // Unresolved, Vite stubs this under a name Chrome refuses to load — see the shim.
+      'kerberos': path.resolve(__dirname, './src/shims/kerberos'),
       'module': path.resolve(__dirname, './src/shims/module'),
       'net': path.resolve(__dirname, './src/shims/net'),
+      // `open` launches a desktop browser, which an extension has no way to do. Shimmed at
+      // the package rather than patching around its PowerShell/WSL helpers — see the shim.
+      'open': path.resolve(__dirname, './src/shims/open'),
       'os': path.resolve(__dirname, './node_modules/os-browserify/browser'),
       'path': path.resolve(__dirname, './node_modules/path'),
       'process': path.resolve(__dirname, './node_modules/process'),

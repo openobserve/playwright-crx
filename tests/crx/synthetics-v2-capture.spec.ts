@@ -408,7 +408,8 @@ test('the buffer spends its retention on calls that could become signals', () =>
 
 function actionInContext(action: any, startTime = 0, endTime?: number) {
   return {
-    frame: { pageAlias: 'page', framePath: [] },
+    // 1.62 replaced `frame: { pageGuid, pageAlias, framePath }` with a bare `pageGuid`.
+    pageGuid: 'page',
     action,
     startTime,
     endTime,

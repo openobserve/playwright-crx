@@ -94,7 +94,8 @@ crxTest('should replay against the started tab, not whatever attached first', as
 
     await incognitoApp.recorder.runActions([
       {
-        frame: { pageAlias: 'page', framePath: [] },
+        // 1.62 replaced `frame: { pageGuid, pageAlias, framePath }` with a bare `pageGuid`.
+        pageGuid: 'page',
         action: { name: 'click', selector: 'internal:testid=[data-test="login-user-id-field"s]', signals: [] },
       },
     ]);
