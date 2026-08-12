@@ -138,7 +138,20 @@ export default class CrxPlayer extends EventEmitter {
     await this._pause;
   }
 
-  async run(pageOrContext: Page | BrowserContext, actions: PerformAction[]) {
+  /**
+   * `primaryPageGuid` names the page the journey started on — the one already open, whose
+   * `openPage` must not be replayed.
+   *
+   * It is a parameter rather than something derived from `actions`, because `actions` is
+   * not always the journey: stepping calls run() once per action, so `actions[0]` is
+   * merely the current step. Deriving it here made every single-action run believe its own
+   * page was the primary one, which skipped the openPage that should have created the
+   * second page and then failed the next action with "page not found".
+   *
+   * Defaulted for callers that do pass whole journeys (the synthetics replay path), which
+   * relies on the leading openPage being skipped.
+   */
+  async run(pageOrContext: Page | BrowserContext, actions: PerformAction[], primaryPageGuidOverride?: string) {
     if (this.isPlaying())
       return;
 
@@ -175,7 +188,7 @@ export default class CrxPlayer extends EventEmitter {
 
     // The key the journey uses for its primary page — an alias when the actions were
     // parsed or restored, a real guid when they were captured live. See primaryPageGuid.
-    const primaryGuid = primaryPageGuid(actions as { pageGuid: string }[]) ?? 'page';
+    const primaryGuid = primaryPageGuidOverride ?? primaryPageGuid(actions as { pageGuid: string }[]) ?? 'page';
 
     // Preserve aliases across calls: stepping runs one action per run(), and clearing
     // here would drop the aliases that earlier openPage steps created.

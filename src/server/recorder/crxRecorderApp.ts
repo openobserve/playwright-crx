@@ -506,7 +506,8 @@ export class CrxRecorderApp extends EventEmitter {
     const runOne = async (action: ActionInContextWithLocation) => {
       const startTime = monotonicTime();
       try {
-        await this._crx.player.run(crxApp._context, [action]);
+        // The journey's primary page, not this step's — see CrxPlayer.run.
+        await this._crx.player.run(crxApp._context, [action], primaryGuid);
         this._completedLogs.push(this._buildCallLog(action, 'done', startTime));
         return true;
       } catch (e) {
