@@ -143,9 +143,16 @@ test('an unknown command is answered rather than left hanging', async ({ page, o
   // A command the extension does not implement must still get a reply. The dispatcher used to
   // fall through without calling respond(), so the O2 page waited out its own 60s timeout with
   // no way to tell "this build does not support that command" from "the extension is wedged".
-  const res = await o2.send<{ success?: boolean; error?: string }>({ action: 'thisCommandDoesNotExist' }, 15_000);
+  const res = await o2.send<{ success?: boolean; error?: string; action?: string }>({ action: 'thisCommandDoesNotExist' }, 15_000);
 
   expect(res, 'an unknown command stranded the caller — no response was ever sent').toBeTruthy();
   expect(res!.success).toBe(false);
-  expect(res!.error, 'the reply should name the unsupported command').toContain('thisCommandDoesNotExist');
+
+  // The reply must still name what was refused, but it no longer does so by interpolating
+  // the action into a message. The capability handshake made `error` a fixed, matchable
+  // code and moved the name to its own field, so O2 can branch on "this build is too old"
+  // without parsing prose. Asserting on both is the point: a code with no name attached
+  // would tell a user that something is unsupported without saying what.
+  expect(res!.error).toBe('unsupported-command');
+  expect(res!.action, 'the reply should name the unsupported command').toBe('thisCommandDoesNotExist');
 });
