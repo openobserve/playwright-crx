@@ -196,7 +196,19 @@ function runO2Command(command: O2Command, respond: (response?: any) => void): bo
       return true;
 
     case 'getStatus':
-      respond({ isRecording, mode: currentMode, tabId: recordingTabId, stepCount: browserSteps.length });
+      respond({
+        isRecording,
+        mode: currentMode,
+        tabId: recordingTabId,
+        stepCount: browserSteps.length,
+        // Chrome updates this extension independently of when O2 deploys, so the
+        // two can disagree about the wire with no way to say so. Reporting the
+        // manifest version — already the source of truth, and the package script
+        // requires it to agree with package.json — lets O2 say "update the
+        // extension" instead of failing obscurely on a message shape it does not
+        // recognise.
+        version: chrome.runtime.getManifest().version,
+      });
       return false;
 
     case 'stopReplay':
