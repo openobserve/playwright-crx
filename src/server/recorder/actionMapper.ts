@@ -109,6 +109,16 @@ export interface BrowserStep {
   files?: string[];
   modifiers?: number;
   button?: 'left' | 'middle' | 'right';
+  /**
+   * How many clicks the recorded interaction was. Absent means one.
+   *
+   * Carried because 1.56's action picker offers "Double click" as an explicit
+   * choice, and the reverse mapper used to hardcode 1 — so a deliberately
+   * recorded double click replayed as a single one and still reported green.
+   * `toClickOptions` has always forwarded clickCount > 1; only the mapping
+   * starved it.
+   */
+  clickCount?: number;
   position?: { x: number; y: number };
   // Metadata
   startTime: number;
@@ -294,6 +304,7 @@ export function mapActionToBrowserStep(
         button: action.button,
         modifiers: action.modifiers,
         position: action.position,
+        clickCount: action.clickCount,
       };
     // 1.56 added hover to the recorder model, offered as "Hover" in the action
     // picker. It carries no payload beyond where on the element the pointer went.
@@ -458,7 +469,7 @@ function buildActionFromStep(step: BrowserStep): Action {
         selector,
         button: step.button ?? 'left',
         modifiers: step.modifiers ?? 0,
-        clickCount: 1,
+        clickCount: step.clickCount ?? 1,
         position: step.position,
         signals: [],
       };

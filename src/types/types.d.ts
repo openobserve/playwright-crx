@@ -703,6 +703,8 @@ export interface BrowserStep {
   files?: string[];
   modifiers?: number;
   button?: 'left' | 'middle' | 'right';
+  /** How many clicks the recorded interaction was. Absent means one. */
+  clickCount?: number;
   position?: { x: number, y: number };
   startTime: number;
   endTime?: number;

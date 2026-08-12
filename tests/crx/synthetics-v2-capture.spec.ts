@@ -933,3 +933,37 @@ test('hover is no longer reported as unsimulated', () => {
   expect(isUnsupportedReplayAction('scroll')).toBe(true);
   expect(isUnsupportedReplayAction('screenshot')).toBe(true);
 });
+
+test('a double click survives the round trip as two clicks', () => {
+  // The picker offers "Double click" as an explicit choice, so this is a
+  // deliberate recording, not an accident of event.detail.
+  const recorded = {
+    pageGuid: 'page',
+    startTime: 0,
+    action: { name: 'click', selector: '#x', button: 'left', modifiers: 0, clickCount: 2, signals: [] },
+  } as any;
+
+  const step = mapActionToBrowserStep(recorded, 0);
+  expect(step.clickCount).toBe(2);
+
+  const back = mapBrowserStepToAction(step);
+  expect((back.action as any).clickCount).toBe(2);
+});
+
+test('a step with no clickCount replays as a single click', () => {
+  // The compatibility half: every journey stored before this field existed omits
+  // it, and must still mean one click.
+  const stored = {
+    id: 's1',
+    action: 'click',
+    name: 'Sign in',
+    pageAlias: 'page',
+    framePath: [],
+    startTime: 0,
+    locator: { candidates: [{ kind: 'css', value: '#x', origin: 'recorded' }] },
+  } as any;
+
+  const action = mapBrowserStepToAction(stored).action as any;
+  expect(action.clickCount).toBe(1);
+  expect(action.button).toBe('left');
+});
