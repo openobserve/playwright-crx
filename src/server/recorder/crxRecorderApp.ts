@@ -32,6 +32,7 @@ import type { CallMetadata } from 'playwright-core/lib/server/instrumentation';
 import type { Crx } from '../crx';
 import type { LanguageGeneratorOptions } from '@isomorphic/codegen/types';
 import { toLanguage, traceParamsForAction } from './recorderUtils';
+import { primaryPageGuid } from './actionMapper';
 
 export type RecorderMessage = { type: 'recorder' } & (
   | { method: 'resetCallLogs' }
@@ -480,7 +481,9 @@ export class CrxRecorderApp extends EventEmitter {
 
     // The player skips a leading openPage for the 'page' alias, so index the same list
     // it iterates or the call-log entries would point at the wrong action.
-    const all = this._getActions().filter(a => !(a.action.name === 'openPage' && a.pageGuid === 'page'));
+    const actionsForRun = this._getActions();
+    const primaryGuid = primaryPageGuid(actionsForRun);
+    const all = actionsForRun.filter(a => !(a.action.name === 'openPage' && a.pageGuid === primaryGuid));
     this._replayedActions = all;
 
     // Until 1.54 stepping was the debugger's job: recorder.step() resumed it for a single

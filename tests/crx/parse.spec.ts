@@ -27,7 +27,10 @@ const test = base.extend<{ testParse: (code: string, skipAssertCode?: boolean) =
       }, code);
       if (!skipAssertCode)
         expect.soft(code).toEqual(resultCode);
-      const actions = actionsInContext.map(a => ({ ...a.action, pageAlias: a.frame.pageAlias }));
+      // 1.62 removed `frame` from ActionInContext — an action now carries only the page
+      // key. For parsed code that key IS the alias the author wrote (`page`, `page1`, …),
+      // so the values asserted below are unchanged; only where they are read moved.
+      const actions = actionsInContext.map(a => ({ ...a.action, pageAlias: a.pageGuid }));
       return { actions, options };
     });
   },

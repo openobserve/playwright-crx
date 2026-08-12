@@ -44,6 +44,7 @@ import { toClickOptions } from 'playwright-core/lib/server/recorder/recorderRunn
 import { nullProgress, ProgressController } from 'playwright-core/lib/server/progress';
 import type { CallMetadata } from 'playwright-core/lib/server/instrumentation';
 import type { Progress } from 'playwright-core/lib/server/progress';
+import { primaryPageGuid } from './actionMapper';
 import type { Crx } from '../crx';
 import type { InstrumentationListener, SdkObject } from 'playwright-core/lib/server/instrumentation';
 
@@ -172,18 +173,22 @@ export default class CrxPlayer extends EventEmitter {
         context.instrumentation.addListener(instrumentationListener, context);
     }
 
+    // The key the journey uses for its primary page — an alias when the actions were
+    // parsed or restored, a real guid when they were captured live. See primaryPageGuid.
+    const primaryGuid = primaryPageGuid(actions as { pageGuid: string }[]) ?? 'page';
+
     // Preserve aliases across calls: stepping runs one action per run(), and clearing
     // here would drop the aliases that earlier openPage steps created.
     if (!this._pageAliases.has(page)) {
       this._pageAliases.clear();
-      this._pageAliases.set(page, 'page');
+      this._pageAliases.set(page, primaryGuid);
     }
     this.emit('start');
 
     try {
       let actionIndex = 0;
       for (const action of actions) {
-        if (action.action.name === 'openPage' && action.pageGuid === 'page')
+        if (action.action.name === 'openPage' && action.pageGuid === primaryGuid)
           continue;
         // A stop that landed between two actions has no pending call to abort, so check
         // before announcing the step. Announcing it and only then throwing Stopped is what

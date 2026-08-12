@@ -545,3 +545,21 @@ export function mapBrowserStepsToActions(steps: BrowserStep[]): ActionInContext[
     return mapBrowserStepToAction(step);
   });
 }
+
+
+/**
+ * The page key of the journey's primary page — the one the recording started on.
+ *
+ * Needed because that key is not a constant. 1.62 replaced the action's FrameDescription
+ * with a bare page key, and which string that is depends on where the actions came from:
+ * a journey parsed from code or rebuilt from storage carries aliases (`page`, `page1`, …),
+ * while one captured live carries real page guids. Comparing against the literal 'page'
+ * is therefore right for the first and silently wrong for the second — which is exactly
+ * how the primary page's openPage stopped being skipped and replayed as a stray
+ * `newPage` step.
+ *
+ * First-mentioned is the definition, matching how aliases are assigned in the first place.
+ */
+export function primaryPageGuid(actions: { pageGuid: string }[]): string | undefined {
+  return actions[0]?.pageGuid;
+}
