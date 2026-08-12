@@ -37,6 +37,9 @@ export default defineConfig({
       '@recorder': path.resolve(__dirname, './playwright/packages/recorder/src'),
       '@web': path.resolve(__dirname, './playwright/packages/web/src'),
       '@trace': path.resolve(__dirname, './playwright/packages/trace/src'),
+      // Must precede the 'playwright-core/lib' alias below — first match wins, and this
+      // one is the more specific.
+      'playwright-core/lib/bootstrap': path.resolve(__dirname, './src/shims/bootstrap'),
       'playwright-core/lib': path.resolve(__dirname, './playwright/packages/playwright-core/src'),
       '@playwright/test/lib': path.resolve(__dirname, './playwright/packages/playwright/src'),
       'playwright-core': path.resolve(__dirname, './src/index'),
@@ -75,6 +78,9 @@ export default defineConfig({
       'http': path.resolve(__dirname, './node_modules/stream-http'),
       'http2': path.resolve(__dirname, './node_modules/stream-http'),
       'https': path.resolve(__dirname, './node_modules/https-browserify'),
+      // Node's inspector module — and, more importantly, NOT the unrelated npm package of
+      // the same name that sits in devDependencies and cannot load in a browser.
+      'inspector': path.resolve(__dirname, './src/shims/inspector'),
       'module': path.resolve(__dirname, './src/shims/module'),
       'net': path.resolve(__dirname, './src/shims/net'),
       'os': path.resolve(__dirname, './node_modules/os-browserify/browser'),
