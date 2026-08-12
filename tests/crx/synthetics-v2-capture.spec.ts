@@ -39,6 +39,7 @@ import {
 } from '../../src/server/recorder/networkCapture';
 import { describeStepFidelity } from '../../src/server/recorder/replayFidelity';
 import {
+  isUnsupportedReplayAction,
   mapActionsToBrowserSteps,
   mapActionToBrowserStep,
   mapBrowserStepToAction,
@@ -893,4 +894,42 @@ test('an unmapped recorder action fails loudly instead of becoming a click', () 
     action: { name: 'someFutureAction', selector: '#x', signals: [] },
   } as any;
   expect(() => mapActionToBrowserStep(action, 0)).toThrow(/unmapped recorder action: 'someFutureAction'/);
+});
+
+test('a recorded hover maps to a hover step, not to a click', () => {
+  // Playwright 1.56 added `hover` to the recorder action model, reachable from the
+  // action picker. Before it was mapped, the picker's Hover entry produced a step
+  // indistinguishable from a click on the same element — and clicking a menu
+  // trigger that was only meant to be hovered can navigate or submit.
+  const recorded = {
+    pageGuid: 'page',
+    startTime: 0,
+    action: { name: 'hover', selector: '#menu', signals: [] },
+  } as any;
+
+  const step = mapActionToBrowserStep(recorded, 0);
+  expect(step.action).toBe('hover');
+});
+
+test('a hover step round-trips back to a hover action', () => {
+  const stored = {
+    id: 's1',
+    action: 'hover',
+    name: 'Hover Menu',
+    pageAlias: 'page',
+    framePath: [],
+    startTime: 0,
+    locator: { candidates: [{ kind: 'css', value: '#menu', origin: 'recorded' }] },
+  } as any;
+
+  expect(mapBrowserStepToAction(stored).action.name).toBe('hover');
+});
+
+test('hover is no longer reported as unsimulated', () => {
+  // It was on this list only because upstream had no hover action at all. Now that
+  // one exists and Frame.hover executes it, reporting "not simulated" would be
+  // under-claiming a capability we have.
+  expect(isUnsupportedReplayAction('hover')).toBe(false);
+  expect(isUnsupportedReplayAction('scroll')).toBe(true);
+  expect(isUnsupportedReplayAction('screenshot')).toBe(true);
 });

@@ -24,7 +24,7 @@ import { generalizeUrlPattern } from './urlPattern';
 import type { SettleResponsePattern } from './networkCapture';
 
 export type BrowserStepAction =
-  'navigate' | 'openPage' | 'click' | 'type' | 'press' | 'select' |
+  'navigate' | 'openPage' | 'click' | 'hover' | 'type' | 'press' | 'select' |
   'check' | 'uncheck' |
   'setInputFiles' | 'waitFor' | 'assert' | 'screenshot';
 
@@ -295,6 +295,14 @@ export function mapActionToBrowserStep(
         modifiers: action.modifiers,
         position: action.position,
       };
+    // 1.56 added hover to the recorder model, offered as "Hover" in the action
+    // picker. It carries no payload beyond where on the element the pointer went.
+    case 'hover':
+      return {
+        ...base,
+        action: 'hover',
+        position: action.position,
+      };
     case 'fill':
       return {
         ...base,
@@ -442,6 +450,8 @@ function buildActionFromStep(step: BrowserStep): Action {
       return { name: 'openPage', url: step.url ?? '', signals: [] };
     case 'navigate':
       return { name: 'navigate', url: step.url ?? '', signals: [] };
+    case 'hover':
+      return { name: 'hover', selector, position: step.position, signals: [] };
     case 'click':
       return {
         name: 'click',
@@ -525,14 +535,12 @@ function buildActionFromStep(step: BrowserStep): Action {
  * than as a pass. See spec X-9 and P1.R.2a.
  *
  * `hover` was on this list because upstream's recorder model had no such action at all.
- * Playwright 1.56 added one, reachable from the new right-click action picker, so a
- * hover CAN now be captured — and `Frame.hover` could execute it. Keeping it here is a
- * deliberate hold: whether hover re-enters the v2 vocabulary is a product decision, not
- * something to change while chasing a version bump. Until it is made, a recorded hover
- * is reported as "not simulated", which is honest but wastes a capability we now have.
+ * Playwright 1.56 added one, reachable from the action picker, so a hover can now be
+ * captured, mapped by this file, and executed by `Frame.hover`. It is a supported
+ * action rather than an unsimulated one, and reporting it as "not simulated" would
+ * under-claim a capability we have.
  */
 export const UNSUPPORTED_REPLAY_ACTIONS: readonly string[] = [
-  'hover',
   'scroll',
   'wait',
   'waitFor',

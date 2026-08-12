@@ -629,7 +629,7 @@ export type StepLocator = {
 
 // ── Steps ──
 
-export type BrowserStepAction = 'navigate' | 'openPage' | 'click' | 'type' | 'press' | 'select' | 'check' | 'uncheck' | 'setInputFiles' | 'waitFor' | 'assert' | 'screenshot';
+export type BrowserStepAction = 'navigate' | 'openPage' | 'click' | 'hover' | 'type' | 'press' | 'select' | 'check' | 'uncheck' | 'setInputFiles' | 'waitFor' | 'assert' | 'screenshot';
 
 /**
  * The stored spellings that only ever arrive, never leave. A journey saved and reloaded

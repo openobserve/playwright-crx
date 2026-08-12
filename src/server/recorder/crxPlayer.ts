@@ -376,6 +376,10 @@ export default class CrxPlayer extends EventEmitter {
 
       if (action.name === 'click')
         return await mainFrame.click(progress, selector, { ...toClickOptions(action), strict: true });
+      // 1.56 added hover to the recorder model. Frame.hover was always available —
+      // there was simply never an action that reached it.
+      if (action.name === 'hover')
+        return await mainFrame.hover(progress, selector, { strict: true });
       if (action.name === 'press') {
         const shortcut = [...toKeyboardModifiers(action.modifiers), action.key].join('+');
         return await mainFrame.press(progress, selector, shortcut, { strict: true });
