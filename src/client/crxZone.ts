@@ -190,6 +190,8 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
     // added to Locator in 1.60
     drop: true,
     hideHighlight: true,
+    // added to Locator in 1.62
+    waitForFunction: true,
   }],
   frameLocator: [FrameLocator.prototype, {}],
   elementHandle: [ElementHandle.prototype, {

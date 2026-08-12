@@ -173,7 +173,7 @@ export class SyntheticsRecorderApp extends EventEmitter {
     // for navigations caused by a click/press/fill. It is the evidence that turns a
     // recorded hard sleep into a wait condition, so it must land on the causing action.
     recorder.on(RecorderEvent.SignalAdded, (signal: actions.SignalInContext) => {
-      const lastAction = this._recordedActions.findLast(a => a.frame.pageGuid === signal.frame.pageGuid);
+      const lastAction = this._recordedActions.findLast(a => a.pageGuid === signal.pageGuid);
       if (lastAction)
         lastAction.action.signals.push(signal.signal);
       this._regenerate();

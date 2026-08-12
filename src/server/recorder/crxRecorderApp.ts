@@ -67,10 +67,11 @@ export class CrxRecorderApp extends EventEmitter {
   private _crx: Crx;
   readonly _recorder: Recorder;
   private _filename?: string;
-  // 1.55 added a "Generate assertions" switch to the recorder toolbar. It is a pure
-  // codegen option — it makes the generators emit an expect() for each action's
-  // preconditionSelector — but the UI is vendored, so the switch renders in our popup
-  // whether or not we honour it. Honouring it beats shipping a control that lies.
+  // The "Generate assertions" switch, added to the vendored toolbar in 1.55. It drove a
+  // `generateAutoExpect` codegen option that 1.62 removed along with the action-level
+  // preconditionSelector it depended on, so there is nothing left to honour. Kept as state
+  // so the UI event is still accepted rather than falling through as unknown; see the
+  // setAutoExpect case below.
   private _generateAutoExpect = false;
   private _sources?: Source[];
   private _recorderSources: Source[] = [];
@@ -114,7 +115,7 @@ export class CrxRecorderApp extends EventEmitter {
       this._generateSources();
     });
     recorder.on(RecorderEvent.SignalAdded, (signal: actions.SignalInContext) => {
-      const lastAction = this._recordedActions.findLast(a => a.frame.pageGuid === signal.frame.pageGuid);
+      const lastAction = this._recordedActions.findLast(a => a.pageGuid === signal.pageGuid);
       if (lastAction)
         lastAction.action.signals.push(signal.signal);
       this._generateSources();
@@ -194,17 +195,22 @@ export class CrxRecorderApp extends EventEmitter {
   // Code generation moved app-side in 1.54. Mirrors what RecorderCollection +
   // ContextRecorder did together: collapse the action list, then render it through
   // every registered language generator so the UI's language chooser keeps working.
-  private _generateSources() {
-    const collapsed = collapseActions(this._recordedActions);
-    const languageGeneratorOptions: LanguageGeneratorOptions = {
+  // Shared by _generateSources and _getActions' line mapping: two renderings of the same
+  // actions have to agree, or a highlight lands on the wrong line.
+  private _languageGeneratorOptions(): LanguageGeneratorOptions {
+    return {
       browserName: 'chromium',
       // headless:false matches what upstream's RecorderApp passes; without it the
       // standalone (non-test-runner) generators emit `launch()` instead of
       // `launch({ headless: false })`, changing the code shown and saved.
       launchOptions: { headless: false },
       contextOptions: {},
-      generateAutoExpect: this._generateAutoExpect,
     };
+  }
+
+  private _generateSources() {
+    const collapsed = collapseActions(this._recordedActions);
+    const languageGeneratorOptions = this._languageGeneratorOptions();
 
     const recorderSources: Source[] = [];
     for (const languageGenerator of languageSet()) {
@@ -474,7 +480,7 @@ export class CrxRecorderApp extends EventEmitter {
 
     // The player skips a leading openPage for the 'page' alias, so index the same list
     // it iterates or the call-log entries would point at the wrong action.
-    const all = this._getActions().filter(a => !(a.action.name === 'openPage' && a.frame.pageAlias === 'page'));
+    const all = this._getActions().filter(a => !(a.action.name === 'openPage' && a.pageGuid === 'page'));
     this._replayedActions = all;
 
     // Until 1.54 stepping was the debugger's job: recorder.step() resumed it for a single
@@ -579,7 +585,10 @@ export class CrxRecorderApp extends EventEmitter {
     const languageGenerator = [...languageSet()].find(l => l.id === this._filename)!;
     // we generate actions here to have a one-to-one mapping between actions and text
     // (source actions are filtered, only non-empty actions are included)
-    const actionTexts = actions.map(a => languageGenerator.generateAction(a));
+    // 1.62 gave generateAction the generator options as a second argument. These have to
+    // match what _generateSources() used, or the line numbers this maps back to would
+    // describe a different rendering of the same actions.
+    const actionTexts = actions.map(a => languageGenerator.generateAction(a, this._languageGeneratorOptions()));
 
     const sourceLine = (index: number) => {
       const numLines = (str?: string) => str ? str.split(/\r?\n/).length : 0;

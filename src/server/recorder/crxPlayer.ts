@@ -20,12 +20,25 @@ import { Page } from 'playwright-core/lib/server/page';
 import { isUnderTest } from '@utils/debug';
 import { ManualPromise } from '@isomorphic/manualPromise';
 import { monotonicTime } from '@isomorphic/time';
-import { serializeExpectedTextValues } from '@isomorphic/expectUtils';
+// 1.62 made this private to playwright/src/matchers, so it is inlined here. It is a pure
+// shape conversion — a string or RegExp becomes the wire form the expect engine reads —
+// and is copied from upstream rather than reinvented.
+function serializeExpectedTextValues(
+  items: (string | RegExp)[],
+  options: { matchSubstring?: boolean, normalizeWhiteSpace?: boolean, ignoreCase?: boolean } = {},
+) {
+  return items.map(i => ({
+    string: typeof i === 'string' ? i : undefined,
+    regexSource: typeof i === 'string' ? undefined : i.source,
+    regexFlags: typeof i === 'string' ? undefined : i.flags,
+    matchSubstring: options.matchSubstring,
+    ignoreCase: options.ignoreCase,
+    normalizeWhiteSpace: options.normalizeWhiteSpace,
+  }));
+}
 import { serializeError } from 'playwright-core/lib/server/errors';
-import { buildFullSelector } from 'playwright-core/lib/server/recorder/recorderUtils';
 import { toKeyboardModifiers } from '@isomorphic/codegen/language';
 import type { ActionInContextWithLocation, Location } from './parser';
-import type { FrameDescription } from '@isomorphic/codegen/actions';
 import type { StructuredError } from './syntheticsRecorderApp';
 import { toClickOptions } from 'playwright-core/lib/server/recorder/recorderRunner';
 import { nullProgress, ProgressController } from 'playwright-core/lib/server/progress';
@@ -83,7 +96,8 @@ export type PerformAction = ActionInContextWithLocation | {
   action: {
     name: 'pause';
   };
-  frame: FrameDescription;
+  // 1.62 replaced the action's FrameDescription with a bare page key.
+  pageGuid: string;
   location?: Location;
 };
 
@@ -113,7 +127,7 @@ export default class CrxPlayer extends EventEmitter {
       const context = (await this._crx.get({ incognito: false }))!._context;
       const pauseAction = {
         action: { name: 'pause' },
-        frame: { pageGuid: '', pageAlias: 'page', framePath: [] },
+        pageGuid: 'page',
       } satisfies PerformAction;
       this._pause = this
           ._performAction(context, pauseAction)
@@ -169,7 +183,7 @@ export default class CrxPlayer extends EventEmitter {
     try {
       let actionIndex = 0;
       for (const action of actions) {
-        if (action.action.name === 'openPage' && action.frame.pageAlias === 'page')
+        if (action.action.name === 'openPage' && action.pageGuid === 'page')
           continue;
         // A stop that landed between two actions has no pending call to abort, so check
         // before announcing the step. Announcing it and only then throwing Stopped is what
@@ -301,7 +315,7 @@ export default class CrxPlayer extends EventEmitter {
       return;
 
     if (action.name === 'openPage') {
-      const pageAlias = actionInContext.frame.pageAlias;
+      const pageAlias = actionInContext.pageGuid;
       if ([...pageAliases.values()].includes(pageAlias))
         throw new Error(`Page with alias ${pageAlias} already exists`);
       const newPage = await this._runWithProgress(context, progress => context.newPage(progress, false), kActionTimeout);
@@ -313,7 +327,10 @@ export default class CrxPlayer extends EventEmitter {
       return;
     }
 
-    const pageAlias = actionInContext.frame.pageAlias;
+    // 1.62 replaced the action's FrameDescription with a bare pageGuid. For a live
+    // recording that is the real guid; for a journey replayed from storage it is the alias
+    // the step was saved under (see mapBrowserStepToAction). Either way it is the key.
+    const pageAlias = actionInContext.pageGuid;
     const page = [...pageAliases.entries()].find(([, alias]) => pageAlias === alias)?.[0];
     if (!page)
       throw new Error('Internal error: page not found');
@@ -335,7 +352,9 @@ export default class CrxPlayer extends EventEmitter {
       if (action.name === 'navigate')
         return await mainFrame.goto(progress, action.url);
 
-      const selector = buildFullSelector(actionInContext.frame.framePath, action.selector);
+      // 1.62 folds the frame path into the selector at capture time, so prepending one
+      // here would double it.
+      const selector = action.selector;
 
       if (action.name === 'click')
         return await mainFrame.click(progress, selector, { ...toClickOptions(action), strict: true });

@@ -309,7 +309,9 @@ export function parse(code: string, file: string = 'playwright-test') {
       action,
       // pageGuid is required on FrameDescription since 1.54; parsed code has no live
       // page to name, and the player resolves the target through pageAlias.
-      frame: { pageGuid: '', pageAlias: pageAlias ?? 'page', framePath: [] },
+      // 1.62: the page key is the guid, and for parsed code that is the alias the author
+      // wrote (`page`, `page1`, …), which is what the player resolves against.
+      pageGuid: pageAlias ?? 'page',
       startTime: 0,
       location: { file, ...indexToLineColumn(code, expr.start) },
     };
@@ -418,7 +420,7 @@ export function parse(code: string, file: string = 'playwright-test') {
       // it has page fixture, let's push a openPage action
       actions.push({
         action: { name: 'openPage', signals: [], url: '' },
-        frame: { pageGuid: '', pageAlias: 'page', framePath: [] },
+        pageGuid: 'page',
         location: { file, ...indexToLineColumn(code, fn.start) },
         startTime: 0
       });

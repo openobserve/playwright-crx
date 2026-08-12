@@ -17,10 +17,10 @@
 import type * as recorderActions from '@isomorphic/codegen/actions';
 import type * as channels from 'playwright-core/lib/server/channels';
 import { toKeyboardModifiers } from '@isomorphic/codegen/language';
-import { buildFullSelector } from 'playwright-core/lib/server/recorder/recorderUtils';
 import type { Language } from '@isomorphic/codegen/types';
 
-const kDefaultTimeout = 5_000;
+// 1.62's per-side channels dropped `timeout` from the server param shapes — it travels
+// on the Progress now — so these call-log params no longer carry one.
 
 // Playwright 1.54 replaced `Recorder.setOutput(codegenId, file)` with
 // `Recorder.setLanguage(language)`, which takes the *highlighter* language rather
@@ -49,7 +49,6 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
   switch (action.name) {
     case 'navigate': {
       const params: channels.FrameGotoParams = {
-        timeout: kDefaultTimeout,
         url: action.url,
       };
       return { method: 'goto', apiName: 'page.goto', params };
@@ -61,12 +60,12 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
       return { method: 'close', params: {}, apiName: 'page.close' };
     }
   }
-  const selector = buildFullSelector(actionInContext.frame.framePath, action.selector);
+  // 1.62: action.selector already carries the frame path.
+  const selector = action.selector;
   switch (action.name) {
 
     case 'click': {
       const params: channels.FrameClickParams = {
-        timeout: kDefaultTimeout,
         selector,
         strict: true,
         modifiers: toKeyboardModifiers(action.modifiers),
@@ -83,7 +82,6 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
     // which the caller spreads.
     case 'hover': {
       const params: channels.FrameHoverParams = {
-        timeout: kDefaultTimeout,
         selector,
         strict: true,
         position: action.position,
@@ -92,7 +90,6 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
     }
     case 'press': {
       const params: channels.FramePressParams = {
-        timeout: kDefaultTimeout,
         selector,
         strict: true,
         key: [...toKeyboardModifiers(action.modifiers), action.key].join('+'),
@@ -101,7 +98,6 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
     }
     case 'fill': {
       const params: channels.FrameFillParams = {
-        timeout: kDefaultTimeout,
         selector,
         strict: true,
         value: action.text,
@@ -110,7 +106,6 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
     }
     case 'setInputFiles': {
       const params: channels.FrameSetInputFilesParams = {
-        timeout: kDefaultTimeout,
         selector,
         strict: true,
         localPaths: action.files,
@@ -119,7 +114,6 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
     }
     case 'check': {
       const params: channels.FrameCheckParams = {
-        timeout: kDefaultTimeout,
         selector,
         strict: true,
       };
@@ -127,7 +121,6 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
     }
     case 'uncheck': {
       const params: channels.FrameUncheckParams = {
-        timeout: kDefaultTimeout,
         selector,
         strict: true,
       };
@@ -135,7 +128,6 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
     }
     case 'select': {
       const params: channels.FrameSelectOptionParams = {
-        timeout: kDefaultTimeout,
         selector,
         strict: true,
         options: action.options.map(option => ({ value: option })),
@@ -147,7 +139,6 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
         selector: action.selector,
         expression: 'to.be.checked',
         isNot: !action.checked,
-        timeout: kDefaultTimeout,
       };
       return { method: 'expect', apiName: 'expect.toBeChecked', params };
     }
@@ -157,7 +148,6 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
         expression: 'to.have.text',
         expectedText: [],
         isNot: false,
-        timeout: kDefaultTimeout,
       };
       return { method: 'expect', apiName: 'expect.toContainText', params };
     }
@@ -167,7 +157,6 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
         expression: 'to.have.value',
         expectedValue: undefined,
         isNot: false,
-        timeout: kDefaultTimeout,
       };
       return { method: 'expect', apiName: 'expect.toHaveValue', params };
     }
@@ -176,7 +165,6 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
         selector,
         expression: 'to.be.visible',
         isNot: false,
-        timeout: kDefaultTimeout,
       };
       return { method: 'expect', apiName: 'expect.toBeVisible', params };
     }
@@ -185,7 +173,6 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
         selector,
         expression: 'to.match.aria',
         isNot: false,
-        timeout: kDefaultTimeout,
       };
       return { method: 'expect', apiName: 'expect.toMatchAriaSnapshot', params };
     }

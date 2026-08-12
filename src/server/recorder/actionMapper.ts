@@ -205,12 +205,45 @@ function buildAssertion(action: Action): StepAssertion | undefined {
   }
 }
 
+/**
+ * Names pages the way a journey reads: the first page is `page`, the next `page1`, and so
+ * on in the order they were opened.
+ *
+ * 1.62 removed `frame` from ActionInContext — an action now carries only an opaque
+ * `pageGuid`. A guid is stable but meaningless in a stored step and to anyone reading one,
+ * so it is turned back into an alias here, with the same first-seen scheme upstream's own
+ * code generator uses. The map is per call to mapActionsToBrowserSteps, so a journey's
+ * names do not depend on anything outside it.
+ */
+function aliasAssigner(): (pageGuid: string) => string {
+  const aliases = new Map<string, string>();
+  return pageGuid => {
+    let alias = aliases.get(pageGuid);
+    if (!alias) {
+      alias = 'page' + (aliases.size || '');
+      aliases.set(pageGuid, alias);
+    }
+    return alias;
+  };
+}
+
 export function mapActionToBrowserStep(
   actionInContext: ActionInContext,
   actionIndex: number,
   responses?: SettleResponsePattern[],
+  aliasFor: (pageGuid: string) => string = aliasAssigner(),
 ): BrowserStep {
-  const { action, frame, startTime, endTime, description } = actionInContext;
+  const { action, startTime, endTime } = actionInContext;
+  // 1.62 dropped `description` from ActionInContext too. Nothing in the crx flow ever
+  // set it — the step name is derived from the action — so the fallback is all there is.
+  const description = undefined as string | undefined;
+  const frame = {
+    pageAlias: aliasFor(actionInContext.pageGuid),
+    // 1.62 folds the frame path into action.selector at capture time, so a step no longer
+    // carries one and the player must not prepend anything. O2 already sends [] on its
+    // storage path, so both directions now agree.
+    framePath: [] as string[],
+  };
   const selectors = (action as { selectors?: string[] }).selectors;
   const selector = (action as { selector?: string }).selector;
 
@@ -341,9 +374,12 @@ export function mapActionsToBrowserSteps(
   actions: ActionInContext[],
   responsesFor?: (action: ActionInContext) => SettleResponsePattern[] | undefined,
 ): BrowserStep[] {
+  // One assigner for the whole journey: page names have to be consistent across steps,
+  // not per step.
+  const aliasFor = aliasAssigner();
   return actions
       .filter(a => a.action.name !== 'closePage')
-      .map((a, i) => mapActionToBrowserStep(a, i, responsesFor?.(a)));
+      .map((a, i) => mapActionToBrowserStep(a, i, responsesFor?.(a), aliasFor));
 }
 
 // Reconstructs the Playwright Action for a BrowserStep. The forward mapper
@@ -487,18 +523,14 @@ export function isUnsupportedReplayAction(action: string): boolean {
 
 export function mapBrowserStepToAction(step: BrowserStep): ActionInContext {
   return {
-    frame: {
-      // 1.54 added pageGuid to FrameDescription so the recorder can correlate signals
-      // to pages. A step replayed from a saved journey has no live page to name yet —
-      // the player resolves the target through pageAlias — so it is left empty.
-      pageGuid: '',
-      pageAlias: step.pageAlias ?? 'page',
-      framePath: step.framePath ?? [],
-    },
+    // The alias IS the page key on the way back in. A journey replayed from storage has no
+    // live guid to refer to, and O2 sends `pageAlias: 'page'` for every stored step, so
+    // using it as the guid keeps one identity for both directions — live capture uses the
+    // real guid, replay uses the name it was stored under.
+    pageGuid: step.pageAlias ?? 'page',
     action: buildActionFromStep(step),
     startTime: step.startTime ?? 0,
     endTime: step.endTime,
-    description: step.description,
   };
 }
 

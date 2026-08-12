@@ -15,6 +15,7 @@
  */
 
 import type * as channels from '../../protocol/channels';
+import { asChannel } from '../../protocol/channels';
 import { PageDispatcher } from 'playwright-core/lib/server/dispatchers/pageDispatcher';
 import type { Crx } from '../crx';
 import { CrxApplication } from '../crx';
@@ -64,11 +65,11 @@ export class CrxApplicationDispatcher extends Dispatcher<CrxApplication, channel
   }
 
   async attach(params: channels.CrxApplicationAttachParams): Promise<channels.CrxApplicationAttachResult> {
-    return { page: PageDispatcher.from(this._context, await this._object.attach(params.tabId)) };
+    return { page: asChannel(PageDispatcher.from(this._context, await this._object.attach(params.tabId))) };
   }
 
   async attachAll(params: channels.CrxApplicationAttachAllParams): Promise<channels.CrxApplicationAttachAllResult> {
-    return { pages: (await this._object.attachAll(params)).map(page => PageDispatcher.from(this._context, page)) };
+    return { pages: (await this._object.attachAll(params)).map(page => asChannel<channels.CrxApplicationAttachAllResult['pages'][number]>(PageDispatcher.from(this._context, page))) };
   }
 
   async detach(params: channels.CrxApplicationDetachParams): Promise<void> {
@@ -76,7 +77,7 @@ export class CrxApplicationDispatcher extends Dispatcher<CrxApplication, channel
       throw new Error(`Only either tabId or page must be specified, not both`);
     if ((!params.tabId && !params.page))
       throw new Error(`Either tabId or page must be specified, not none`);
-    await this._object.detach(params.tabId ?? (params.page as PageDispatcher)._object);
+    await this._object.detach(params.tabId ?? asChannel<PageDispatcher>(params.page)._object);
   }
 
   async detachAll(): Promise<void> {
@@ -84,7 +85,7 @@ export class CrxApplicationDispatcher extends Dispatcher<CrxApplication, channel
   }
 
   async newPage(params: channels.CrxApplicationNewPageParams): Promise<channels.CrxApplicationNewPageResult> {
-    return { page: PageDispatcher.from(this._context, await this._object.newPage(params)) };
+    return { page: asChannel(PageDispatcher.from(this._context, await this._object.newPage(params))) };
   }
 
   async showRecorder(params: channels.CrxApplicationShowRecorderParams): Promise<void> {
@@ -114,7 +115,7 @@ export class CrxApplicationDispatcher extends Dispatcher<CrxApplication, channel
   }
 
   async run(params: channels.CrxApplicationRunParams): Promise<void> {
-    await this._object.run(params.code, (params.page as PageDispatcher)?._object);
+    await this._object.run(params.code, asChannel<PageDispatcher>(params.page)?._object);
   }
 
   async runActions(params: channels.CrxApplicationRunActionsParams): Promise<void> {

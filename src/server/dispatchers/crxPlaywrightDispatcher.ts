@@ -25,7 +25,6 @@ import { GlobalAPIRequestContext } from 'playwright-core/lib/server/fetch';
 import type { Playwright } from 'playwright-core/lib/server/playwright';
 import { CrxDispatcher } from './crxDispatcher';
 import type { CrxPlaywright } from '../crxPlaywright';
-import { CrxPlaywrightInitializer } from 'src/protocol/channels';
 
 // based on PlaywrightDispatcher
 export class CrxPlaywrightDispatcher extends Dispatcher<Playwright, channels.PlaywrightChannel, RootDispatcher> implements channels.PlaywrightChannel {
@@ -47,7 +46,10 @@ export class CrxPlaywrightDispatcher extends Dispatcher<Playwright, channels.Pla
       electron: new ElectronDispatcher(scope, playwright.electron, denyLaunch),
       utils: new LocalUtilsDispatcher(scope, playwright),
       _crx: new CrxDispatcher(scope, playwright._crx),
-    } as CrxPlaywrightInitializer);
+      // Same boundary as asChannel(): CrxPlaywrightInitializer is declared on the client
+      // side because that is the public surface, while super() wants the server's. One
+      // process, one object, two spellings of it.
+    } as any);
     this._type_Playwright = true;
   }
 
