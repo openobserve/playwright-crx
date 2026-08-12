@@ -372,7 +372,14 @@ export function mapActionToBrowserStep(
       // Skip closePage — no user-facing step
       return { ...base, action: 'navigate' } as BrowserStep;
     default:
-      return base;
+      // `base` is seeded with action:'click' as a placeholder for every case above
+      // to overwrite. Returning it here turned any action this switch does not know
+      // into a click the user never performed — which is how 1.56's `hover` reached
+      // storage as a click, past all three of the guards meant to catch it.
+      //
+      // Failing makes a new upstream ActionName a deliberate decision rather than a
+      // silent downgrade. Upstream added one action in nine minors; it will add more.
+      throw new Error(`unmapped recorder action: '${(action as { name: string }).name}'`);
   }
 }
 

@@ -40,6 +40,8 @@ import {
 import { describeStepFidelity } from '../../src/server/recorder/replayFidelity';
 import {
   mapActionsToBrowserSteps,
+  mapActionToBrowserStep,
+  mapBrowserStepToAction,
   mapBrowserStepsToActions,
 } from '../../src/server/recorder/actionMapper';
 import type { BrowserStep } from '../../src/server/recorder/actionMapper';
@@ -876,4 +878,19 @@ test('a framework id is flagged, not demoted', () => {
     '#reka-popover-trigger-v-21',
     '.org-switcher > button',
   ]);
+});
+
+// ── Action vocabulary: every recorder action maps, or fails loudly ──────────
+
+test('an unmapped recorder action fails loudly instead of becoming a click', () => {
+  // The forward mapper seeds `base` with action:'click' as a placeholder for the
+  // switch to overwrite. Returning that placeholder from `default:` turned any
+  // unmapped action into a click the user never performed — which is exactly how
+  // 1.56's `hover` reached storage as a click for six minors.
+  const action = {
+    pageGuid: 'page',
+    startTime: 0,
+    action: { name: 'someFutureAction', selector: '#x', signals: [] },
+  } as any;
+  expect(() => mapActionToBrowserStep(action, 0)).toThrow(/unmapped recorder action: 'someFutureAction'/);
 });
