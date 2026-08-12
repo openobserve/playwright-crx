@@ -547,7 +547,7 @@ test('every element action shape resolves the bundle, not just click', () => {
 test('a stored v2 fill types, rather than silently becoming a no-op', () => {
   const [action] = mapBrowserStepsToActions([
     storedV2Step({
-      action: 'fill' as any,
+      action: 'fill',
       value: 'omkar@openobserve.ai',
       locator: { candidates: [{ kind: 'test_attribute', value: '[data-test="login-user-id-field"]' }] },
     }),
@@ -560,7 +560,7 @@ test('a stored v2 fill types, rather than silently becoming a no-op', () => {
 test('a stored v2 upload maps to setInputFiles', () => {
   const [action] = mapBrowserStepsToActions([
     storedV2Step({
-      action: 'upload' as any,
+      action: 'upload',
       files: ['/tmp/report.pdf'],
       locator: { candidates: [{ kind: 'css', value: '#file' }] },
     }),
@@ -572,9 +572,9 @@ test('a stored v2 upload maps to setInputFiles', () => {
 test('an upload is reported not-simulated under either spelling', () => {
   // P2.S — the player rejects setInputFiles, so a green here would be a false
   // claim about a file that was never uploaded.
-  for (const action of ['setInputFiles', 'upload']) {
+  for (const action of ['setInputFiles', 'upload'] as const) {
     const fidelity = describeStepFidelity(storedV2Step({
-      action: action as any,
+      action,
       locator: { candidates: [{ kind: 'css', value: '#file' }] },
     }), 0);
     expect(fidelity.level, action).toBe('not_simulated');

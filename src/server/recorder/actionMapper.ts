@@ -28,6 +28,21 @@ export type BrowserStepAction =
   'check' | 'uncheck' |
   'setInputFiles' | 'waitFor' | 'assert' | 'screenshot';
 
+/**
+ * The stored spellings that only ever arrive, never leave.
+ *
+ * A journey saved and reloaded comes back in the version-2 vocabulary (X-9.1), where
+ * `fill` is the name for `type` and `upload` for `setInputFiles`. The recorder emits the
+ * internal names and O2 stores the v2 ones, so `BrowserStep.action` legitimately carries
+ * either — see V2_ACTION_ALIASES, which has always accepted both by keying on `string`.
+ *
+ * They were missing from the type, which made `step.action === 'upload'` in
+ * describeStepFidelity a comparison TypeScript called impossible. It was not impossible;
+ * it was the check that keeps a reloaded upload from replaying as a false green. The
+ * tests covering both spellings had to cast through `as any` to say so.
+ */
+export type StoredStepAction = 'fill' | 'upload';
+
 /** The v2 assertion vocabulary, mirrored from the server-side closed set. */
 export type AssertionKind =
   'element_visible' | 'element_not_visible' | 'element_text' |
@@ -55,7 +70,7 @@ export interface StepSettle {
 
 export interface BrowserStep {
   id: string;
-  action: BrowserStepAction;
+  action: BrowserStepAction | StoredStepAction;
   /**
    * Every way the recorder could find this element. This IS the step's identity:
    * the bare `selector` and `selector_type` pair beside it was the version-1

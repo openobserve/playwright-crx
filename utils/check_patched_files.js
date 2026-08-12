@@ -72,7 +72,12 @@ function typeErrors() {
 const files = new Set(patchedFiles());
 const errors = typeErrors().filter(line => {
   const file = line.split('(')[0];
-  return files.has(file);
+  // `src/` is ours outright, so it is held to zero rather than to a baseline. It was
+  // never checked by anything before Phase 4 — the root typecheck was run by hand — and
+  // three real defects had been sitting in it. Including it here is also what gives
+  // src/types/conformance.ts somewhere to run: without this the declaration-vs-
+  // implementation assertions would compile in an editor and nowhere else.
+  return files.has(file) || file.startsWith('src/');
 });
 
 if (process.argv.includes('--update')) {
@@ -85,13 +90,14 @@ const baseline = fs.existsSync(baselinePath) ? new Set(JSON.parse(fs.readFileSyn
 const unexpected = errors.filter(e => !baseline.has(e));
 
 if (unexpected.length) {
-  console.error(`\n${unexpected.length} type error(s) in patched vendored files:\n`);
+  console.error(`\n${unexpected.length} type error(s) in our own code:\n`);
   for (const e of unexpected)
     console.error('  ' + e);
-  console.error('\nThese files carry our patches, so an error here is almost always ours —');
-  console.error('a patch calling something upstream renamed, moved or resignatured.');
+  console.error('\nThese are files we wrote or patched, so an error here is almost always ours —');
+  console.error('a patch calling something upstream renamed, moved or resignatured, or a');
+  console.error('published declaration that no longer matches what it describes.');
   console.error('If it is genuinely upstream\'s, re-record with: node utils/check_patched_files.js --update\n');
   process.exit(1);
 }
 
-console.log(`Patched vendored files type-check clean (${files.size} files, ${baseline.size} baselined error(s)).`);
+console.log(`Our code type-checks clean (${files.size} patched file(s) plus src/, ${baseline.size} baselined error(s)).`);

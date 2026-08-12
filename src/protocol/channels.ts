@@ -25,7 +25,7 @@
 import type { BrowserContextChannel, Channel, PageChannel, PlaywrightInitializer } from 'playwright-core/lib/client/channels';
 import type { Mode } from '@recorder/recorderTypes';
 import type { CallMetadata } from 'playwright-core/lib/server/instrumentation';
-import type { CrxBrowserContextOptions } from 'src/types/types';
+import type { CrxBrowserContextOptions, CrxTestOptions } from 'src/types/types';
 
 export type CrxPlaywrightInitializer = PlaywrightInitializer & { _crx: CrxChannel };
 
@@ -223,10 +223,8 @@ export type CrxApplicationListOptions = { code: string };
 export type CrxApplicationListResult = {
   tests: {
     title: string,
-    options?: {
-      deviceName?: string,
-      contextOptions?: CrxBrowserContextOptions,
-    },
+    // What was found in the parsed code, which is a superset of what start() accepts.
+    options?: CrxTestOptions,
     location?: {
       file: string,
       line?: number,

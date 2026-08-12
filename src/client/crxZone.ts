@@ -405,7 +405,13 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
   // from crx
   crx: [Crx.prototype, { start: true, get: true }],
   crxApplication: [CrxApplication.prototype, { attach: true, attachAll: true, close: true, detach: true, detachAll: true, newPage: true }],
-  crxRecorder: [CrxRecorder.prototype, { hide: true, list: true, load: true, run: true, setMode: true, show: true }],
+  // `stop` and `runActions` are crx's own additions for the synthetics host, and were
+  // never added here — the exhaustiveness check that would have said so only ever ran by
+  // hand, so nothing reported it. Wrapped like `run`, which is the same kind of call: the
+  // zone is what makes one host request a single API call rather than a loose series of
+  // nested ones. `runActions` is O2's replay entry point, so it is the last one that
+  // should have been left out.
+  crxRecorder: [CrxRecorder.prototype, { hide: true, list: true, load: true, run: true, runActions: true, setMode: true, show: true, stop: true }],
 };
 
 const kCrxZoneWrapped = Symbol('crxZone');
