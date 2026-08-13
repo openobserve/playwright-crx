@@ -14,19 +14,22 @@
  * limitations under the License.
  */
 
-import { assert } from '../utils';
+import { ManualPromise } from '@isomorphic/manualPromise';
+import { assert } from '@isomorphic/assert';
+import { rewriteErrorMessage } from '@utils/stackTrace';
+import { isProtocolError } from './protocolError';
 import { BrowserContext } from './browserContext';
 import { APIRequestContext } from './fetch';
 import { SdkObject } from './instrumentation';
-import { ManualPromise } from '../utils/isomorphic/manualPromise';
 
 import type * as contexts from './browserContext';
 import type * as frames from './frames';
 import type * as pages from './page';
 import type * as types from './types';
 import type { NormalizedContinueOverrides } from './types';
-import type { HeadersArray, NameValue } from '../utils/isomorphic/types';
-import type * as channels from '@protocol/channels';
+import type { HeadersArray, NameValue } from '@isomorphic/types';
+import type * as channels from './channels';
+import type { Progress } from './progress';
 
 
 export function filterCookies(cookies: channels.NetworkCookie[], urls: string[]): channels.NetworkCookie[] {
@@ -43,12 +46,72 @@ export function filterCookies(cookies: channels.NetworkCookie[], urls: string[])
         continue;
       if (!parsedURL.pathname.startsWith(c.path))
         continue;
-      if (parsedURL.protocol !== 'https:' && parsedURL.hostname !== 'localhost' && c.secure)
+      if (parsedURL.protocol !== 'https:' && !isLocalHostname(parsedURL.hostname) && c.secure)
         continue;
       return true;
     }
     return false;
   });
+}
+
+export function isLocalHostname(hostname: string): boolean {
+  return hostname === 'localhost' || hostname.endsWith('.localhost');
+}
+
+// Forbidden request headers according to https://developer.mozilla.org/en-US/docs/Glossary/Forbidden_request_header
+// These headers cannot be set or modified programmatically.
+const FORBIDDEN_HEADER_NAMES = new Set([
+  'accept-charset',
+  'accept-encoding',
+  'access-control-request-headers',
+  'access-control-request-method',
+  'connection',
+  'content-length',
+  'cookie',
+  'date',
+  'dnt',
+  'expect',
+  'host',
+  'keep-alive',
+  'origin',
+  'referer',
+  'set-cookie',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+  'via',
+]);
+
+// Forbidden method names for X-HTTP-Method-* headers
+const FORBIDDEN_METHODS = new Set(['CONNECT', 'TRACE', 'TRACK']);
+
+function isForbiddenHeader(name: string, value?: string): boolean {
+  const lowerName = name.toLowerCase();
+
+  if (FORBIDDEN_HEADER_NAMES.has(lowerName))
+    return true;
+
+  if (lowerName.startsWith('proxy-'))
+    return true;
+
+  if (lowerName.startsWith('sec-'))
+    return true;
+
+  if (lowerName === 'x-http-method' ||
+      lowerName === 'x-http-method-override' ||
+      lowerName === 'x-method-override') {
+    if (value && FORBIDDEN_METHODS.has(value.toUpperCase()))
+      return true;
+  }
+
+  return false;
+}
+
+export function applyHeadersOverrides(original: HeadersArray, overrides: HeadersArray): HeadersArray {
+  const forbiddenHeaders = original.filter(header => isForbiddenHeader(header.name, header.value));
+  const allowedHeaders = overrides.filter(header => !isForbiddenHeader(header.name, header.value));
+  return mergeHeaders([allowedHeaders, forbiddenHeaders]);
 }
 
 // Rollover to 5-digit year:
@@ -90,6 +153,24 @@ export function stripFragmentFromUrl(url: string): string {
   return url.substring(0, url.indexOf('#'));
 }
 
+export type ResourceType = 'document'
+| 'stylesheet'
+| 'image'
+| 'media'
+| 'font'
+| 'script'
+| 'fetch'
+| 'xhr'
+| 'websocket'
+| 'eventsource'
+| 'manifest'
+| 'texttrack'
+| 'beacon'
+| 'ping'
+| 'cspreport'
+// 'prefetch', 'signedexchange', 'preflight', 'fedcm'
+| 'other';
+
 export class Request extends SdkObject {
   private _response: Response | null = null;
   private _redirectedFrom: Request | null;
@@ -98,11 +179,10 @@ export class Request extends SdkObject {
   readonly _isFavicon: boolean;
   _failureText: string | null = null;
   private _url: string;
-  private _resourceType: string;
+  private _resourceType: ResourceType;
   private _method: string;
   private _postData: Buffer | null;
   readonly _headers: HeadersArray;
-  private _headersMap = new Map<string, string>();
   readonly _frame: frames.Frame | null = null;
   readonly _serviceWorker: pages.Worker | null = null;
   readonly _context: contexts.BrowserContext;
@@ -111,9 +191,15 @@ export class Request extends SdkObject {
   _responseEndTiming = -1;
   private _overrides: NormalizedContinueOverrides | undefined;
   private _bodySize: number | undefined;
+  private _wallTimeMs: number | undefined;
+  _responseBodyOverride: { body: string; isBase64: boolean; } | undefined;
+
+  static Events = {
+    Response: 'response',
+  };
 
   constructor(context: contexts.BrowserContext, frame: frames.Frame | null, serviceWorker: pages.Worker | null, redirectedFrom: Request | null, documentId: string | undefined,
-    url: string, resourceType: string, method: string, postData: Buffer | null, headers: HeadersArray) {
+    url: string, resourceType: ResourceType, method: string, postData: Buffer | null, headers: HeadersArray, wallTimeMs?: number) {
     super(frame || context, 'request');
     assert(!url.startsWith('data:'), 'Data urls should not fire requests');
     this._context = context;
@@ -128,8 +214,27 @@ export class Request extends SdkObject {
     this._method = method;
     this._postData = postData;
     this._headers = headers;
-    this._updateHeadersMap();
+    this._wallTimeMs = wallTimeMs;
     this._isFavicon = url.endsWith('/favicon.ico') || !!redirectedFrom?._isFavicon;
+  }
+
+  wallTimeMs(): number | undefined {
+    return this._wallTimeMs;
+  }
+
+  async raceWithPageClosure<T>(progress: Progress, promise: Promise<T>): Promise<T> {
+    const scope = this._serviceWorker?.openScope ?? this._frame?._page.openScope;
+    if (scope)
+      return await progress.race(scope.race(promise));
+    return await progress.race(promise);
+  }
+
+  async rawRequestHeaders(progress: Progress): Promise<HeadersArray> {
+    return await this.raceWithPageClosure(progress, this.internalRawRequestHeaders());
+  }
+
+  async response(progress: Progress): Promise<Response | null> {
+    return await this.raceWithPageClosure(progress, this._waitForResponse());
   }
 
   _setFailureText(failureText: string) {
@@ -139,13 +244,7 @@ export class Request extends SdkObject {
 
   _applyOverrides(overrides: types.NormalizedContinueOverrides) {
     this._overrides = { ...this._overrides, ...overrides };
-    this._updateHeadersMap();
     return this._overrides;
-  }
-
-  private _updateHeadersMap() {
-    for (const { name, value } of this.headers())
-      this._headersMap.set(name.toLowerCase(), value);
   }
 
   overrides() {
@@ -156,7 +255,7 @@ export class Request extends SdkObject {
     return this._overrides?.url || this._url;
   }
 
-  resourceType(): string {
+  resourceType(): ResourceType {
     return this._resourceType;
   }
 
@@ -173,7 +272,8 @@ export class Request extends SdkObject {
   }
 
   headerValue(name: string): string | undefined {
-    return this._headersMap.get(name);
+    const lowerCaseName = name.toLowerCase();
+    return this.headers().find(h => h.name.toLowerCase() === lowerCaseName)?.value;
   }
 
   // "null" means no raw headers available - we'll use provisional headers as raw headers.
@@ -182,11 +282,11 @@ export class Request extends SdkObject {
       this._rawRequestHeadersPromise.resolve(headers || this._headers);
   }
 
-  async rawRequestHeaders(): Promise<HeadersArray> {
+  async internalRawRequestHeaders(): Promise<HeadersArray> {
     return this._overrides?.headers || this._rawRequestHeadersPromise;
   }
 
-  response(): PromiseLike<Response | null> {
+  private _waitForResponse(): Promise<Response | null> {
     return this._waitForResponsePromise;
   }
 
@@ -197,6 +297,7 @@ export class Request extends SdkObject {
   _setResponse(response: Response) {
     this._response = response;
     this._waitForResponsePromise.resolve(response);
+    this.emit(Request.Events.Response, response);
   }
 
   _finalRequest(): Request {
@@ -236,15 +337,8 @@ export class Request extends SdkObject {
     return this._bodySize || this.postDataBuffer()?.length || 0;
   }
 
-  async requestHeadersSize(): Promise<number> {
-    let headersSize = 4; // 4 = 2 spaces + 2 line breaks (GET /path \r\n)
-    headersSize += this.method().length;
-    headersSize += (new URL(this.url())).pathname.length;
-    headersSize += 8; // httpVersion
-    const headers = await this.rawRequestHeaders();
-    for (const header of headers)
-      headersSize += header.name.length + header.value.length + 4; // 4 = ': ' + '\r\n'
-    return headersSize;
+  async _requestHeadersSize(): Promise<number> {
+    return requestHeadersSize(await this.internalRawRequestHeaders(), this.url(), this.method());
   }
 }
 
@@ -286,7 +380,7 @@ export class Route extends SdkObject {
     this._endHandling();
   }
 
-  async redirectNavigationRequest(url: string) {
+  redirectNavigationRequest(url: string) {
     this._startHandling();
     assert(this._request.isNavigationRequest());
     this._request.frame()!.redirectNavigation(url, this._request._documentId!, this._request.headerValue('referer'));
@@ -307,6 +401,8 @@ export class Route extends SdkObject {
         body = '';
         isBase64 = false;
       }
+    } else if (!overrides.status || overrides.status < 200 || overrides.status >= 400) {
+      this._request._responseBodyOverride = { body, isBase64 };
     }
     const headers = [...(overrides.headers || [])];
     this._maybeAddCorsHeaders(headers);
@@ -338,15 +434,18 @@ export class Route extends SdkObject {
     headers.push({ name: 'vary', value: 'Origin' });
   }
 
-  async continue(overrides: types.NormalizedContinueOverrides) {
+  async continue(overrides: channels.RouteContinueParams) {
     if (overrides.url) {
       const newUrl = new URL(overrides.url);
       const oldUrl = new URL(this._request.url());
       if (oldUrl.protocol !== newUrl.protocol)
         throw new Error('New URL must have same protocol as overridden URL');
     }
-    if (overrides.headers)
-      overrides.headers = overrides.headers?.filter(header => header.name.toLowerCase() !== 'cookie');
+    if (overrides.headers) {
+      // Filter out forbidden headers from overrides - they cannot be overridden
+      // and will be passed as-is from the original request
+      overrides.headers = applyHeadersOverrides(this._request._headers, overrides.headers);
+    }
     overrides = this._request._applyOverrides(overrides);
 
     const nextHandler = this._futureHandlers.shift();
@@ -415,7 +514,7 @@ export type SecurityDetails = {
 export class Response extends SdkObject {
   private _request: Request;
   private _contentPromise: Promise<Buffer> | null = null;
-  _finishedPromise = new ManualPromise<void>();
+  private _finishedPromise = new ManualPromise<void>();
   private _status: number;
   private _statusText: string;
   private _url: string;
@@ -426,13 +525,13 @@ export class Response extends SdkObject {
   private _serverAddrPromise = new ManualPromise<RemoteAddr | undefined>();
   private _securityDetailsPromise = new ManualPromise<SecurityDetails | undefined>();
   private _rawResponseHeadersPromise = new ManualPromise<HeadersArray>();
-  private _httpVersion: string | undefined;
+  private _httpVersionPromise = new ManualPromise<string | null>();
   private _fromServiceWorker: boolean;
   private _encodedBodySizePromise = new ManualPromise<number | null>();
   private _transferSizePromise = new ManualPromise<number | null>();
   private _responseHeadersSizePromise = new ManualPromise<number | null>();
 
-  constructor(request: Request, status: number, statusText: string, headers: HeadersArray, timing: ResourceTiming, getResponseBodyCallback: GetResponseBodyCallback, fromServiceWorker: boolean, httpVersion?: string) {
+  constructor(request: Request, status: number, statusText: string, headers: HeadersArray, timing: ResourceTiming, getResponseBodyCallback: GetResponseBodyCallback, fromServiceWorker: boolean) {
     super(request.frame() || request._context, 'response');
     this._request = request;
     this._timing = timing;
@@ -444,8 +543,31 @@ export class Response extends SdkObject {
       this._headersMap.set(name.toLowerCase(), value);
     this._getResponseBodyCallback = getResponseBodyCallback;
     this._request._setResponse(this);
-    this._httpVersion = httpVersion;
     this._fromServiceWorker = fromServiceWorker;
+  }
+
+  async body(progress: Progress): Promise<Buffer> {
+    return await this._request.raceWithPageClosure(progress, this.internalBody());
+  }
+
+  async securityDetails(progress: Progress): Promise<SecurityDetails | null> {
+    return await this._request.raceWithPageClosure(progress, this.internalSecurityDetails());
+  }
+
+  async serverAddr(progress: Progress): Promise<RemoteAddr | null> {
+    return await this._request.raceWithPageClosure(progress, this.internalServerAddr());
+  }
+
+  async rawResponseHeaders(progress: Progress): Promise<NameValue[]> {
+    return await this._request.raceWithPageClosure(progress, this.internalRawResponseHeaders());
+  }
+
+  async httpVersion(progress: Progress): Promise<string> {
+    return await this._request.raceWithPageClosure(progress, this.internalHttpVersion());
+  }
+
+  async sizes(progress: Progress): Promise<ResourceSizes> {
+    return await this._request.raceWithPageClosure(progress, this.internalSizes());
   }
 
   _serverAddrFinished(addr?: RemoteAddr) {
@@ -464,8 +586,8 @@ export class Response extends SdkObject {
     this._finishedPromise.resolve();
   }
 
-  _setHttpVersion(httpVersion: string) {
-    this._httpVersion = httpVersion;
+  _setHttpVersion(httpVersion: string | null) {
+    this._httpVersionPromise.resolve(httpVersion);
   }
 
   url(): string {
@@ -486,10 +608,6 @@ export class Response extends SdkObject {
 
   headerValue(name: string): string | undefined {
     return this._headersMap.get(name);
-  }
-
-  async rawResponseHeaders(): Promise<NameValue[]> {
-    return this._rawResponseHeadersPromise;
   }
 
   // "null" means no raw headers available - we'll use provisional headers as raw headers.
@@ -514,20 +632,34 @@ export class Response extends SdkObject {
     return this._timing;
   }
 
-  async serverAddr(): Promise<RemoteAddr|null> {
-    return await this._serverAddrPromise || null;
-  }
-
-  async securityDetails(): Promise<SecurityDetails|null> {
+  async internalSecurityDetails(): Promise<SecurityDetails|null> {
     return await this._securityDetailsPromise || null;
   }
 
-  body(): Promise<Buffer> {
+  async internalServerAddr(): Promise<RemoteAddr | null> {
+    return await this._serverAddrPromise || null;
+  }
+
+  async internalRawResponseHeaders(): Promise<HeadersArray> {
+    return await this._rawResponseHeadersPromise;
+  }
+
+  internalBody(): Promise<Buffer> {
     if (!this._contentPromise) {
       this._contentPromise = this._finishedPromise.then(async () => {
         if (this._status >= 300 && this._status <= 399)
           throw new Error('Response body is unavailable for redirect responses');
-        return this._getResponseBodyCallback();
+        if (this._request._responseBodyOverride) {
+          const { body, isBase64 } = this._request._responseBodyOverride;
+          return Buffer.from(body, isBase64 ? 'base64' : 'utf-8');
+        }
+        try {
+          return await this._getResponseBodyCallback();
+        } catch (e) {
+          if (isProtocolError(e) && e.type === 'error')
+            rewriteErrorMessage(e, e.message + '\nResponse body is not available for a response that was navigated away from. Read response.body() before triggering any navigation.');
+          throw e;
+        }
       });
     }
     return this._contentPromise;
@@ -537,18 +669,23 @@ export class Response extends SdkObject {
     return this._request;
   }
 
+  finished(): Promise<void> {
+    return this._finishedPromise;
+  }
+
   frame(): frames.Frame | null {
     return this._request.frame();
   }
 
-  httpVersion(): string {
-    if (!this._httpVersion)
+  async internalHttpVersion(): Promise<string> {
+    const httpVersion = await this._httpVersionPromise || null;
+    if (!httpVersion)
       return 'HTTP/1.1';
-    if (this._httpVersion === 'http/1.1')
+    if (httpVersion === 'http/1.1')
       return 'HTTP/1.1';
-    if (this._httpVersion === 'h2')
+    if (httpVersion === 'h2')
       return 'HTTP/2.0';
-    return this._httpVersion;
+    return httpVersion;
   }
 
   fromServiceWorker(): boolean {
@@ -561,19 +698,11 @@ export class Response extends SdkObject {
       return availableSize;
 
     // Fallback to calculating it manually.
-    let headersSize = 4; // 4 = 2 spaces + 2 line breaks (HTTP/1.1 200 Ok\r\n)
-    headersSize += 8; // httpVersion;
-    headersSize += 3; // statusCode;
-    headersSize += this.statusText().length;
-    const headers = await this._rawResponseHeadersPromise;
-    for (const header of headers)
-      headersSize += header.name.length + header.value.length + 4; // 4 = ': ' + '\r\n'
-    headersSize += 2; // '\r\n'
-    return headersSize;
+    return responseHeadersSize(await this._rawResponseHeadersPromise, this.statusText());
   }
 
-  async sizes(): Promise<ResourceSizes> {
-    const requestHeadersSize = await this._request.requestHeadersSize();
+  async internalSizes(): Promise<ResourceSizes> {
+    const requestHeadersSize = await this._request._requestHeadersSize();
     const responseHeadersSize = await this.responseHeadersSize();
 
     let encodedBodySize = await this._encodedBodySizePromise;
@@ -603,17 +732,24 @@ export class Response extends SdkObject {
 export class WebSocket extends SdkObject {
   private _url: string;
   private _notified = false;
+  private _wallTimeMs: number | undefined;
+  private _status: number | undefined;
+  private _statusText: string | undefined;
+  private _requestHeaders: HeadersArray | undefined;
+  private _responseHeaders: HeadersArray | undefined;
 
   static Events = {
     Close: 'close',
     SocketError: 'socketerror',
     FrameReceived: 'framereceived',
     FrameSent: 'framesent',
+    Request: 'request',
+    Response: 'response',
   };
 
   constructor(parent: SdkObject, url: string) {
     super(parent, 'ws');
-    this._url = url;
+    this._url = stripFragmentFromUrl(url);
   }
 
   markAsNotified() {
@@ -630,12 +766,28 @@ export class WebSocket extends SdkObject {
     return this._url;
   }
 
-  frameSent(opcode: number, data: string) {
-    this.emit(WebSocket.Events.FrameSent, { opcode, data });
+  wallTimeMs(): number | undefined {
+    return this._wallTimeMs;
   }
 
-  frameReceived(opcode: number, data: string) {
-    this.emit(WebSocket.Events.FrameReceived, { opcode, data });
+  setWallTimeMs(wallTimeMs: number | undefined) {
+    this._wallTimeMs = wallTimeMs;
+  }
+
+  requestSent(headers: HeadersArray) {
+    this.emit(WebSocket.Events.Request, { headers });
+  }
+
+  responseReceived(status: number, statusText: string, headers: HeadersArray) {
+    this.emit(WebSocket.Events.Response, { status, statusText, headers });
+  }
+
+  frameSent(opcode: number, data: string, wallTimeMs: number) {
+    this.emit(WebSocket.Events.FrameSent, { opcode, data, wallTimeMs });
+  }
+
+  frameReceived(opcode: number, data: string, wallTimeMs: number) {
+    this.emit(WebSocket.Events.FrameReceived, { opcode, data, wallTimeMs });
   }
 
   error(errorMessage: string) {
@@ -743,5 +895,31 @@ export function mergeHeaders(headers: (HeadersArray | undefined | null)[]): Head
   const result: HeadersArray = [];
   for (const [lower, value] of lowerCaseToValue)
     result.push({ name: lowerCaseToOriginalCase.get(lower)!, value });
+  return result;
+}
+
+function headersSize(headers: HeadersArray): number {
+  let result = 0;
+  for (const header of headers)
+    result += header.name.length + header.value.length + 4; // 4 = ': ' + '\r\n'
+  return result;
+}
+
+export function requestHeadersSize(headers: HeadersArray, url: string, method: string): number {
+  let result = 4; // 4 = 2 spaces + 2 line breaks (GET /path \r\n)
+  result += method.length;
+  result += (new URL(url)).pathname.length;
+  result += 8; // httpVersion
+  result += headersSize(headers);
+  return result;
+}
+
+export function responseHeadersSize(headers: HeadersArray, statusText: string): number {
+  let result = 4; // 4 = 2 spaces + 2 line breaks (HTTP/1.1 200 Ok\r\n)
+  result += 8; // httpVersion;
+  result += 3; // statusCode;
+  result += statusText.length;
+  result += headersSize(headers);
+  result += 2; // '\r\n'
   return result;
 }

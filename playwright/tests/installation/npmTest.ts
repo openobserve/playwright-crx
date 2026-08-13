@@ -22,9 +22,10 @@ import debugLogger from 'debug';
 import { Registry }  from './registry';
 import type { CommonFixtures, CommonWorkerFixtures } from '../config/commonFixtures';
 import { commonFixtures } from '../config/commonFixtures';
-import { removeFolders } from '../../packages/playwright-core/lib/server/utils/fileUtils';
-import { spawnAsync } from '../../packages/playwright-core/lib/server/utils/spawnAsync';
+import { utils } from '../../packages/playwright-core/lib/coreBundle';
 import type { SpawnOptions } from 'child_process';
+
+const { removeFolders, spawnAsync } = utils;
 
 export const TMP_WORKSPACES = path.join(os.platform() === 'darwin' ? '/tmp' : os.tmpdir(), 'pwt', 'workspaces');
 
@@ -38,7 +39,7 @@ const expect = _expect.extend({
     const downloaded = new Set();
     let index = 0;
     while (true) {
-      const match = received.substring(index).match(/(chromium|chromium headless shell|firefox|webkit|winldd|ffmpeg)[\s\d\.]+\(?playwright build v\d+\)? downloaded/im);
+      const match = received.substring(index).match(/\(playwright (chromium|chromium-headless-shell|firefox|webkit|winldd|ffmpeg) v\d+\) downloaded/im);
       if (!match)
         break;
       downloaded.add(match[1].replace(/\s/g, '-').toLowerCase());
@@ -107,6 +108,8 @@ export const test = _test
         const npmLines = [
           `registry = ${registry.url()}/`,
           `cache = ${testInfo.outputPath('npm_cache')}`,
+          // Required after https://github.com/npm/cli/pull/8185.
+          'replace-registry-host=never',
         ];
         if (!allowGlobalInstall) {
           yarnLines.push(`prefix "${testInfo.outputPath('npm_global')}"`);
@@ -156,12 +159,11 @@ export const test = _test
       },
       exec: async ({ tmpWorkspace, _browsersPath, isolateBrowsers }, use, testInfo) => {
         await use(async (cmd: string, ...argsAndOrOptions: [] | [...string[]] | [...string[], ExecOptions] | [ExecOptions]) => {
-          let args: string[] = [];
           let options: ExecOptions = {};
           if (typeof argsAndOrOptions[argsAndOrOptions.length - 1] === 'object')
             options = argsAndOrOptions.pop() as ExecOptions;
 
-          args = argsAndOrOptions as string[];
+          const command = [cmd, ...argsAndOrOptions].join(' ');
 
           let result!: {stdout: string, stderr: string, code: number | null, error?: Error};
           const cwd = options.cwd ?? tmpWorkspace;
@@ -174,11 +176,10 @@ export const test = _test
             ...(isolateBrowsers ? { PLAYWRIGHT_BROWSERS_PATH: _browsersPath } : {}),
             ...options.env,
           };
-          await test.step(`exec: ${[cmd, ...args].join(' ')}`, async () => {
-            result = await spawnAsync(cmd, args, { shell: true, cwd, env });
+          await test.step(`exec: ${command}`, async () => {
+            result = await spawnAsync(command, { shell: true, cwd, env });
           });
 
-          const command = [cmd, ...args].join(' ');
           const stdio = result.stdout + result.stderr;
           const commandEnv = Object.entries(env).map(e => `${e[0]}=${e[1]}`).join(' ');
           const fullCommand = `cd ${cwd} && ${commandEnv} ${command}`;

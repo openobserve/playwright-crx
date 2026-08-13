@@ -16,21 +16,22 @@
 
 import fs from 'fs';
 import path from 'path';
-import url from 'url';
 import util from 'util';
 
-import { parseStackFrame, sanitizeForFilePath, calculateSha1, isRegExp, isString, stringifyStackFrames, escapeWithQuotes } from 'playwright-core/lib/utils';
-import { colors, debug, mime, minimatch } from 'playwright-core/lib/utilsBundle';
+import debug from 'debug';
+import mime from 'mime';
+import { minimatch } from 'minimatch';
+import { calculateSha1 } from '@utils/crypto';
+import { sanitizeForFilePath } from '@utils/fileUtils';
+import { isRegExp } from '@isomorphic/rtti';
+import { stringifyStackFrames, filteredStackTrace } from '@utils/stackTrace';
+import { ansiRegex, isString, stripAnsiEscapes } from '@isomorphic/stringUtils';
 
 import type { Location } from './../types/testReporter';
-import type { TestInfoErrorImpl } from './common/ipc';
-import type { StackFrame } from '@protocol/channels';
-import type { RawStack } from 'playwright-core/lib/utils';
+import type { TestInfoError } from './../types/test';
+import type { TestCase } from './common/test';
 
-const PLAYWRIGHT_TEST_PATH = path.join(__dirname, '..');
-const PLAYWRIGHT_CORE_PATH = path.dirname(require.resolve('playwright-core/package.json'));
-
-export function filterStackTrace(e: Error): { message: string, stack: string, cause?: ReturnType<typeof filterStackTrace> } {
+export function filterStackTrace(e: Error): TestInfoError {
   const name = e.name ? e.name + ': ' : '';
   const cause = e.cause instanceof Error ? filterStackTrace(e.cause) : undefined;
   if (process.env.PWDEBUGIMPL)
@@ -44,28 +45,7 @@ export function filterStackTrace(e: Error): { message: string, stack: string, ca
   };
 }
 
-export function filterStackFile(file: string) {
-  if (!process.env.PWDEBUGIMPL && file.startsWith(PLAYWRIGHT_TEST_PATH))
-    return false;
-  if (!process.env.PWDEBUGIMPL && file.startsWith(PLAYWRIGHT_CORE_PATH))
-    return false;
-  return true;
-}
-
-export function filteredStackTrace(rawStack: RawStack): StackFrame[] {
-  const frames: StackFrame[] = [];
-  for (const line of rawStack) {
-    const frame = parseStackFrame(line, path.sep, !!process.env.PWDEBUGIMPL);
-    if (!frame || !frame.file)
-      continue;
-    if (!filterStackFile(frame.file))
-      continue;
-    frames.push(frame);
-  }
-  return frames;
-}
-
-export function serializeError(error: Error | any): TestInfoErrorImpl {
+export function serializeError(error: Error | any): TestInfoError {
   if (error instanceof Error)
     return filterStackTrace(error);
   return {
@@ -74,28 +54,15 @@ export function serializeError(error: Error | any): TestInfoErrorImpl {
 }
 
 export type Matcher = (value: string) => boolean;
+export type TestCaseFilter = (test: TestCase) => boolean;
 
-export type TestFileFilter = {
-  re?: RegExp;
-  exact?: string;
-  line: number | null;
-  column: number | null;
-};
-
-export function createFileFiltersFromArguments(args: string[]): TestFileFilter[] {
-  return args.map(arg => {
-    const match = /^(.*?):(\d+):?(\d+)?$/.exec(arg);
-    return {
-      re: forceRegExp(match ? match[1] : arg),
-      line: match ? parseInt(match[2], 10) : null,
-      column: match?.[3] ? parseInt(match[3], 10) : null,
-    };
-  });
-}
-
-export function createFileMatcherFromArguments(args: string[]): Matcher {
-  const filters = createFileFiltersFromArguments(args);
-  return createFileMatcher(filters.map(filter => filter.re || filter.exact || ''));
+export function parseLocationArg(arg: string): { file: string, line: number | null, column: number | null } {
+  const match = /^(.*?):(\d+):?(\d+)?$/.exec(arg);
+  return {
+    file: match ? match[1] : arg,
+    line: match ? parseInt(match[2], 10) : null,
+    column: match?.[3] ? parseInt(match[3], 10) : null,
+  };
 }
 
 export function createFileMatcher(patterns: string | RegExp | (string | RegExp)[]): Matcher {
@@ -118,12 +85,12 @@ export function createFileMatcher(patterns: string | RegExp | (string | RegExp)[
         return true;
     }
     // Windows might still receive unix style paths from Cygwin or Git Bash.
-    // Check against the file url as well.
+    // Check against the forward-slash form as well.
     if (path.sep === '\\') {
-      const fileURL = url.pathToFileURL(filePath).href;
+      const unixPath = filePath.split(path.sep).join('/');
       for (const re of reList) {
         re.lastIndex = 0;
-        if (re.test(fileURL))
+        if (re.test(unixPath))
           return true;
       }
     }
@@ -147,7 +114,7 @@ export function createTitleMatcher(patterns: RegExp | RegExp[]): Matcher {
   };
 }
 
-export function mergeObjects<A extends object, B extends object, C extends object>(a: A | undefined | void, b: B | undefined | void, c: B | undefined | void): A & B & C {
+export function mergeObjects<A extends object, B extends object, C extends object>(a: A | undefined | void, b: B | undefined | void, c: C | undefined | void): A & B & C {
   const result = { ...a } as any;
   for (const x of [b, c].filter(Boolean)) {
     for (const [name, value] of Object.entries(x as any)) {
@@ -179,26 +146,17 @@ export function errorWithFile(file: string, message: string) {
   return new Error(`${relativeFilePath(file)}: ${message}`);
 }
 
-export function expectTypes(receiver: any, types: string[], matcherName: string) {
-  if (typeof receiver !== 'object' || !types.includes(receiver.constructor.name)) {
+export function expectTypes(receiver: any, types: ('APIResponse' | 'Page' | 'Locator')[], matcherName: string) {
+  if (typeof receiver !== 'object' || !types.includes(receiver._apiName)) {
+    const receiverString = typeof receiver === 'object' && receiver !== null ? `${receiver.constructor.name} ${util.inspect(receiver)}` : String(receiver);
     const commaSeparated = types.slice();
     const lastType = commaSeparated.pop();
     const typesString = commaSeparated.length ? commaSeparated.join(', ') + ' or ' + lastType : lastType;
-    throw new Error(`${matcherName} can be only used with ${typesString} object${types.length > 1 ? 's' : ''}`);
+    throw new Error(`${matcherName} can be only used with ${typesString} object${types.length > 1 ? 's' : ''}, was called with ${receiverString}`);
   }
 }
 
 export const windowsFilesystemFriendlyLength = 60;
-
-export function trimLongString(s: string, length = 100) {
-  if (s.length <= length)
-    return s;
-  const hash = calculateSha1(s);
-  const middle = `-${hash.substring(0, 5)}-`;
-  const start = Math.floor((length - middle.length) / 2);
-  const end = length - middle.length - start;
-  return s.substring(0, start) + middle + s.slice(-end);
-}
 
 export function addSuffixToFilePath(filePath: string, suffix: string): string {
   const ext = path.extname(filePath);
@@ -223,15 +181,6 @@ export function getContainedPath(parentPath: string, subPath: string = ''): stri
 }
 
 export const debugTest = debug('pw:test');
-
-export const callLogText = (log: string[] | undefined) => {
-  if (!log || !log.some(l => !!l))
-    return '';
-  return `
-Call log:
-${colors.dim(log.join('\n'))}
-`;
-};
 
 const folderToPackageJsonPath = new Map<string, string>();
 
@@ -297,12 +246,23 @@ export function fileIsModule(file: string): boolean {
   return folderIsModule(folder);
 }
 
+const packageJsonIsModuleCache = new Map<string, boolean>();
+
 function folderIsModule(folder: string): boolean {
   const packageJsonPath = getPackageJsonPath(folder);
   if (!packageJsonPath)
     return false;
-  // Rely on `require` internal caching logic.
-  return require(packageJsonPath).type === 'module';
+  // Note: do not `require()` the package.json here to avoid running
+  // our resolve hook from inside itself.
+  if (!packageJsonIsModuleCache.has(packageJsonPath)) {
+    let isModule = false;
+    try {
+      isModule = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')).type === 'module';
+    } catch {
+    }
+    packageJsonIsModuleCache.set(packageJsonPath, isModule);
+  }
+  return packageJsonIsModuleCache.get(packageJsonPath)!;
 }
 
 const packageJsonMainFieldCache = new Map<string, string | undefined>();
@@ -415,27 +375,12 @@ export async function removeDirAndLogToConsole(dir: string) {
   }
 }
 
-export const ansiRegex = new RegExp('([\\u001B\\u009B][[\\]()#;?]*(?:(?:(?:[a-zA-Z\\d]*(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~])))', 'g');
-export function stripAnsiEscapes(str: string): string {
-  return str.replace(ansiRegex, '');
-}
-
-export type TestStepCategory = 'expect' | 'fixture' | 'hook' | 'pw:api' | 'test.step' | 'test.attach';
-
-export function stepTitle(category: TestStepCategory, title: string): string {
-  switch (category) {
-    case 'fixture':
-      return `Fixture ${escapeWithQuotes(title, '"')}`;
-    case 'expect':
-      return `Expect ${escapeWithQuotes(title, '"')}`;
-    case 'test.step':
-      return title;
-    case 'test.attach':
-      return `Attach ${escapeWithQuotes(title, '"')}`;
-    case 'hook':
-    case 'pw:api':
-      return title;
-    default:
-      return `[${category}] ${title}`;
+export function takeFirst<T>(...args: (T | undefined)[]): T {
+  for (const arg of args) {
+    if (arg !== undefined)
+      return arg;
   }
+  return undefined as any as T;
 }
+
+export { ansiRegex, stripAnsiEscapes };

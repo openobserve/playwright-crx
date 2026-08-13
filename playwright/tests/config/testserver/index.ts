@@ -20,12 +20,13 @@ import type http from 'http';
 import mime from 'mime';
 import type net from 'net';
 import path from 'path';
-import url from 'url';
 import util from 'util';
 import type stream from 'stream';
-import ws from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
 import zlib, { gzip } from 'zlib';
-import { createHttpServer, createHttpsServer } from '../../../packages/playwright-core/lib/server/utils/network';
+import { utils } from '../../../packages/playwright-core/lib/coreBundle';
+
+const { createHttpServer, createHttpsServer } = utils;
 
 const fulfillSymbol = Symbol('fulfil callback');
 const rejectSymbol = Symbol('reject callback');
@@ -37,14 +38,16 @@ type UpgradeActions = {
   socket: stream.Duplex;
 };
 
+type IncomingMessageWithBody = http.IncomingMessage & { postBody: Promise<Buffer> };
+
 export class TestServer {
   private _server: http.Server;
-  private _wsServer: ws.WebSocketServer;
+  private _wsServer: WebSocketServer;
   private _dirPath: string;
   readonly debugServer: any;
   private _startTime: Date;
   private _cachedPathPrefix: string | null;
-  private _routes = new Map<string, (arg0: http.IncomingMessage, arg1: http.ServerResponse) => any>();
+  private _routes = new Map<string, (arg0: IncomingMessageWithBody, arg1: http.ServerResponse) => any>();
   private _auths = new Map<string, { username: string; password: string; }>();
   private _csp = new Map<string, string>();
   private _extraHeaders = new Map<string, object>();
@@ -55,6 +58,9 @@ export class TestServer {
   readonly PREFIX: string;
   readonly CROSS_PROCESS_PREFIX: string;
   readonly EMPTY_PAGE: string;
+  readonly HOST: string;
+  readonly HOSTNAME: string;
+  readonly HELLO_WORLD: string;
 
   static async create(dirPath: string, port: number, loopback?: string): Promise<TestServer> {
     const server = new TestServer(dirPath, port, loopback);
@@ -62,12 +68,16 @@ export class TestServer {
     return server;
   }
 
-  static async createHTTPS(dirPath: string, port: number, loopback?: string): Promise<TestServer> {
-    const server = new TestServer(dirPath, port, loopback, {
+  static async certOptions() {
+    return {
       key: await fs.promises.readFile(path.join(__dirname, 'key.pem')),
       cert: await fs.promises.readFile(path.join(__dirname, 'cert.pem')),
       passphrase: 'aaaa',
-    });
+    };
+  }
+
+  static async createHTTPS(dirPath: string, port: number, loopback?: string): Promise<TestServer> {
+    const server = new TestServer(dirPath, port, loopback, await this.certOptions());
     await server.waitUntilReady();
     return server;
   }
@@ -78,7 +88,7 @@ export class TestServer {
     else
       this._server = createHttpServer(this._onRequest.bind(this));
     this._server.on('connection', socket => this._onSocket(socket));
-    this._wsServer = new ws.WebSocketServer({ noServer: true });
+    this._wsServer = new WebSocketServer({ noServer: true });
     this._server.on('upgrade', async (request, socket, head) => {
       const doUpgrade = () => {
         this._wsServer.handleUpgrade(request, socket, head, ws => {
@@ -90,7 +100,7 @@ export class TestServer {
         this._upgradeCallback({ doUpgrade, socket });
         return;
       }
-      const pathname = url.parse(request.url!).path;
+      const pathname = new URL(request.url, 'http://localhost').pathname;
       if (pathname === '/ws-401') {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\nUnauthorized body');
         socket.destroy();
@@ -119,6 +129,9 @@ export class TestServer {
     this.PREFIX = `${protocol}://${same_origin}:${port}`;
     this.CROSS_PROCESS_PREFIX = `${protocol}://${cross_origin}:${port}`;
     this.EMPTY_PAGE = `${protocol}://${same_origin}:${port}/empty.html`;
+    this.HOST = new URL(this.EMPTY_PAGE).host;
+    this.HOSTNAME = new URL(this.EMPTY_PAGE).hostname;
+    this.HELLO_WORLD = `${this.PREFIX}/hello-world`;
   }
 
   async waitUntilReady() {
@@ -162,7 +175,14 @@ export class TestServer {
     await new Promise(x => this._server.close(x));
   }
 
-  setRoute(path: string, handler: (arg0: http.IncomingMessage & { postBody: Promise<Buffer> }, arg1: http.ServerResponse) => any) {
+  setContent(path: string, content: string, mimeType: string) {
+    this.setRoute(path, (req, res) => {
+      res.writeHead(200, { 'Content-Type': mimeType });
+      res.end(mimeType === 'text/html' ? `<!DOCTYPE html>${content}` : content);
+    });
+  }
+
+  setRoute(path: string, handler: (arg0: IncomingMessageWithBody, arg1: http.ServerResponse) => any) {
     this._routes.set(path, handler);
   }
 
@@ -174,17 +194,19 @@ export class TestServer {
     });
   }
 
-  waitForRequest(path: string): Promise<http.IncomingMessage & { postBody: Promise<Buffer> }> {
+  waitForRequest(path: string): Promise<IncomingMessageWithBody> {
     let promise = this._requestSubscribers.get(path);
     if (promise)
       return promise;
-    let fulfill, reject;
+    let fulfill;
+    let reject;
     promise = new Promise((f, r) => {
       fulfill = f;
       reject = r;
     });
     promise[fulfillSymbol] = fulfill;
-    promise[rejectSymbol] = reject;
+    const error = new Error(`Request ${path} was not received before the test finished.`);
+    promise[rejectSymbol] = () => reject(error);
     this._requestSubscribers.set(path, promise);
     return promise;
   }
@@ -198,9 +220,8 @@ export class TestServer {
     this._upgradeCallback = undefined;
     this._wsServer.removeAllListeners('connection');
     this._server.closeAllConnections();
-    const error = new Error('Static Server has been reset');
     for (const subscriber of this._requestSubscribers.values())
-      subscriber[rejectSymbol].call(null, error);
+      subscriber[rejectSymbol].call(null);
     this._requestSubscribers.clear();
   }
 
@@ -218,10 +239,11 @@ export class TestServer {
       });
       request.on('end', () => resolve(Buffer.concat(chunks)));
     });
-    const path = url.parse(request.url!).path;
-    this.debugServer(`request ${request.method} ${path}`);
-    if (this._auths.has(path)) {
-      const auth = this._auths.get(path)!;
+    const url = new URL(request.url, 'http://localhost');
+    const pathWithSearch = url.pathname + url.search;
+    this.debugServer(`request ${request.method} ${pathWithSearch}`);
+    if (this._auths.has(pathWithSearch)) {
+      const auth = this._auths.get(pathWithSearch)!;
       const credentials = Buffer.from((request.headers.authorization || '').split(' ')[1] || '', 'base64').toString();
       this.debugServer(`request credentials ${credentials}`);
       this.debugServer(`actual credentials ${auth.username}:${auth.password}`);
@@ -233,13 +255,13 @@ export class TestServer {
       }
     }
     // Notify request subscriber.
-    if (this._requestSubscribers.has(path)) {
-      this._requestSubscribers.get(path)![fulfillSymbol].call(null, request);
-      this._requestSubscribers.delete(path);
+    if (this._requestSubscribers.has(pathWithSearch)) {
+      this._requestSubscribers.get(pathWithSearch)![fulfillSymbol].call(null, request);
+      this._requestSubscribers.delete(pathWithSearch);
     }
-    const handler = this._routes.get(path);
+    const handler = this._routes.get(pathWithSearch);
     if (handler)
-      handler.call(null, request, response);
+      handler.call(null, request as IncomingMessageWithBody, response);
     else
       this.serveFile(request, response);
   }
@@ -251,7 +273,7 @@ export class TestServer {
   }
 
   private async _serveFile(request: http.IncomingMessage, response: http.ServerResponse, filePath?: string): Promise<void> {
-    let pathName = url.parse(request.url!).path;
+    let pathName = new URL(request.url, 'http://localhost').pathname;
     if (!filePath) {
       if (pathName === '/')
         pathName = '/index.html';
@@ -304,7 +326,7 @@ export class TestServer {
     }
   }
 
-  onceWebSocketConnection(handler: (socket: ws.WebSocket, request: http.IncomingMessage) => void) {
+  onceWebSocketConnection(handler: (socket: WebSocket, request: http.IncomingMessage) => void) {
     this._wsServer.once('connection', handler);
   }
 
@@ -319,7 +341,7 @@ export class TestServer {
   }
 
   waitForWebSocket() {
-    return new Promise<ws.WebSocket>(fulfill => this._wsServer.once('connection', (ws, req) => fulfill(ws)));
+    return new Promise<WebSocket>(fulfill => this._wsServer.once('connection', (ws, req) => fulfill(ws)));
   }
 
   sendOnWebSocketConnection(data) {

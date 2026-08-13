@@ -16,6 +16,11 @@
 import { test, expect } from './npmTest';
 import { chromium } from '@playwright/test';
 import path from 'path';
+import http from 'http';
+import https from 'https';
+import { Writable } from 'stream';
+import { TestProxy } from '../config/proxy';
+import { TestServer } from '../config/testserver';
 
 test.use({ isolateBrowsers: true });
 
@@ -38,7 +43,6 @@ test('install command should work', async ({ exec, checkInstalledSoftwareOnDisk 
 
   await test.step('playwright install --list', async () => {
     const result = await exec('npx playwright install --list');
-    console.log('result', result);
     expect.soft(result).toMatch(/Playwright version: \d+\.\d+/);
     expect.soft(result).toMatch(/chromium-\d+/);
     expect.soft(result).toMatch(/chromium_headless_shell-\d+/);
@@ -61,12 +65,111 @@ test('install command should work', async ({ exec, checkInstalledSoftwareOnDisk 
   }
 });
 
+test('install command should suppress progress bar with --no-progress', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41099' } }, async ({ exec, checkInstalledSoftwareOnDisk }) => {
+  await exec('npm i playwright');
+  const result = await exec('npx playwright install chromium --no-progress');
+  expect(result).toHaveLoggedSoftwareDownload(['chromium', 'chromium-headless-shell', 'ffmpeg', ...extraInstalledSoftware]);
+  await checkInstalledSoftwareOnDisk(['chromium', 'chromium-headless-shell', 'ffmpeg', ...extraInstalledSoftware]);
+  expect(result).not.toContain('% of');
+  expect(result).not.toContain('■');
+});
+
+test('install command should suppress progress bar with PLAYWRIGHT_DOWNLOAD_NO_PROGRESS', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41099' } }, async ({ exec, checkInstalledSoftwareOnDisk }) => {
+  await exec('npm i playwright');
+  const result = await exec('npx playwright install chromium', { env: { PLAYWRIGHT_DOWNLOAD_NO_PROGRESS: '1' } });
+  expect(result).toHaveLoggedSoftwareDownload(['chromium', 'chromium-headless-shell', 'ffmpeg', ...extraInstalledSoftware]);
+  await checkInstalledSoftwareOnDisk(['chromium', 'chromium-headless-shell', 'ffmpeg', ...extraInstalledSoftware]);
+  expect(result).not.toContain('% of');
+  expect(result).not.toContain('■');
+});
+
+test('install command should work with HTTPS_PROXY', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36650' } }, async ({ exec, checkInstalledSoftwareOnDisk }) => {
+  await exec('npm i playwright');
+  const proxy = await TestProxy.create(8947 + test.info().workerIndex * 4);
+  proxy.forwardTo(443, { preserveHostname: true });
+  await test.step('playwright install chromium', async () => {
+    const result = await exec('npx playwright install chromium', {
+      env: {
+        HTTPS_PROXY: proxy.URL,
+      }
+    });
+    expect(result).toHaveLoggedSoftwareDownload(['chromium', 'chromium-headless-shell', 'ffmpeg', ...extraInstalledSoftware]);
+    await checkInstalledSoftwareOnDisk(['chromium', 'chromium-headless-shell', 'ffmpeg', ...extraInstalledSoftware]);
+  });
+  await proxy.stop();
+});
+
+test('install command should work with mirror that uses chunked encoding', async ({ exec, checkInstalledSoftwareOnDisk }) => {
+  await exec('npm i playwright');
+  const server = http.createServer(async (req, res) => {
+    try {
+      const upstream = await fetch('https://cdn.playwright.dev' + req.url);
+      const headers = new Headers(upstream.headers);
+      headers.delete('content-length');
+      res.writeHead(upstream.status, Object.fromEntries(headers));
+      await upstream.body.pipeTo(Writable.toWeb(res));
+      return;
+    } catch (e) {
+      console.error(e);
+      res.statusCode = 500;
+      res.end(String(e));
+      return;
+    }
+  });
+  await new Promise<void>(resolve => server.listen(0, resolve));
+  const result = await exec('npx playwright install chromium', {
+    env: {
+      PLAYWRIGHT_DOWNLOAD_HOST: `http://localhost:${(server.address() as any).port}`,
+    }
+  });
+  expect(result).toHaveLoggedSoftwareDownload(['chromium', 'chromium-headless-shell', 'ffmpeg', ...extraInstalledSoftware]);
+  await checkInstalledSoftwareOnDisk(['chromium', 'chromium-headless-shell', 'ffmpeg', ...extraInstalledSoftware]);
+  server.close();
+});
+
+test('install command should ignore HTTP_PROXY', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36412' } }, async ({ exec, checkInstalledSoftwareOnDisk }) => {
+  await exec('npm i playwright');
+  await test.step('playwright install chromium', async () => {
+    const result = await exec('npx playwright install chromium', {
+      env: {
+        HTTP_PROXY: 'unused',
+      },
+    });
+    expect(result).toHaveLoggedSoftwareDownload(['chromium', 'chromium-headless-shell', 'ffmpeg', ...extraInstalledSoftware]);
+    await checkInstalledSoftwareOnDisk(['chromium', 'chromium-headless-shell', 'ffmpeg', ...extraInstalledSoftware]);
+  });
+});
+
+test('install command should work with HTTPS proxy for HTTP downloads', async ({ exec }) => {
+  await exec('npm i playwright');
+  const httpsProxyServer = https.createServer(await TestServer.certOptions());
+
+  let requestCount = 0;
+  httpsProxyServer.on('request', (_req, res) => {
+    requestCount++;
+    res.statusCode = 502;
+    res.end();
+  });
+
+  await new Promise<void>(resolve => httpsProxyServer.listen(0, resolve));
+  await exec('npx playwright install chromium', {
+    env: {
+      PLAYWRIGHT_DOWNLOAD_HOST: 'http://example.com',
+      ALL_PROXY: `https://localhost:${(httpsProxyServer.address() as any).port}`,
+      NODE_TLS_REJECT_UNAUTHORIZED: '0',
+    },
+    expectToExitWithError: true,
+  });
+  expect(requestCount).toBeGreaterThan(0);
+  httpsProxyServer.close();
+});
+
 test('should be able to remove browsers', async ({ exec, checkInstalledSoftwareOnDisk }) => {
   await exec('npm i playwright');
   await exec('npx playwright install chromium');
   await checkInstalledSoftwareOnDisk(['chromium', 'chromium-headless-shell', 'ffmpeg', ...extraInstalledSoftware]);
   await exec('npx playwright uninstall');
-  await checkInstalledSoftwareOnDisk([...extraInstalledSoftware]);
+  await checkInstalledSoftwareOnDisk([]);
 });
 
 test('should print the right install command without browsers', async ({ exec }) => {

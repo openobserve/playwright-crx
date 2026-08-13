@@ -1,7 +1,7 @@
 /**
  * Copyright (c) Microsoft Corporation.
  *
- * Licensed under the Apache License, Version 2.0 (the 'License");
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -14,23 +14,29 @@
  * limitations under the License.
  */
 
+import { eventsHelper } from '@utils/eventsHelper';
 import { BrowserContextDispatcher } from './browserContextDispatcher';
 import { Dispatcher } from './dispatcher';
 import { AndroidDevice } from '../android/android';
+import { SdkObject } from '../instrumentation';
 
 import type { RootDispatcher } from './dispatcher';
 import type { Android, SocketBackend } from '../android/android';
-import type { CallMetadata } from '../instrumentation';
-import type * as channels from '@protocol/channels';
+import type * as channels from '../channels';
+import type { Progress } from '../progress';
 
 export class AndroidDispatcher extends Dispatcher<Android, channels.AndroidChannel, RootDispatcher> implements channels.AndroidChannel {
   _type_Android = true;
-  constructor(scope: RootDispatcher, android: Android) {
+  private readonly _denyLaunch: boolean;
+  constructor(scope: RootDispatcher, android: Android, denyLaunch: boolean) {
     super(scope, android, 'Android', {});
+    this._denyLaunch = denyLaunch;
   }
 
-  async devices(params: channels.AndroidDevicesParams): Promise<channels.AndroidDevicesResult> {
-    const devices = await this._object.devices(params);
+  async devices(params: channels.AndroidDevicesParams, progress: Progress): Promise<channels.AndroidDevicesResult> {
+    if (this._denyLaunch)
+      throw new Error(`Connecting to Android devices is not allowed.`);
+    const devices = await this._object.devices(progress, params);
     return {
       devices: devices.map(d => AndroidDeviceDispatcher.from(this, d))
     };
@@ -38,7 +44,6 @@ export class AndroidDispatcher extends Dispatcher<Android, channels.AndroidChann
 }
 
 export class AndroidDeviceDispatcher extends Dispatcher<AndroidDevice, channels.AndroidDeviceChannel, AndroidDispatcher> implements channels.AndroidDeviceChannel {
-  _type_EventTarget = true;
   _type_AndroidDevice = true;
 
   static from(scope: AndroidDispatcher, device: AndroidDevice): AndroidDeviceDispatcher {
@@ -55,57 +60,57 @@ export class AndroidDeviceDispatcher extends Dispatcher<AndroidDevice, channels.
       this._dispatchEvent('webViewAdded', { webView });
     this.addObjectListener(AndroidDevice.Events.WebViewAdded, webView => this._dispatchEvent('webViewAdded', { webView }));
     this.addObjectListener(AndroidDevice.Events.WebViewRemoved, socketName => this._dispatchEvent('webViewRemoved', { socketName }));
-    this.addObjectListener(AndroidDevice.Events.Close, socketName => this._dispatchEvent('close'));
+    this.addObjectListener(AndroidDevice.Events.Close, () => this._dispatchEvent('close'));
   }
 
-  async wait(params: channels.AndroidDeviceWaitParams) {
-    await this._object.send('wait', params);
+  async wait(params: channels.AndroidDeviceWaitParams, progress: Progress) {
+    await this._object.send(progress, 'wait', params);
   }
 
-  async fill(params: channels.AndroidDeviceFillParams) {
-    await this._object.send('click', { selector: params.androidSelector });
-    await this._object.send('fill', params);
+  async fill(params: channels.AndroidDeviceFillParams, progress: Progress) {
+    await this._object.send(progress, 'click', { selector: params.androidSelector });
+    await this._object.send(progress, 'fill', params);
   }
 
-  async tap(params: channels.AndroidDeviceTapParams) {
-    await this._object.send('click', params);
+  async tap(params: channels.AndroidDeviceTapParams, progress: Progress) {
+    await this._object.send(progress, 'click', params);
   }
 
-  async drag(params: channels.AndroidDeviceDragParams) {
-    await this._object.send('drag', params);
+  async drag(params: channels.AndroidDeviceDragParams, progress: Progress) {
+    await this._object.send(progress, 'drag', params);
   }
 
-  async fling(params: channels.AndroidDeviceFlingParams) {
-    await this._object.send('fling', params);
+  async fling(params: channels.AndroidDeviceFlingParams, progress: Progress) {
+    await this._object.send(progress, 'fling', params);
   }
 
-  async longTap(params: channels.AndroidDeviceLongTapParams) {
-    await this._object.send('longClick', params);
+  async longTap(params: channels.AndroidDeviceLongTapParams, progress: Progress) {
+    await this._object.send(progress, 'longClick', params);
   }
 
-  async pinchClose(params: channels.AndroidDevicePinchCloseParams) {
-    await this._object.send('pinchClose', params);
+  async pinchClose(params: channels.AndroidDevicePinchCloseParams, progress: Progress) {
+    await this._object.send(progress, 'pinchClose', params);
   }
 
-  async pinchOpen(params: channels.AndroidDevicePinchOpenParams) {
-    await this._object.send('pinchOpen', params);
+  async pinchOpen(params: channels.AndroidDevicePinchOpenParams, progress: Progress) {
+    await this._object.send(progress, 'pinchOpen', params);
   }
 
-  async scroll(params: channels.AndroidDeviceScrollParams) {
-    await this._object.send('scroll', params);
+  async scroll(params: channels.AndroidDeviceScrollParams, progress: Progress) {
+    await this._object.send(progress, 'scroll', params);
   }
 
-  async swipe(params: channels.AndroidDeviceSwipeParams) {
-    await this._object.send('swipe', params);
+  async swipe(params: channels.AndroidDeviceSwipeParams, progress: Progress) {
+    await this._object.send(progress, 'swipe', params);
   }
 
-  async info(params: channels.AndroidDeviceTapParams): Promise<channels.AndroidDeviceInfoResult> {
-    const info = await this._object.send('info', params);
+  async info(params: channels.AndroidDeviceInfoParams, progress: Progress): Promise<channels.AndroidDeviceInfoResult> {
+    const info = await this._object.send(progress, 'info', params);
     fixupAndroidElementInfo(info);
     return { info };
   }
 
-  async inputType(params: channels.AndroidDeviceInputTypeParams) {
+  async inputType(params: channels.AndroidDeviceInputTypeParams, progress: Progress) {
     const text = params.text;
     const keyCodes: number[] = [];
     for (let i = 0; i < text.length; ++i) {
@@ -114,66 +119,91 @@ export class AndroidDeviceDispatcher extends Dispatcher<AndroidDevice, channels.
         throw new Error('No mapping for ' + text[i] + ' found');
       keyCodes.push(code);
     }
-    await Promise.all(keyCodes.map(keyCode => this._object.send('inputPress', { keyCode })));
+    await progress.race(Promise.all(keyCodes.map(keyCode => this._object.send(progress, 'inputPress', { keyCode }))));
   }
 
-  async inputPress(params: channels.AndroidDeviceInputPressParams) {
+  async inputPress(params: channels.AndroidDeviceInputPressParams, progress: Progress) {
     if (!keyMap.has(params.key))
       throw new Error('Unknown key: ' + params.key);
-    await this._object.send('inputPress', { keyCode: keyMap.get(params.key) });
+    await this._object.send(progress, 'inputPress', { keyCode: keyMap.get(params.key) });
   }
 
-  async inputTap(params: channels.AndroidDeviceInputTapParams) {
-    await this._object.send('inputClick', params);
+  async inputTap(params: channels.AndroidDeviceInputTapParams, progress: Progress) {
+    await this._object.send(progress, 'inputClick', params);
   }
 
-  async inputSwipe(params: channels.AndroidDeviceInputSwipeParams) {
-    await this._object.send('inputSwipe', params);
+  async inputSwipe(params: channels.AndroidDeviceInputSwipeParams, progress: Progress) {
+    await this._object.send(progress, 'inputSwipe', params);
   }
 
-  async inputDrag(params: channels.AndroidDeviceInputDragParams) {
-    await this._object.send('inputDrag', params);
+  async inputDrag(params: channels.AndroidDeviceInputDragParams, progress: Progress) {
+    await this._object.send(progress, 'inputDrag', params);
   }
 
-  async screenshot(params: channels.AndroidDeviceScreenshotParams): Promise<channels.AndroidDeviceScreenshotResult> {
-    return { binary: await this._object.screenshot() };
+  async screenshot(params: channels.AndroidDeviceScreenshotParams, progress: Progress): Promise<channels.AndroidDeviceScreenshotResult> {
+    return { binary: await this._object.screenshot(progress) };
   }
 
-  async shell(params: channels.AndroidDeviceShellParams): Promise<channels.AndroidDeviceShellResult> {
-    return { result: await this._object.shell(params.command) };
+  async shell(params: channels.AndroidDeviceShellParams, progress: Progress): Promise<channels.AndroidDeviceShellResult> {
+    return { result: await this._object.shell(progress, params.command) };
   }
 
-  async open(params: channels.AndroidDeviceOpenParams, metadata: CallMetadata): Promise<channels.AndroidDeviceOpenResult> {
-    const socket = await this._object.open(params.command);
-    return { socket: new AndroidSocketDispatcher(this, socket) };
+  async open(params: channels.AndroidDeviceOpenParams, progress: Progress): Promise<channels.AndroidDeviceOpenResult> {
+    const socket = await this._object.open(progress, params.command);
+    return { socket: new AndroidSocketDispatcher(this, new SocketSdkObject(this._object, socket)) };
   }
 
-  async installApk(params: channels.AndroidDeviceInstallApkParams) {
-    await this._object.installApk(params.file, { args: params.args });
+  async installApk(params: channels.AndroidDeviceInstallApkParams, progress: Progress) {
+    await this._object.installApk(progress, params.file, { args: params.args });
   }
 
-  async push(params: channels.AndroidDevicePushParams) {
-    await this._object.push(params.file, params.path, params.mode);
+  async push(params: channels.AndroidDevicePushParams, progress: Progress) {
+    await this._object.push(progress, params.file, params.path, params.mode);
   }
 
-  async launchBrowser(params: channels.AndroidDeviceLaunchBrowserParams): Promise<channels.AndroidDeviceLaunchBrowserResult> {
-    const context = await this._object.launchBrowser(params.pkg, params);
+  async launchBrowser(params: channels.AndroidDeviceLaunchBrowserParams, progress: Progress): Promise<channels.AndroidDeviceLaunchBrowserResult> {
+    const context = await this._object.launchBrowser(progress, params.pkg, params);
     return { context: BrowserContextDispatcher.from(this, context) };
   }
 
-  async close(params: channels.AndroidDeviceCloseParams) {
-    await this._object.close();
+  async close(params: channels.AndroidDeviceCloseParams, progress: Progress) {
+    await this._object.close(progress);
   }
 
-  async connectToWebView(params: channels.AndroidDeviceConnectToWebViewParams): Promise<channels.AndroidDeviceConnectToWebViewResult> {
-    return { context: BrowserContextDispatcher.from(this, await this._object.connectToWebView(params.socketName)) };
+  async connectToWebView(params: channels.AndroidDeviceConnectToWebViewParams, progress: Progress): Promise<channels.AndroidDeviceConnectToWebViewResult> {
+    return { context: BrowserContextDispatcher.from(this, await this._object.connectToWebView(progress, params.socketName)) };
   }
 }
 
-export class AndroidSocketDispatcher extends Dispatcher<SocketBackend, channels.AndroidSocketChannel, AndroidDeviceDispatcher> implements channels.AndroidSocketChannel {
+class SocketSdkObject extends SdkObject implements SocketBackend {
+  private _socket: SocketBackend;
+  private _eventListeners;
+
+  constructor(parent: SdkObject, socket: SocketBackend) {
+    super(parent, 'socket');
+    this._socket = socket;
+    this._eventListeners = [
+      eventsHelper.addEventListener(socket, 'data', data => this.emit('data', data)),
+      eventsHelper.addEventListener(socket, 'close', () => {
+        eventsHelper.removeEventListeners(this._eventListeners);
+        this.emit('close');
+      }),
+    ];
+  }
+
+  async write(data: Buffer) {
+    await this._socket.write(data);
+  }
+
+  close() {
+    this._socket.close();
+  }
+}
+
+export class AndroidSocketDispatcher extends Dispatcher<SocketSdkObject, channels.AndroidSocketChannel, AndroidDeviceDispatcher> implements channels.AndroidSocketChannel {
   _type_AndroidSocket = true;
 
-  constructor(scope: AndroidDeviceDispatcher, socket: SocketBackend) {
+  constructor(scope: AndroidDeviceDispatcher, socket: SocketSdkObject) {
     super(scope, socket, 'AndroidSocket', {});
     this.addObjectListener('data', (data: Buffer) => this._dispatchEvent('data', { data }));
     this.addObjectListener('close', () => {
@@ -182,11 +212,11 @@ export class AndroidSocketDispatcher extends Dispatcher<SocketBackend, channels.
     });
   }
 
-  async write(params: channels.AndroidSocketWriteParams, metadata: CallMetadata): Promise<void> {
-    await this._object.write(params.data);
+  async write(params: channels.AndroidSocketWriteParams, progress: Progress): Promise<void> {
+    await progress.race(this._object.write(params.data));
   }
 
-  async close(params: channels.AndroidSocketCloseParams, metadata: CallMetadata): Promise<void> {
+  async close(params: channels.AndroidSocketCloseParams, progress: Progress): Promise<void> {
     this._object.close();
   }
 }
@@ -292,10 +322,27 @@ const keyMap = new Map<string, number>([
   ['Menu', 82],
   ['Notification', 83],
   ['Search', 84],
+  ['MediaPlayPause', 85],
+  ['MediaStop', 86],
+  ['MediaNext', 87],
+  ['MediaPrevious', 88],
+  ['MediaRewind', 89],
+  ['MediaFastForward', 90],
+  ['MediaPlay', 126],
+  ['MediaPause', 127],
+  ['MediaClose', 128],
+  ['MediaEject', 129],
+  ['MediaRecord', 130],
   ['ChannelUp', 166],
   ['ChannelDown', 167],
   ['AppSwitch', 187],
   ['Assist', 219],
+  ['MediaAudioTrack', 222],
+  ['MediaTopMenu', 226],
+  ['MediaSkipForward', 272],
+  ['MediaSkipBackward', 273],
+  ['MediaStepForward', 274],
+  ['MediaStepBackward', 275],
   ['Cut', 277],
   ['Copy', 278],
   ['Paste', 279],

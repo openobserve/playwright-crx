@@ -17,16 +17,31 @@
  * Maps Playwright's ActionInContext[] to BrowserStep[] for the synthetics recorder.
  */
 
-import type { ActionInContext, Action } from '@recorder/actions';
+import type { ActionInContext, Action } from '@isomorphic/codegen/actions';
 import { buildLocatorBundle, effectiveSelector } from './locatorBundle';
 import type { StepLocator } from './locatorBundle';
 import { generalizeUrlPattern } from './urlPattern';
 import type { SettleResponsePattern } from './networkCapture';
 
 export type BrowserStepAction =
-  'navigate' | 'openPage' | 'click' | 'type' | 'press' | 'select' |
+  'navigate' | 'openPage' | 'click' | 'hover' | 'type' | 'press' | 'select' |
   'check' | 'uncheck' |
   'setInputFiles' | 'waitFor' | 'assert' | 'screenshot';
+
+/**
+ * The stored spellings that only ever arrive, never leave.
+ *
+ * A journey saved and reloaded comes back in the version-2 vocabulary (X-9.1), where
+ * `fill` is the name for `type` and `upload` for `setInputFiles`. The recorder emits the
+ * internal names and O2 stores the v2 ones, so `BrowserStep.action` legitimately carries
+ * either — see V2_ACTION_ALIASES, which has always accepted both by keying on `string`.
+ *
+ * They were missing from the type, which made `step.action === 'upload'` in
+ * describeStepFidelity a comparison TypeScript called impossible. It was not impossible;
+ * it was the check that keeps a reloaded upload from replaying as a false green. The
+ * tests covering both spellings had to cast through `as any` to say so.
+ */
+export type StoredStepAction = 'fill' | 'upload';
 
 /** The v2 assertion vocabulary, mirrored from the server-side closed set. */
 export type AssertionKind =
@@ -55,7 +70,7 @@ export interface StepSettle {
 
 export interface BrowserStep {
   id: string;
-  action: BrowserStepAction;
+  action: BrowserStepAction | StoredStepAction;
   /**
    * Every way the recorder could find this element. This IS the step's identity:
    * the bare `selector` and `selector_type` pair beside it was the version-1
@@ -94,6 +109,16 @@ export interface BrowserStep {
   files?: string[];
   modifiers?: number;
   button?: 'left' | 'middle' | 'right';
+  /**
+   * How many clicks the recorded interaction was. Absent means one.
+   *
+   * Carried because 1.56's action picker offers "Double click" as an explicit
+   * choice, and the reverse mapper used to hardcode 1 — so a deliberately
+   * recorded double click replayed as a single one and still reported green.
+   * `toClickOptions` has always forwarded clickCount > 1; only the mapping
+   * starved it.
+   */
+  clickCount?: number;
   position?: { x: number; y: number };
   // Metadata
   startTime: number;
@@ -205,12 +230,45 @@ function buildAssertion(action: Action): StepAssertion | undefined {
   }
 }
 
+/**
+ * Names pages the way a journey reads: the first page is `page`, the next `page1`, and so
+ * on in the order they were opened.
+ *
+ * 1.62 removed `frame` from ActionInContext — an action now carries only an opaque
+ * `pageGuid`. A guid is stable but meaningless in a stored step and to anyone reading one,
+ * so it is turned back into an alias here, with the same first-seen scheme upstream's own
+ * code generator uses. The map is per call to mapActionsToBrowserSteps, so a journey's
+ * names do not depend on anything outside it.
+ */
+function aliasAssigner(): (pageGuid: string) => string {
+  const aliases = new Map<string, string>();
+  return pageGuid => {
+    let alias = aliases.get(pageGuid);
+    if (!alias) {
+      alias = 'page' + (aliases.size || '');
+      aliases.set(pageGuid, alias);
+    }
+    return alias;
+  };
+}
+
 export function mapActionToBrowserStep(
   actionInContext: ActionInContext,
   actionIndex: number,
   responses?: SettleResponsePattern[],
+  aliasFor: (pageGuid: string) => string = aliasAssigner(),
 ): BrowserStep {
-  const { action, frame, startTime, endTime, description } = actionInContext;
+  const { action, startTime, endTime } = actionInContext;
+  // 1.62 dropped `description` from ActionInContext too. Nothing in the crx flow ever
+  // set it — the step name is derived from the action — so the fallback is all there is.
+  const description = undefined as string | undefined;
+  const frame = {
+    pageAlias: aliasFor(actionInContext.pageGuid),
+    // 1.62 folds the frame path into action.selector at capture time, so a step no longer
+    // carries one and the player must not prepend anything. O2 already sends [] on its
+    // storage path, so both directions now agree.
+    framePath: [] as string[],
+  };
   const selectors = (action as { selectors?: string[] }).selectors;
   const selector = (action as { selector?: string }).selector;
 
@@ -245,6 +303,15 @@ export function mapActionToBrowserStep(
         action: 'click',
         button: action.button,
         modifiers: action.modifiers,
+        position: action.position,
+        clickCount: action.clickCount,
+      };
+    // 1.56 added hover to the recorder model, offered as "Hover" in the action
+    // picker. It carries no payload beyond where on the element the pointer went.
+    case 'hover':
+      return {
+        ...base,
+        action: 'hover',
         position: action.position,
       };
     case 'fill':
@@ -318,13 +385,20 @@ export function mapActionToBrowserStep(
         ...base,
         action: 'assert',
         assertion: buildAssertion(action),
-        snapshot: action.snapshot,
+        snapshot: action.ariaSnapshot,
       };
     case 'closePage':
       // Skip closePage — no user-facing step
       return { ...base, action: 'navigate' } as BrowserStep;
     default:
-      return base;
+      // `base` is seeded with action:'click' as a placeholder for every case above
+      // to overwrite. Returning it here turned any action this switch does not know
+      // into a click the user never performed — which is how 1.56's `hover` reached
+      // storage as a click, past all three of the guards meant to catch it.
+      //
+      // Failing makes a new upstream ActionName a deliberate decision rather than a
+      // silent downgrade. Upstream added one action in nine minors; it will add more.
+      throw new Error(`unmapped recorder action: '${(action as { name: string }).name}'`);
   }
 }
 
@@ -341,9 +415,12 @@ export function mapActionsToBrowserSteps(
   actions: ActionInContext[],
   responsesFor?: (action: ActionInContext) => SettleResponsePattern[] | undefined,
 ): BrowserStep[] {
+  // One assigner for the whole journey: page names have to be consistent across steps,
+  // not per step.
+  const aliasFor = aliasAssigner();
   return actions
       .filter(a => a.action.name !== 'closePage')
-      .map((a, i) => mapActionToBrowserStep(a, i, responsesFor?.(a)));
+      .map((a, i) => mapActionToBrowserStep(a, i, responsesFor?.(a), aliasFor));
 }
 
 // Reconstructs the Playwright Action for a BrowserStep. The forward mapper
@@ -384,13 +461,15 @@ function buildActionFromStep(step: BrowserStep): Action {
       return { name: 'openPage', url: step.url ?? '', signals: [] };
     case 'navigate':
       return { name: 'navigate', url: step.url ?? '', signals: [] };
+    case 'hover':
+      return { name: 'hover', selector, position: step.position, signals: [] };
     case 'click':
       return {
         name: 'click',
         selector,
         button: step.button ?? 'left',
         modifiers: step.modifiers ?? 0,
-        clickCount: 1,
+        clickCount: step.clickCount ?? 1,
         position: step.position,
         signals: [],
       };
@@ -429,7 +508,7 @@ function buildActionFromStep(step: BrowserStep): Action {
       // v1 / recorder-internal asserts: the subtype is recovered from whichever
       // field is set.
       if (step.snapshot !== undefined)
-        return { name: 'assertSnapshot', selector, snapshot: step.snapshot, signals: [] };
+        return { name: 'assertSnapshot', selector, ariaSnapshot: step.snapshot, signals: [] };
       if (step.text !== undefined)
         return { name: 'assertText', selector, text: step.text, substring: true, signals: [] };
       if (step.value !== undefined)
@@ -461,15 +540,18 @@ function buildActionFromStep(step: BrowserStep): Action {
 }
 
 /**
- * Step actions the player cannot execute. Upstream Playwright's recorder action
- * model (ActionName in @recorder/actions) has no hover/scroll/wait/screenshot, so
- * these have never been replayable — they enter journeys only from O2's manual
- * step editor or from legacy monitors. They are retired from the v2 vocabulary;
- * this list exists so existing journeys still replay, with the step reported
- * honestly. See spec X-9 and P1.R.2a.
+ * Step actions the player cannot execute. They enter journeys from O2's manual step
+ * editor or from legacy monitors, and are retired from the v2 vocabulary; this list
+ * exists so existing journeys still replay, with the step reported honestly rather
+ * than as a pass. See spec X-9 and P1.R.2a.
+ *
+ * `hover` was on this list because upstream's recorder model had no such action at all.
+ * Playwright 1.56 added one, reachable from the action picker, so a hover can now be
+ * captured, mapped by this file, and executed by `Frame.hover`. It is a supported
+ * action rather than an unsimulated one, and reporting it as "not simulated" would
+ * under-claim a capability we have.
  */
 export const UNSUPPORTED_REPLAY_ACTIONS: readonly string[] = [
-  'hover',
   'scroll',
   'wait',
   'waitFor',
@@ -482,14 +564,14 @@ export function isUnsupportedReplayAction(action: string): boolean {
 
 export function mapBrowserStepToAction(step: BrowserStep): ActionInContext {
   return {
-    frame: {
-      pageAlias: step.pageAlias ?? 'page',
-      framePath: step.framePath ?? [],
-    },
+    // The alias IS the page key on the way back in. A journey replayed from storage has no
+    // live guid to refer to, and O2 sends `pageAlias: 'page'` for every stored step, so
+    // using it as the guid keeps one identity for both directions — live capture uses the
+    // real guid, replay uses the name it was stored under.
+    pageGuid: step.pageAlias ?? 'page',
     action: buildActionFromStep(step),
     startTime: step.startTime ?? 0,
     endTime: step.endTime,
-    description: step.description,
   };
 }
 
@@ -503,4 +585,22 @@ export function mapBrowserStepsToActions(steps: BrowserStep[]): ActionInContext[
       return mapBrowserStepToAction({ ...step, action: 'openPage' as BrowserStepAction });
     return mapBrowserStepToAction(step);
   });
+}
+
+
+/**
+ * The page key of the journey's primary page — the one the recording started on.
+ *
+ * Needed because that key is not a constant. 1.62 replaced the action's FrameDescription
+ * with a bare page key, and which string that is depends on where the actions came from:
+ * a journey parsed from code or rebuilt from storage carries aliases (`page`, `page1`, …),
+ * while one captured live carries real page guids. Comparing against the literal 'page'
+ * is therefore right for the first and silently wrong for the second — which is exactly
+ * how the primary page's openPage stopped being skipped and replayed as a stray
+ * `newPage` step.
+ *
+ * First-mentioned is the definition, matching how aliases are assigned in the first place.
+ */
+export function primaryPageGuid(actions: { pageGuid: string }[]): string | undefined {
+  return actions[0]?.pageGuid;
 }

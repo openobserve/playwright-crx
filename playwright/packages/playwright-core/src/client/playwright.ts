@@ -23,14 +23,12 @@ import { TimeoutError } from './errors';
 import { APIRequest } from './fetch';
 import { Selectors } from './selectors';
 
-import type * as channels from '@protocol/channels';
-import type { BrowserContextOptions, LaunchOptions } from 'playwright-core';
+import type * as channels from './channels';
+import type { LaunchOptions } from 'playwright-core';
 
 export class Playwright extends ChannelOwner<channels.PlaywrightChannel> {
   readonly _android: Android;
   readonly _electron: Electron;
-  readonly _bidiChromium: BrowserType;
-  readonly _bidiFirefox: BrowserType;
   readonly chromium: BrowserType;
   readonly firefox: BrowserType;
   readonly webkit: BrowserType;
@@ -41,7 +39,6 @@ export class Playwright extends ChannelOwner<channels.PlaywrightChannel> {
 
   // Instrumentation.
   _defaultLaunchOptions?: LaunchOptions;
-  _defaultContextOptions?: BrowserContextOptions;
   _defaultContextTimeout?: number;
   _defaultContextNavigationTimeout?: number;
 
@@ -58,14 +55,9 @@ export class Playwright extends ChannelOwner<channels.PlaywrightChannel> {
     this._android._playwright = this;
     this._electron = Electron.from(initializer.electron);
     this._electron._playwright = this;
-    this._bidiChromium = BrowserType.from(initializer.bidiChromium);
-    this._bidiChromium._playwright = this;
-    this._bidiFirefox = BrowserType.from(initializer.bidiFirefox);
-    this._bidiFirefox._playwright = this;
     this.devices = this._connection.localUtils()?.devices ?? {};
-    this.selectors = new Selectors(this._connection._platform);
+    this.selectors = new Selectors();
     this.errors = { TimeoutError };
-    (global as any)._playwrightInstance = this;
   }
 
   static from(channel: channels.PlaywrightChannel): Playwright {
@@ -73,7 +65,7 @@ export class Playwright extends ChannelOwner<channels.PlaywrightChannel> {
   }
 
   private _browserTypes(): BrowserType[] {
-    return [this.chromium, this.firefox, this.webkit, this._bidiChromium, this._bidiFirefox];
+    return [this.chromium, this.firefox, this.webkit];
   }
 
   _preLaunchedBrowser(): Browser {

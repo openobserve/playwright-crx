@@ -14,6 +14,10 @@
   limitations under the License.
 */
 
+.action-title > .hbox {
+  align-items: center;
+}
+
 .action-title-line {
   display: block;
   overflow: hidden;
@@ -31,6 +35,7 @@
   white-space: pre;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-weight: 500;
 }
 
 .action-title-param {
@@ -117,4 +122,11 @@
   cursor: pointer;
   height: 28px;
   align-items: center;
+}
+
+.action-list-container {
+  min-height: 0;
+  flex: auto;
+  display: flex;
+  flex-direction: column;
 }

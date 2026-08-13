@@ -182,24 +182,74 @@ test('max-failures should work across phases', async ({ runInlineTest }) => {
   expect(result.output).not.toContain('running d');
 });
 
+test('max-failures should still run teardown project', async ({ runInlineTest }) => {
+  test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41713' });
+
+  const result = await runInlineTest({
+    'playwright.config.ts': `
+      module.exports = {
+        maxFailures: 1,
+        projects: [
+          { name: 'setup', testMatch: '**/setup.ts', teardown: 'teardown' },
+          { name: 'teardown', testMatch: '**/teardown.ts' },
+          { name: 'a', dependencies: ['setup'], testMatch: '**/a.spec.ts' },
+          // Unrelated chain that becomes ready to run together with 'teardown'.
+          { name: 'x', testMatch: '**/x.spec.ts' },
+          { name: 'y', dependencies: ['x'], testMatch: '**/y.spec.ts' },
+          { name: 'z', dependencies: ['y'], testMatch: '**/z.spec.ts' },
+        ],
+      };`,
+    'setup.ts': `
+      import { test } from '@playwright/test';
+      test('setup', async ({}) => { console.log('\\n%%setup'); });
+    `,
+    'teardown.ts': `
+      import { test } from '@playwright/test';
+      test('teardown', async ({}) => { console.log('\\n%%teardown'); });
+    `,
+    'a.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      test('failing', async ({}) => { expect(1).toBe(2); });
+    `,
+    'x.spec.ts': `
+      import { test } from '@playwright/test';
+      test('x', async ({}) => {});
+    `,
+    'y.spec.ts': `
+      import { test } from '@playwright/test';
+      test('y', async ({}) => {});
+    `,
+    'z.spec.ts': `
+      import { test } from '@playwright/test';
+      test('z', async ({}) => { console.log('\\n%%z'); });
+    `,
+  }, { workers: 1 });
+  expect(result.exitCode).toBe(1);
+  expect(result.failed).toBe(1);
+  expect(result.output).toContain('%%setup');
+  expect(result.output).toContain('%%teardown');
+  // Regular project 'z' must not run after maxFailures.
+  expect(result.output).not.toContain('%%z');
+});
+
 test('max-failures should not consider retries as failures', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'playwright.config.ts': `
       export default {
-        maxFailures: 10,
-        retries: 10,
+        maxFailures: 5,
+        retries: 5,
       };
     `,
     'example.spec.ts': `
       import { test, expect } from '@playwright/test';
 
       test('I fail 9 times 1', () => {
-        if (test.info().retry < 9)
+        if (test.info().retry < 4)
           throw new Error('failing intentionally');
       });
 
       test('I fail 9 times 2', () => {
-        if (test.info().retry < 9)
+        if (test.info().retry < 4)
           throw new Error('failing intentionally');
       });
     `,

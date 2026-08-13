@@ -46,18 +46,18 @@ test('should handle worker fixture timeout', async ({ runInlineTest }) => {
     'a.spec.ts': `
       import { test as base, expect } from '@playwright/test';
       const test = base.extend({
-        timeout: [async ({}, runTest) => {
+        slowFixture: [async ({}, runTest) => {
           await runTest();
           await new Promise(f => setTimeout(f, 100000));
         }, { scope: 'worker' }]
       });
 
-      test('fails', async ({timeout}) => {
+      test('fails', async ({ slowFixture }) => {
       });
     `
   }, { timeout: 500 });
   expect(result.exitCode).toBe(1);
-  expect(result.output).toContain('Worker teardown timeout of 500ms exceeded while tearing down "timeout".');
+  expect(result.output).toContain('Fixture "slowFixture" timeout of 500ms exceeded during teardown.');
 });
 
 test('should handle worker fixture error', async ({ runInlineTest }) => {
@@ -607,7 +607,7 @@ test('should report worker fixture teardown with debug info', async ({ runInline
   expect(result.exitCode).toBe(1);
   expect(result.passed).toBe(20);
   expect(result.output).toContain([
-    'Worker teardown timeout of 1000ms exceeded while tearing down "fixture".',
+    'Fixture "fixture" timeout of 1000ms exceeded during teardown.',
     '',
     'Failed worker ran 20 tests, last 10 tests were:',
     'a.spec.ts:10:9 › good10',
@@ -788,4 +788,78 @@ test('should report fixture teardown error after test error', async ({ runInline
   expect(result.failed).toBe(1);
   expect(result.output).toContain('Error from the fixture foo');
   expect(result.output).toContain('Error from the test');
+});
+
+test('should throw when overriding non-option fixture in config', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'playwright.config.ts': `
+      module.exports = {
+        use: {
+          foo: 'overridden',
+          headless: true,
+          unknownThing: 'ignored',
+        },
+      };
+    `,
+    'a.spec.ts': `
+      import { test as base, expect } from '@playwright/test';
+      const test = base.extend({
+        foo: async ({}, use) => await use('original'),
+      });
+      test('works', async ({ foo }) => {
+        expect(foo).toBe('original');
+      });
+    `,
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.output).toContain('Fixture "foo" cannot be overridden in the configuration "use" section. Only fixtures registered with { option: true } can be set in the config.');
+  expect(result.output).not.toContain('Fixture "headless"');
+  expect(result.output).not.toContain('Fixture "unknownThing"');
+});
+
+test('should throw when overriding option fixture with non-option', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'playwright.config.ts': `
+      module.exports = {};
+    `,
+    'a.spec.ts': `
+      import { test as base, expect } from '@playwright/test';
+      const test = base.extend({
+        headless: [
+          async ({}, use) => await use(true),
+          { scope: 'worker', option: false },
+        ],
+      });
+      test('works', async ({ headless }) => {
+        expect(headless).toBe(true);
+      });
+    `,
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.output).toContain('Fixture "headless" has already been registered as a { option: true } fixture');
+});
+
+test('should allow overriding option both in config and in test.use block', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'playwright.config.ts': `
+      module.exports = {
+        use: {
+          headless: true,
+        },
+      };
+    `,
+    'a.spec.ts': `
+      import { test as base, expect } from '@playwright/test';
+      const test = base.extend({
+        headless: [
+          async ({}, use) => await use(true),
+          { scope: 'worker' },
+        ],
+      });
+      test('works', async ({ headless }) => {
+        expect(headless).toBe(true);
+      });
+    `,
+  });
+  expect(result.exitCode).toBe(0);
 });

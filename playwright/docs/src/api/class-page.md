@@ -557,15 +557,9 @@ Emitted when [WebSocket] request is sent.
 Emitted when a dedicated [WebWorker](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API) is spawned by the
 page.
 
-## property: Page.accessibility
-* since: v1.8
-* langs: csharp, js, python
-* deprecated: This property is discouraged. Please use other libraries such as
-  [Axe](https://www.deque.com/axe/) if you need to test page accessibility. See our Node.js [guide](https://playwright.dev/docs/accessibility-testing) for integration with Axe.
-- type: <[Accessibility]>
-
 ## async method: Page.addInitScript
 * since: v1.8
+- returns: <[Disposable]>
 
 Adds a script which would be evaluated in one of the following scenarios:
 * Whenever the page is navigated.
@@ -657,6 +651,9 @@ Path to the JavaScript file. If `path` is a relative path, then it is resolved r
 
 Script to be evaluated in all pages in the browser context. Optional.
 
+### option: Page.addInitScript.exposeFunctions = %%-js-init-script-expose-functions-%%
+* since: v1.62
+
 ## async method: Page.addScriptTag
 * since: v1.8
 - returns: <[ElementHandle]>
@@ -721,6 +718,12 @@ Raw CSS content to be injected into frame.
 
 Brings page to front (activates tab).
 
+## async method: Page.cancelPickLocator
+* since: v1.59
+
+Cancels an ongoing [`method: Page.pickLocator`] call by deactivating pick locator mode.
+If no pick locator mode is active, this method is a no-op.
+
 ## async method: Page.check
 * since: v1.8
 * discouraged: Use locator-based [`method: Locator.check`] instead. Read more about [locators](../locators.md).
@@ -745,6 +748,9 @@ When all steps combined have not finished during the specified [`option: timeout
 ### option: Page.check.force = %%-input-force-%%
 * since: v1.8
 
+### option: Page.check.scroll = %%-input-scroll-%%
+* since: v1.62
+
 ### option: Page.check.noWaitAfter = %%-input-no-wait-after-removed-%%
 * since: v1.8
 
@@ -759,6 +765,8 @@ When all steps combined have not finished during the specified [`option: timeout
 
 ### option: Page.check.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Page.check.signal = %%-input-signal-%%
 
 ### option: Page.check.trial = %%-input-trial-%%
 * since: v1.11
@@ -794,6 +802,9 @@ When all steps combined have not finished during the specified [`option: timeout
 ### option: Page.click.force = %%-input-force-%%
 * since: v1.8
 
+### option: Page.click.scroll = %%-input-scroll-%%
+* since: v1.62
+
 ### option: Page.click.modifiers = %%-input-modifiers-%%
 * since: v1.8
 
@@ -811,6 +822,8 @@ When all steps combined have not finished during the specified [`option: timeout
 
 ### option: Page.click.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Page.click.signal = %%-input-signal-%%
 
 ### option: Page.click.trial = %%-input-trial-with-modifiers-%%
 * since: v1.11
@@ -894,6 +907,9 @@ When all steps combined have not finished during the specified [`option: timeout
 ### option: Page.dblclick.force = %%-input-force-%%
 * since: v1.8
 
+### option: Page.dblclick.scroll = %%-input-scroll-%%
+* since: v1.62
+
 ### option: Page.dblclick.delay = %%-input-down-up-delay-%%
 * since: v1.8
 
@@ -914,6 +930,8 @@ When all steps combined have not finished during the specified [`option: timeout
 
 ### option: Page.dblclick.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Page.dblclick.signal = %%-input-signal-%%
 
 ### option: Page.dblclick.trial = %%-input-trial-with-modifiers-%%
 * since: v1.11
@@ -1022,6 +1040,8 @@ Optional event-specific initialization properties.
 ### option: Page.dispatchEvent.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Page.dispatchEvent.signal = %%-input-signal-%%
+
 ## async method: Page.dragAndDrop
 * since: v1.13
 
@@ -1088,6 +1108,9 @@ await Page.DragAndDropAsync("#source", "#target", new()
 ### option: Page.dragAndDrop.force = %%-input-force-%%
 * since: v1.13
 
+### option: Page.dragAndDrop.scroll = %%-input-scroll-%%
+* since: v1.62
+
 ### option: Page.dragAndDrop.noWaitAfter = %%-input-no-wait-after-removed-%%
 * since: v1.13
 
@@ -1100,6 +1123,8 @@ await Page.DragAndDropAsync("#source", "#target", new()
 ### option: Page.dragAndDrop.timeout = %%-input-timeout-js-%%
 * since: v1.13
 
+### option: Page.dragAndDrop.signal = %%-input-signal-%%
+
 ### option: Page.dragAndDrop.trial = %%-input-trial-%%
 * since: v1.13
 
@@ -1108,6 +1133,9 @@ await Page.DragAndDropAsync("#source", "#target", new()
 
 ### option: Page.dragAndDrop.targetPosition = %%-input-target-position-%%
 * since: v1.14
+
+### option: Page.dragAndDrop.steps = %%-input-drag-steps-%%
+* since: v1.57
 
 ## async method: Page.emulateMedia
 * since: v1.8
@@ -1519,7 +1547,7 @@ Console.WriteLine(await page.EvaluateAsync<int>("1 + 2")); // prints "3"
 [ElementHandle] instances can be passed as an argument to the [`method: Page.evaluate`]:
 
 ```js
-const bodyHandle = await page.evaluate('document.body');
+const bodyHandle = await page.evaluateHandle('document.body');
 const html = await page.evaluate<string, HTMLElement>(([body, suffix]) =>
   body.innerHTML + suffix, [bodyHandle, 'hello']
 );
@@ -1527,25 +1555,25 @@ await bodyHandle.dispose();
 ```
 
 ```java
-ElementHandle bodyHandle = page.evaluate("document.body");
+ElementHandle bodyHandle = page.evaluateHandle("document.body");
 String html = (String) page.evaluate("([body, suffix]) => body.innerHTML + suffix", Arrays.asList(bodyHandle, "hello"));
 bodyHandle.dispose();
 ```
 
 ```python async
-body_handle = await page.evaluate("document.body")
+body_handle = await page.evaluate_handle("document.body")
 html = await page.evaluate("([body, suffix]) => body.innerHTML + suffix", [body_handle, "hello"])
 await body_handle.dispose()
 ```
 
 ```python sync
-body_handle = page.evaluate("document.body")
+body_handle = page.evaluate_handle("document.body")
 html = page.evaluate("([body, suffix]) => body.innerHTML + suffix", [body_handle, "hello"])
 body_handle.dispose()
 ```
 
 ```csharp
-var bodyHandle = await page.EvaluateAsync("document.body");
+var bodyHandle = await page.EvaluateHandleAsync("document.body");
 var html = await page.EvaluateAsync<string>("([body, suffix]) => body.innerHTML + suffix", new object [] { bodyHandle, "hello" });
 await bodyHandle.DisposeAsync();
 ```
@@ -1561,6 +1589,9 @@ await bodyHandle.DisposeAsync();
 - `arg` ?<[EvaluationArgument]>
 
 Optional argument to pass to [`param: expression`].
+
+### option: Page.evaluate.exposeFunctions = %%-js-evaluate-expose-functions-%%
+* since: v1.62
 
 ## async method: Page.evaluateHandle
 * since: v1.8
@@ -1671,8 +1702,12 @@ await resultHandle.DisposeAsync();
 
 Optional argument to pass to [`param: expression`].
 
+### option: Page.evaluateHandle.exposeFunctions = %%-js-evaluate-expose-functions-%%
+* since: v1.62
+
 ## async method: Page.exposeBinding
 * since: v1.8
+- returns: <[Disposable]>
 
 The method adds a function called [`param: name`] on the `window` object of every frame in this page. When called, the
 function executes [`param: callback`] and returns a [Promise] which resolves to the return value of [`param: callback`].
@@ -1825,19 +1860,13 @@ Name of the function on the window object.
 ### param: Page.exposeBinding.callback
 * since: v1.8
 - `callback` <[function]>
+  * alias: BindingCallback
 
 Callback function that will be called in the Playwright's context.
 
-### option: Page.exposeBinding.handle
-* since: v1.8
-* deprecated: This option will be removed in the future.
-- `handle` <[boolean]>
-
-Whether to pass the argument as a handle, instead of passing by value. When passing a handle, only one argument is
-supported. When passing by value, multiple arguments are supported.
-
 ## async method: Page.exposeFunction
 * since: v1.8
+- returns: <[Disposable]>
 
 The method adds a function called [`param: name`] on the `window` object of every frame in the page. When called, the
 function executes [`param: callback`] and returns a [Promise] which resolves to the return value of [`param: callback`].
@@ -2025,6 +2054,7 @@ Name of the function on the window object
 ### param: Page.exposeFunction.callback
 * since: v1.8
 - `callback` <[function]>
+  * alias: FunctionCallback
 
 Callback function which will be called in Playwright's context.
 
@@ -2062,6 +2092,8 @@ Value to fill for the `<input>`, `<textarea>` or `[contenteditable]` element.
 ### option: Page.fill.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Page.fill.signal = %%-input-signal-%%
+
 ## async method: Page.focus
 * since: v1.8
 * discouraged: Use locator-based [`method: Locator.focus`] instead. Read more about [locators](../locators.md).
@@ -2080,6 +2112,8 @@ This method fetches an element with [`param: selector`] and focuses it. If there
 
 ### option: Page.focus.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Page.focus.signal = %%-input-signal-%%
 
 ## method: Page.frame
 * since: v1.8
@@ -2126,7 +2160,7 @@ var frame = page.FrameByUrl(".*domain.*");
 * langs: js
 - `frameSelector` <[string]|[Object]>
   - `name` ?<[string]> Frame name specified in the `iframe`'s `name` attribute. Optional.
-  - `url` ?<[string]|[RegExp]|[function]\([URL]\):[boolean]> A glob pattern, regex pattern or predicate receiving
+  - `url` ?<[string]|[RegExp]|[URLPattern]|[function]\([URL]\):[boolean]> A glob pattern, regex pattern, URL pattern, or predicate receiving
     frame's `url` as a [URL] object. Optional.
 
 Frame name or other frame lookup options.
@@ -2237,6 +2271,8 @@ Attribute name to get the value for.
 ### option: Page.getAttribute.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Page.getAttribute.signal = %%-input-signal-%%
+
 ## method: Page.getByAltText
 * since: v1.27
 - returns: <[Locator]>
@@ -2281,6 +2317,8 @@ Attribute name to get the value for.
 
 ### option: Page.getByRole.exact = %%-locator-get-by-role-option-exact-%%
 
+### option: Page.getByRole.description = %%-locator-get-by-role-option-description-%%
+
 ## method: Page.getByTestId
 * since: v1.27
 - returns: <[Locator]>
@@ -2319,6 +2357,11 @@ last redirect. If cannot go back, returns `null`.
 
 Navigate to the previous page in history.
 
+:::warning
+**Testing Back/Forward Cache (BFCache) is not supported.** 
+By default, Playwright disables the Back/Forward Cache across all browsers. Even if explicitly enabled, Playwright's internal state relies on network-level navigation events. Because BFCache restores unfreeze the DOM without firing these events, using `page.goBack()` or `page.goForward()` to trigger a BFCache restore will result in timeouts and a desynchronized `Page` state.
+:::
+
 ### option: Page.goBack.waitUntil = %%-navigation-wait-until-%%
 * since: v1.8
 
@@ -2328,6 +2371,8 @@ Navigate to the previous page in history.
 ### option: Page.goBack.timeout = %%-navigation-timeout-js-%%
 * since: v1.8
 
+### option: Page.goBack.signal = %%-input-signal-%%
+
 ## async method: Page.goForward
 * since: v1.8
 - returns: <[null]|[Response]>
@@ -2336,6 +2381,11 @@ Returns the main resource response. In case of multiple redirects, the navigatio
 last redirect. If cannot go forward, returns `null`.
 
 Navigate to the next page in history.
+
+:::warning
+**Testing Back/Forward Cache (BFCache) is not supported.** 
+By default, Playwright disables the Back/Forward Cache across all browsers. Even if explicitly enabled, Playwright's internal state relies on network-level navigation events. Because BFCache restores unfreeze the DOM without firing these events, using `page.goBack()` or `page.goForward()` to trigger a BFCache restore will result in timeouts and a desynchronized `Page` state.
+:::
 
 ## async method: Page.requestGC
 * since: v1.48
@@ -2398,6 +2448,8 @@ Assert.True(await Page.EvaluateAsync("!globalThis.suspectWeakRef.deref()"));
 ### option: Page.goForward.timeout = %%-navigation-timeout-js-%%
 * since: v1.8
 
+### option: Page.goForward.signal = %%-input-signal-%%
+
 ## async method: Page.goto
 * since: v1.8
 * langs:
@@ -2445,12 +2497,19 @@ it gets merged via the [`new URL()`](https://developer.mozilla.org/en-US/docs/We
 ### option: Page.goto.timeout = %%-navigation-timeout-js-%%
 * since: v1.8
 
+### option: Page.goto.signal = %%-input-signal-%%
+
 ### option: Page.goto.referer
 * since: v1.8
 - `referer` <[string]>
 
 Referer header value. If provided it will take preference over the referer header value set by
 [`method: Page.setExtraHTTPHeaders`].
+
+## async method: Page.hideHighlight
+* since: v1.60
+
+Hide all locator highlight overlays previously added by [`method: Locator.highlight`] on this page.
 
 ## async method: Page.hover
 * since: v1.8
@@ -2473,6 +2532,9 @@ When all steps combined have not finished during the specified [`option: timeout
 ### option: Page.hover.force = %%-input-force-%%
 * since: v1.8
 
+### option: Page.hover.scroll = %%-input-scroll-%%
+* since: v1.62
+
 ### option: Page.hover.modifiers = %%-input-modifiers-%%
 * since: v1.8
 
@@ -2487,6 +2549,8 @@ When all steps combined have not finished during the specified [`option: timeout
 
 ### option: Page.hover.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Page.hover.signal = %%-input-signal-%%
 
 ### option: Page.hover.trial = %%-input-trial-with-modifiers-%%
 * since: v1.11
@@ -2513,6 +2577,8 @@ Returns `element.innerHTML`.
 ### option: Page.innerHTML.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Page.innerHTML.signal = %%-input-signal-%%
+
 ## async method: Page.innerText
 * since: v1.8
 * discouraged: Use locator-based [`method: Locator.innerText`] instead. Read more about [locators](../locators.md).
@@ -2531,6 +2597,8 @@ Returns `element.innerText`.
 
 ### option: Page.innerText.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Page.innerText.signal = %%-input-signal-%%
 
 ## async method: Page.inputValue
 * since: v1.13
@@ -2553,6 +2621,8 @@ Throws for non-input elements. However, if the element is inside the `<label>` e
 ### option: Page.inputValue.timeout = %%-input-timeout-js-%%
 * since: v1.13
 
+### option: Page.inputValue.signal = %%-input-signal-%%
+
 ## async method: Page.isChecked
 * since: v1.8
 * discouraged: Use locator-based [`method: Locator.isChecked`] instead. Read more about [locators](../locators.md).
@@ -2571,6 +2641,8 @@ Returns whether the element is checked. Throws if the element is not a checkbox 
 
 ### option: Page.isChecked.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Page.isChecked.signal = %%-input-signal-%%
 
 ## method: Page.isClosed
 * since: v1.8
@@ -2597,6 +2669,8 @@ Returns whether the element is disabled, the opposite of [enabled](../actionabil
 ### option: Page.isDisabled.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Page.isDisabled.signal = %%-input-signal-%%
+
 ## async method: Page.isEditable
 * since: v1.8
 * discouraged: Use locator-based [`method: Locator.isEditable`] instead. Read more about [locators](../locators.md).
@@ -2616,6 +2690,8 @@ Returns whether the element is [editable](../actionability.md#editable).
 ### option: Page.isEditable.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Page.isEditable.signal = %%-input-signal-%%
+
 ## async method: Page.isEnabled
 * since: v1.8
 * discouraged: Use locator-based [`method: Locator.isEnabled`] instead. Read more about [locators](../locators.md).
@@ -2634,6 +2710,8 @@ Returns whether the element is [enabled](../actionability.md#enabled).
 
 ### option: Page.isEnabled.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Page.isEnabled.signal = %%-input-signal-%%
 
 ## async method: Page.isHidden
 * since: v1.8
@@ -2676,6 +2754,77 @@ Returns whether the element is [visible](../actionability.md#visible). [`param: 
 ## property: Page.keyboard
 * since: v1.8
 - type: <[Keyboard]>
+
+
+## async method: Page.clearConsoleMessages
+* since: v1.59
+
+Clears all stored console messages from this page. Subsequent calls to [`method: Page.consoleMessages`] will only return messages logged after the clear.
+
+## async method: Page.clearPageErrors
+* since: v1.59
+
+Clears all stored page errors from this page. Subsequent calls to [`method: Page.pageErrors`] will only return errors thrown after the clear.
+
+## property: Page.localStorage
+* since: v1.61
+- type: <[WebStorage]>
+
+Provides access to the page's `localStorage` for the current origin. See [WebStorage].
+
+```js
+await page.localStorage.setItem('token', 'abc');
+const token = await page.localStorage.getItem('token');
+```
+
+## property: Page.sessionStorage
+* since: v1.61
+- type: <[WebStorage]>
+
+Provides access to the page's `sessionStorage` for the current origin. See [WebStorage].
+
+```js
+await page.sessionStorage.setItem('flag', '1');
+const flag = await page.sessionStorage.getItem('flag');
+```
+
+## async method: Page.consoleMessages
+* since: v1.56
+- returns: <[Array]<[ConsoleMessage]>>
+
+Returns up to (currently) 200 last console messages from this page. See [`event: Page.console`] for more details.
+
+### option: Page.consoleMessages.filter
+* since: v1.59
+- `filter` <[ConsoleMessagesFilter]<"all"|"since-navigation">>
+
+Controls which messages are returned:
+- `'since-navigation'` (default) — returns only messages logged after the last committed main-frame navigation.
+- `'all'` — returns all stored console messages.
+
+
+## async method: Page.pageErrors
+* since: v1.56
+* langs: js, python
+- returns: <[Array]<[Error]>>
+
+Returns up to (currently) 200 last page errors from this page. See [`event: Page.pageError`] for more details.
+
+## async method: Page.pageErrors
+* since: v1.56
+* langs: csharp, java
+- returns: <[Array]<[string]>>
+
+Returns up to (currently) 200 last page errors from this page. See [`event: Page.pageError`] for more details.
+
+### option: Page.pageErrors.filter
+* since: v1.59
+- `filter` <[PageErrorsFilter]<"all"|"since-navigation">>
+
+Controls which errors are returned:
+- `'since-navigation'` (default) — returns only errors thrown after the last committed main-frame navigation.
+- `'all'` — returns all stored page errors.
+
 
 ## method: Page.locator
 * since: v1.14
@@ -2758,7 +2907,7 @@ Returns the opener for popup pages and `null` for others. If the opener has been
 ## async method: Page.pause
 * since: v1.9
 
-Pauses script execution. Playwright will stop executing the script and wait for the user to either press 'Resume'
+Pauses script execution. Playwright will stop executing the script and wait for the user to either press the 'Resume'
 button in the page overlay or to call `playwright.resume()` in the DevTools console.
 
 User can inspect selectors or perform manual steps while paused. Resume will continue running the original script from
@@ -2951,6 +3100,7 @@ Paper margins, defaults to none.
 * since: v1.8
 * langs: csharp, java
 - `margin` <[Object]>
+  * alias-java: Margin
   - `top` ?<[string]> Top margin, accepts values labeled with units. Defaults to `0`.
   - `right` ?<[string]> Right margin, accepts values labeled with units. Defaults to `0`.
   - `bottom` ?<[string]> Bottom margin, accepts values labeled with units. Defaults to `0`.
@@ -2977,6 +3127,40 @@ Whether or not to generate tagged (accessible) PDF. Defaults to `false`.
 - `outline` <[boolean]>
 
 Whether or not to embed the document outline into the PDF. Defaults to `false`.
+
+## async method: Page.pickLocator
+* since: v1.59
+- returns: <[Locator]>
+
+Enters pick locator mode where hovering over page elements highlights them and shows the corresponding locator.
+Once the user clicks an element, the mode is deactivated and the [Locator] for the picked element is returned.
+
+**Usage**
+
+```js
+const locator = await page.pickLocator();
+console.log(locator);
+```
+
+```java
+Locator locator = page.pickLocator();
+System.out.println(locator);
+```
+
+```python async
+locator = await page.pick_locator()
+print(locator)
+```
+
+```python sync
+locator = page.pick_locator()
+print(locator)
+```
+
+```csharp
+var locator = await page.PickLocatorAsync();
+Console.WriteLine(locator);
+```
 
 ## async method: Page.press
 * since: v1.8
@@ -3090,6 +3274,8 @@ Time to wait between `keydown` and `keyup` in milliseconds. Defaults to 0.
 ### option: Page.press.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Page.press.signal = %%-input-signal-%%
+
 ## async method: Page.querySelector
 * since: v1.9
 * discouraged: Use locator-based [`method: Page.locator`] instead. Read more about [locators](../locators.md).
@@ -3120,6 +3306,17 @@ return value resolves to `[]`.
 
 ### param: Page.querySelectorAll.selector = %%-query-selector-%%
 * since: v1.9
+
+
+## async method: Page.requests
+* since: v1.56
+- returns: <[Array]<[Request]>>
+
+Returns up to (currently) 100 last network request from this page. See [`event: Page.request`] for more details.
+
+Returned requests should be accessed immediately, otherwise they might be collected to prevent unbounded memory growth as new requests come in. Once collected, retrieving most information about the request is impossible.
+
+Note that requests reported through the [`event: Page.request`] request are not collected, so there is a trade off between efficient memory usage with [`method: Page.requests`] and the amount of available information reported through [`event: Page.request`].
 
 
 ## async method: Page.addLocatorHandler
@@ -3183,7 +3380,7 @@ page.get_by_role("button", name="Start here").click()
 
 ```python async
 # Setup the handler.
-def handler():
+async def handler():
   await page.get_by_role("button", name="No thanks").click()
 await page.add_locator_handler(page.get_by_text("Sign up to the newsletter"), handler)
 
@@ -3240,7 +3437,7 @@ page.get_by_role("button", name="Start here").click()
 
 ```python async
 # Setup the handler.
-def handler():
+async def handler():
   await page.get_by_role("button", name="Remind me later").click()
 await page.add_locator_handler(page.get_by_text("Confirm your security details"), handler)
 
@@ -3297,7 +3494,7 @@ page.get_by_role("button", name="Start here").click()
 
 ```python async
 # Setup the handler.
-def handler():
+async def handler():
   await page.evaluate("window.removeObstructionsForTestIfNeeded()")
 await page.add_locator_handler(page.locator("body"), handler, no_wait_after=True)
 
@@ -3338,7 +3535,7 @@ page.add_locator_handler(page.get_by_label("Close"), handler, times=1)
 ```
 
 ```python async
-def handler(locator):
+async def handler(locator):
   await locator.click()
 await page.add_locator_handler(page.get_by_label("Close"), handler, times=1)
 ```
@@ -3444,6 +3641,8 @@ last redirect.
 ### option: Page.reload.timeout = %%-navigation-timeout-js-%%
 * since: v1.8
 
+### option: Page.reload.signal = %%-input-signal-%%
+
 ## property: Page.request
 * since: v1.16
 * langs:
@@ -3455,6 +3654,7 @@ API testing helper associated with this page. This method returns the same insta
 
 ## async method: Page.route
 * since: v1.8
+- returns: <[Disposable]>
 
 Routing provides the capability to modify network requests that are made by a page.
 
@@ -3594,6 +3794,8 @@ await page.RouteAsync("/api/**", async r =>
 });
 ```
 
+If a request matches multiple registered routes, the most recently registered route takes precedence.
+
 Page routes take precedence over browser context routes (set up with [`method: BrowserContext.route`]) when request
 matches both handlers.
 
@@ -3605,6 +3807,14 @@ Enabling routing disables http cache.
 
 ### param: Page.route.url
 * since: v1.8
+* langs: js
+- `url` <[string]|[RegExp]|[URLPattern]|[function]\([URL]\):[boolean]>
+
+A glob pattern, regex pattern, URL pattern, or predicate that receives a [URL] to match during routing. If [`option: Browser.newContext.baseURL`] is set in the context options and the provided URL is a string that does not start with `*`, it is resolved using the [`new URL()`](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) constructor.
+
+### param: Page.route.url
+* since: v1.8
+* langs: python, csharp, java
 - `url` <[string]|[RegExp]|[function]\([URL]\):[boolean]>
 
 A glob pattern, regex pattern, or predicate that receives a [URL] to match during routing. If [`option: Browser.newContext.baseURL`] is set in the context options and the provided URL is a string that does not start with `*`, it is resolved using the [`new URL()`](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) constructor.
@@ -3737,6 +3947,14 @@ await page.RouteWebSocketAsync("/ws", ws => {
 
 ### param: Page.routeWebSocket.url
 * since: v1.48
+* langs: js
+- `url` <[string]|[RegExp]|[URLPattern]|[function]\([URL]\):[boolean]>
+
+Only WebSockets with the url matching this pattern will be routed. A string pattern can be relative to the [`option: Browser.newContext.baseURL`] context option.
+
+### param: Page.routeWebSocket.url
+* since: v1.48
+* langs: python, csharp, java
 - `url` <[string]|[RegExp]|[function]\([URL]\):[boolean]>
 
 Only WebSockets with the url matching this pattern will be routed. A string pattern can be relative to the [`option: Browser.newContext.baseURL`] context option.
@@ -3756,6 +3974,24 @@ Handler function to route the WebSocket.
 Handler function to route the WebSocket.
 
 
+## property: Page.screencast
+* since: v1.59
+- type: <[Screencast]>
+
+[Screencast] object associated with this page.
+
+**Usage**
+
+```js
+page.screencast.on('screencastFrame', data => {
+  console.log('received frame, jpeg size:', data.length);
+});
+await page.screencast.start();
+// ... perform actions ...
+await page.screencast.stop();
+```
+
+
 ## async method: Page.screenshot
 * since: v1.8
 - returns: <[Buffer]>
@@ -3770,6 +4006,8 @@ Returns the buffer with the captured screenshot.
 
 ### option: Page.screenshot.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Page.screenshot.signal = %%-input-signal-%%
 
 ### option: Page.screenshot.fullPage = %%-screenshot-option-full-page-%%
 * since: v1.8
@@ -3867,6 +4105,8 @@ await page.SelectOptionAsync("select#colors", new[] { "red", "green", "blue" });
 ### option: Page.selectOption.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Page.selectOption.signal = %%-input-signal-%%
+
 ### param: Page.selectOption.element = %%-python-select-options-element-%%
 * since: v1.8
 
@@ -3906,6 +4146,9 @@ When all steps combined have not finished during the specified [`option: timeout
 ### option: Page.setChecked.force = %%-input-force-%%
 * since: v1.15
 
+### option: Page.setChecked.scroll = %%-input-scroll-%%
+* since: v1.62
+
 ### option: Page.setChecked.noWaitAfter = %%-input-no-wait-after-removed-%%
 * since: v1.15
 
@@ -3920,6 +4163,8 @@ When all steps combined have not finished during the specified [`option: timeout
 
 ### option: Page.setChecked.timeout = %%-input-timeout-js-%%
 * since: v1.15
+
+### option: Page.setChecked.signal = %%-input-signal-%%
 
 ### option: Page.setChecked.trial = %%-input-trial-%%
 * since: v1.15
@@ -3940,6 +4185,8 @@ HTML markup to assign to the page.
 
 ### option: Page.setContent.timeout = %%-navigation-timeout-js-%%
 * since: v1.8
+
+### option: Page.setContent.signal = %%-input-signal-%%
 
 ### option: Page.setContent.waitUntil = %%-navigation-wait-until-%%
 * since: v1.8
@@ -4026,6 +4273,8 @@ This method expects [`param: selector`] to point to an
 ### option: Page.setInputFiles.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Page.setInputFiles.signal = %%-input-signal-%%
+
 ## async method: Page.setViewportSize
 * since: v1.8
 
@@ -4091,6 +4340,40 @@ Page width in pixels.
 
 Page height in pixels.
 
+## async method: Page.ariaSnapshot
+* since: v1.59
+- returns: <[string]>
+
+Captures the aria snapshot of the page. Read more about [aria snapshots](../aria-snapshots.md).
+
+### option: Page.ariaSnapshot.mode
+* since: v1.59
+- `mode` <[AriaSnapshotMode]<"ai"|"default">>
+
+When set to `"ai"`, returns a snapshot optimized for AI consumption: including element references like `[ref=e2]` and snapshots of `<iframe>`s. Defaults to `"default"`.
+
+### option: Page.ariaSnapshot.timeout = %%-input-timeout-%%
+* since: v1.59
+
+### option: Page.ariaSnapshot.timeout = %%-input-timeout-js-%%
+* since: v1.59
+
+### option: Page.ariaSnapshot.signal = %%-input-signal-%%
+
+### option: Page.ariaSnapshot.depth
+* since: v1.59
+- `depth` <[int]>
+
+When specified, limits the depth of the snapshot.
+
+### option: Page.ariaSnapshot.boxes
+* since: v1.60
+- `boxes` <[boolean]>
+
+When `true`, appends each element's bounding box as `[box=x,y,width,height]` to the snapshot. Coordinates are
+relative to the viewport, in CSS pixels, as returned by [`Element.getBoundingClientRect()`](https://developer.mozilla.org/en-US/docs/Web/API/Element/getBoundingClientRect).
+Defaults to `false`.
+
 ## async method: Page.tap
 * since: v1.8
 * discouraged: Use locator-based [`method: Locator.tap`] instead. Read more about [locators](../locators.md).
@@ -4107,7 +4390,7 @@ When all steps combined have not finished during the specified [`option: timeout
 [TimeoutError]. Passing zero timeout disables this.
 
 :::note
-[`method: Page.tap`] the method will throw if [`option: Browser.newContext.hasTouch`] option of the browser context is false.
+[`method: Page.tap`] will throw if the [`option: Browser.newContext.hasTouch`] option of the browser context is false.
 :::
 
 ### param: Page.tap.selector = %%-input-selector-%%
@@ -4115,6 +4398,9 @@ When all steps combined have not finished during the specified [`option: timeout
 
 ### option: Page.tap.force = %%-input-force-%%
 * since: v1.8
+
+### option: Page.tap.scroll = %%-input-scroll-%%
+* since: v1.62
 
 ### option: Page.tap.modifiers = %%-input-modifiers-%%
 * since: v1.8
@@ -4133,6 +4419,8 @@ When all steps combined have not finished during the specified [`option: timeout
 
 ### option: Page.tap.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Page.tap.signal = %%-input-signal-%%
 
 ### option: Page.tap.trial = %%-input-trial-with-modifiers-%%
 * since: v1.11
@@ -4155,6 +4443,8 @@ Returns `element.textContent`.
 
 ### option: Page.textContent.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Page.textContent.signal = %%-input-signal-%%
 
 ## async method: Page.title
 * since: v1.8
@@ -4204,6 +4494,8 @@ Time to wait between key presses in milliseconds. Defaults to 0.
 ### option: Page.type.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Page.type.signal = %%-input-signal-%%
+
 ## async method: Page.uncheck
 * since: v1.8
 * discouraged: Use locator-based [`method: Locator.uncheck`] instead. Read more about [locators](../locators.md).
@@ -4228,6 +4520,9 @@ When all steps combined have not finished during the specified [`option: timeout
 ### option: Page.uncheck.force = %%-input-force-%%
 * since: v1.8
 
+### option: Page.uncheck.scroll = %%-input-scroll-%%
+* since: v1.62
+
 ### option: Page.uncheck.noWaitAfter = %%-input-no-wait-after-removed-%%
 * since: v1.8
 
@@ -4242,6 +4537,8 @@ When all steps combined have not finished during the specified [`option: timeout
 
 ### option: Page.uncheck.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Page.uncheck.signal = %%-input-signal-%%
 
 ### option: Page.uncheck.trial = %%-input-trial-%%
 * since: v1.11
@@ -4262,9 +4559,17 @@ the [`param: url`].
 
 ### param: Page.unroute.url
 * since: v1.8
+* langs: js
+- `url` <[string]|[RegExp]|[URLPattern]|[function]\([URL]\):[boolean]>
+
+A glob pattern, regex pattern, URL pattern, or predicate receiving [URL] to match while routing.
+
+### param: Page.unroute.url
+* since: v1.8
+* langs: python, csharp, java
 - `url` <[string]|[RegExp]|[function]\([URL]\):[boolean]>
 
-A glob pattern, regex pattern or predicate receiving [URL] to match while routing.
+A glob pattern, regex pattern, or predicate receiving [URL] to match while routing.
 
 ### param: Page.unroute.handler
 * since: v1.8
@@ -4288,11 +4593,13 @@ Optional handler function to route the request.
 * since: v1.8
 - returns: <[null]|[Video]>
 
-Video object associated with this page.
+Video object associated with this page. Can be used to access the video file when using the `recordVideo` context option.
 
 ## method: Page.viewportSize
 * since: v1.8
 - returns: <[null]|[Object]>
+  * alias: ViewportSize
+  * alias-csharp: PageViewportSizeResult
   - `width` <[int]> page width in pixels.
   - `height` <[int]> page height in pixels.
 
@@ -4305,6 +4612,7 @@ Performs action and waits for the Page to close.
 
 ### option: Page.waitForClose.timeout = %%-wait-for-event-timeout-%%
 * since: v1.9
+### option: Page.waitForClose.signal = %%-wait-for-event-signal-%%
 
 ### param: Page.waitForClose.callback = %%-java-wait-for-event-callback-%%
 * since: v1.9
@@ -4325,6 +4633,24 @@ Will throw an error if the page is closed before the [`event: Page.console`] eve
 * langs: python
 - returns: <[EventContextManager]<[ConsoleMessage]>>
 
+**Usage**
+
+```python async
+async with page.expect_console_message() as message_info:
+    await page.get_by_role("button").click()
+
+message = await message_info.value
+print(message.text)
+```
+
+```python sync
+with page.expect_console_message() as message_info:
+    page.get_by_role("button").click()
+
+message = message_info.value
+print(message.text)
+```
+
 ### param: Page.waitForConsoleMessage.action = %%-csharp-wait-for-event-action-%%
 * since: v1.12
 
@@ -4336,6 +4662,7 @@ Receives the [ConsoleMessage] object and resolves to truthy value when the waiti
 
 ### option: Page.waitForConsoleMessage.timeout = %%-wait-for-event-timeout-%%
 * since: v1.9
+### option: Page.waitForConsoleMessage.signal = %%-wait-for-event-signal-%%
 
 ### param: Page.waitForConsoleMessage.callback = %%-java-wait-for-event-callback-%%
 * since: v1.9
@@ -4356,6 +4683,24 @@ Will throw an error if the page is closed before the download event is fired.
 * langs: python
 - returns: <[EventContextManager]<[Download]>>
 
+**Usage**
+
+```python async
+async with page.expect_download() as download_info:
+    await page.get_by_text("Download").click()
+
+download = await download_info.value
+print(download.url)
+```
+
+```python sync
+with page.expect_download() as download_info:
+    page.get_by_text("Download").click()
+
+download = download_info.value
+print(download.url)
+```
+
 ### param: Page.waitForDownload.action = %%-csharp-wait-for-event-action-%%
 * since: v1.12
 
@@ -4367,6 +4712,7 @@ Receives the [Download] object and resolves to truthy value when the waiting sho
 
 ### option: Page.waitForDownload.timeout = %%-wait-for-event-timeout-%%
 * since: v1.9
+### option: Page.waitForDownload.signal = %%-wait-for-event-signal-%%
 
 ### param: Page.waitForDownload.callback = %%-java-wait-for-event-callback-%%
 * since: v1.9
@@ -4423,6 +4769,7 @@ Either a predicate that receives an event or an options object. Optional.
 
 ### option: Page.waitForEvent.timeout = %%-wait-for-event-timeout-%%
 * since: v1.8
+### option: Page.waitForEvent.signal = %%-wait-for-event-signal-%%
 
 ## async method: Page.waitForFileChooser
 * since: v1.9
@@ -4440,6 +4787,24 @@ Will throw an error if the page is closed before the file chooser is opened.
 * langs: python
 - returns: <[EventContextManager]<[FileChooser]>>
 
+**Usage**
+
+```python async
+async with page.expect_file_chooser() as fc_info:
+    await page.get_by_text("Upload").click()
+
+file_chooser = await fc_info.value
+await file_chooser.set_files("myfile.pdf")
+```
+
+```python sync
+with page.expect_file_chooser() as fc_info:
+    page.get_by_text("Upload").click()
+
+file_chooser = fc_info.value
+file_chooser.set_files("myfile.pdf")
+```
+
 ### param: Page.waitForFileChooser.action = %%-csharp-wait-for-event-action-%%
 * since: v1.12
 
@@ -4451,6 +4816,7 @@ Receives the [FileChooser] object and resolves to truthy value when the waiting 
 
 ### option: Page.waitForFileChooser.timeout = %%-wait-for-event-timeout-%%
 * since: v1.9
+### option: Page.waitForFileChooser.signal = %%-wait-for-event-signal-%%
 
 ### param: Page.waitForFileChooser.callback = %%-java-wait-for-event-callback-%%
 * since: v1.9
@@ -4596,6 +4962,8 @@ Optional argument to pass to [`param: expression`].
 ### option: Page.waitForFunction.timeout = %%-wait-for-function-timeout-js-%%
 * since: v1.8
 
+### option: Page.waitForFunction.signal = %%-input-signal-%%
+
 ## async method: Page.waitForLoadState
 * since: v1.8
 
@@ -4688,6 +5056,7 @@ Console.WriteLine(await popup.TitleAsync()); // popup is ready to use.
 
 ### option: Page.waitForLoadState.timeout = %%-navigation-timeout-js-%%
 * since: v1.8
+### option: Page.waitForLoadState.signal = %%-wait-for-event-signal-%%
 
 ## async method: Page.waitForNavigation
 * since: v1.8
@@ -4760,7 +5129,10 @@ a navigation.
 ### param: Page.waitForNavigation.action = %%-csharp-wait-for-event-action-%%
 * since: v1.12
 
-### option: Page.waitForNavigation.url = %%-wait-for-navigation-url-%%
+### option: Page.waitForNavigation.url = %%-js-wait-for-navigation-url-%%
+* since: v1.8
+
+### option: Page.waitForNavigation.url = %%-python-csharp-java-wait-for-navigation-url-%%
 * since: v1.8
 
 ### option: Page.waitForNavigation.waitUntil = %%-navigation-wait-until-%%
@@ -4771,6 +5143,7 @@ a navigation.
 
 ### option: Page.waitForNavigation.timeout = %%-navigation-timeout-js-%%
 * since: v1.8
+### option: Page.waitForNavigation.signal = %%-wait-for-event-signal-%%
 
 ### param: Page.waitForNavigation.callback = %%-java-wait-for-event-callback-%%
 * since: v1.9
@@ -4791,6 +5164,24 @@ Will throw an error if the page is closed before the popup event is fired.
 * langs: python
 - returns: <[EventContextManager]<[Page]>>
 
+**Usage**
+
+```python async
+async with page.expect_popup() as popup_info:
+    await page.get_by_text("Open popup").click()
+
+popup = await popup_info.value
+print(await popup.title())
+```
+
+```python sync
+with page.expect_popup() as popup_info:
+    page.get_by_text("Open popup").click()
+
+popup = popup_info.value
+print(popup.title())
+```
+
 ### param: Page.waitForPopup.action = %%-csharp-wait-for-event-action-%%
 * since: v1.12
 
@@ -4802,6 +5193,7 @@ Receives the [Page] object and resolves to truthy value when the waiting should 
 
 ### option: Page.waitForPopup.timeout = %%-wait-for-event-timeout-%%
 * since: v1.9
+### option: Page.waitForPopup.signal = %%-wait-for-event-signal-%%
 
 ### param: Page.waitForPopup.callback = %%-java-wait-for-event-callback-%%
 * since: v1.9
@@ -4911,6 +5303,8 @@ Request URL string, regex or predicate receiving [Request] object.
 Maximum wait time in milliseconds, defaults to 30 seconds, pass `0` to disable the timeout. The default value can be
 changed by using the [`method: Page.setDefaultTimeout`] method.
 
+### option: Page.waitForRequest.signal = %%-wait-for-event-signal-%%
+
 ### param: Page.waitForRequest.callback = %%-java-wait-for-event-callback-%%
 * since: v1.9
 
@@ -4930,6 +5324,24 @@ Will throw an error if the page is closed before the [`event: Page.requestFinish
 * langs: python
 - returns: <[EventContextManager]<[Request]>>
 
+**Usage**
+
+```python async
+async with page.expect_request_finished() as request_info:
+    await page.get_by_text("Trigger request").click()
+
+request = await request_info.value
+print(request.url)
+```
+
+```python sync
+with page.expect_request_finished() as request_info:
+    page.get_by_text("Trigger request").click()
+
+request = request_info.value
+print(request.url)
+```
+
 ### param: Page.waitForRequestFinished.action = %%-csharp-wait-for-event-action-%%
 * since: v1.12
 
@@ -4941,6 +5353,7 @@ Receives the [Request] object and resolves to truthy value when the waiting shou
 
 ### option: Page.waitForRequestFinished.timeout = %%-wait-for-event-timeout-%%
 * since: v1.12
+### option: Page.waitForRequestFinished.signal = %%-wait-for-event-signal-%%
 
 ### param: Page.waitForRequestFinished.callback = %%-java-wait-for-event-callback-%%
 * since: v1.12
@@ -5056,6 +5469,8 @@ it gets merged via the [`new URL()`](https://developer.mozilla.org/en-US/docs/We
 
 Maximum wait time in milliseconds, defaults to 30 seconds, pass `0` to disable the timeout. The default value can be
 changed by using the [`method: BrowserContext.setDefaultTimeout`] or [`method: Page.setDefaultTimeout`] methods.
+
+### option: Page.waitForResponse.signal = %%-wait-for-event-signal-%%
 
 ### param: Page.waitForResponse.callback = %%-java-wait-for-event-callback-%%
 * since: v1.9
@@ -5195,6 +5610,8 @@ class FrameExamples
 ### option: Page.waitForSelector.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Page.waitForSelector.signal = %%-input-signal-%%
+
 ## async method: Page.waitForCondition
 * since: v1.32
 * langs: java
@@ -5297,7 +5714,10 @@ await page.ClickAsync("a.delayed-navigation"); // clicking the link will indirec
 await page.WaitForURLAsync("**/target.html");
 ```
 
-### param: Page.waitForURL.url = %%-wait-for-navigation-url-%%
+### param: Page.waitForURL.url = %%-js-wait-for-navigation-url-%%
+* since: v1.11
+
+### param: Page.waitForURL.url = %%-python-csharp-java-wait-for-navigation-url-%%
 * since: v1.11
 
 ### option: Page.waitForURL.timeout = %%-navigation-timeout-%%
@@ -5305,6 +5725,7 @@ await page.WaitForURLAsync("**/target.html");
 
 ### option: Page.waitForURL.timeout = %%-navigation-timeout-js-%%
 * since: v1.11
+### option: Page.waitForURL.signal = %%-wait-for-event-signal-%%
 
 ### option: Page.waitForURL.waitUntil = %%-navigation-wait-until-%%
 * since: v1.11
@@ -5325,6 +5746,24 @@ Will throw an error if the page is closed before the WebSocket event is fired.
 * langs: python
 - returns: <[EventContextManager]<[WebSocket]>>
 
+**Usage**
+
+```python async
+async with page.expect_websocket() as ws_info:
+    await page.get_by_text("Connect").click()
+
+ws = await ws_info.value
+print(ws.url)
+```
+
+```python sync
+with page.expect_websocket() as ws_info:
+    page.get_by_text("Connect").click()
+
+ws = ws_info.value
+print(ws.url)
+```
+
 ### param: Page.waitForWebSocket.action = %%-csharp-wait-for-event-action-%%
 * since: v1.12
 
@@ -5336,6 +5775,7 @@ Receives the [WebSocket] object and resolves to truthy value when the waiting sh
 
 ### option: Page.waitForWebSocket.timeout = %%-wait-for-event-timeout-%%
 * since: v1.9
+### option: Page.waitForWebSocket.signal = %%-wait-for-event-signal-%%
 
 ### param: Page.waitForWebSocket.callback = %%-java-wait-for-event-callback-%%
 * since: v1.9
@@ -5356,6 +5796,24 @@ Will throw an error if the page is closed before the worker event is fired.
 * langs: python
 - returns: <[EventContextManager]<[Worker]>>
 
+**Usage**
+
+```python async
+async with page.expect_worker() as worker_info:
+    await page.get_by_text("Start worker").click()
+
+worker = await worker_info.value
+print(worker.url)
+```
+
+```python sync
+with page.expect_worker() as worker_info:
+    page.get_by_text("Start worker").click()
+
+worker = worker_info.value
+print(worker.url)
+```
+
 ### param: Page.waitForWorker.action = %%-csharp-wait-for-event-action-%%
 * since: v1.12
 
@@ -5367,6 +5825,7 @@ Receives the [Worker] object and resolves to truthy value when the waiting shoul
 
 ### option: Page.waitForWorker.timeout = %%-wait-for-event-timeout-%%
 * since: v1.9
+### option: Page.waitForWorker.signal = %%-wait-for-event-signal-%%
 
 ### param: Page.waitForWorker.callback = %%-java-wait-for-event-callback-%%
 * since: v1.9
@@ -5404,3 +5863,4 @@ Will throw an error if the page is closed before the `event` is fired.
 
 ### option: Page.waitForEvent2.timeout = %%-wait-for-event-timeout-%%
 * since: v1.8
+### option: Page.waitForEvent2.signal = %%-wait-for-event-signal-%%

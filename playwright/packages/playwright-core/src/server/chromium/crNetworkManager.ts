@@ -15,15 +15,16 @@
  * limitations under the License.
  */
 
-import { assert, headersArrayToObject, headersObjectToArray } from '../../utils';
-import { eventsHelper } from '../utils/eventsHelper';
+import { eventsHelper } from '@utils/eventsHelper';
+import { assert } from '@isomorphic/assert';
+import { headersArrayToObject, headersObjectToArray } from '@isomorphic/headers';
 import { helper } from '../helper';
 import * as network from '../network';
 import { isProtocolError, isSessionClosedError } from '../protocolError';
 
 import type { CRSession } from './crConnection';
 import type { Protocol } from './protocol';
-import type { RegisteredListener } from '../utils/eventsHelper';
+import type { RegisteredListener } from '@utils/eventsHelper';
 import type * as contexts from '../browserContext';
 import type * as frames from '../frames';
 import type { Page } from '../page';
@@ -53,6 +54,7 @@ export class CRNetworkManager {
   private _requestIdToRequestPausedEvent = new Map<string, { sessionInfo: SessionInfo, event: Protocol.Fetch.requestPausedPayload }>();
   private _responseExtraInfoTracker = new ResponseExtraInfoTracker();
   private _sessions = new Map<CRSession, SessionInfo>();
+  private _timestampBaselineForWebSocket = new Map<string, number>();
 
   constructor(page: Page | null, serviceWorker: CRServiceWorker | null) {
     this._page = page;
@@ -75,11 +77,15 @@ export class CRNetworkManager {
     if (this._page) {
       sessionInfo.eventListeners.push(...[
         eventsHelper.addEventListener(session, 'Network.webSocketCreated', e => this._page!.frameManager.onWebSocketCreated(e.requestId, e.url)),
-        eventsHelper.addEventListener(session, 'Network.webSocketWillSendHandshakeRequest', e => this._page!.frameManager.onWebSocketRequest(e.requestId)),
-        eventsHelper.addEventListener(session, 'Network.webSocketHandshakeResponseReceived', e => this._page!.frameManager.onWebSocketResponse(e.requestId, e.response.status, e.response.statusText)),
-        eventsHelper.addEventListener(session, 'Network.webSocketFrameSent', e => e.response.payloadData && this._page!.frameManager.onWebSocketFrameSent(e.requestId, e.response.opcode, e.response.payloadData)),
-        eventsHelper.addEventListener(session, 'Network.webSocketFrameReceived', e => e.response.payloadData && this._page!.frameManager.webSocketFrameReceived(e.requestId, e.response.opcode, e.response.payloadData)),
-        eventsHelper.addEventListener(session, 'Network.webSocketClosed', e => this._page!.frameManager.webSocketClosed(e.requestId)),
+        eventsHelper.addEventListener(session, 'Network.webSocketWillSendHandshakeRequest', event => this._onWebSocketWillSendHandshakeRequest(event)),
+        eventsHelper.addEventListener(session, 'Network.webSocketHandshakeResponseReceived', e => this._page!.frameManager.onWebSocketResponse(e.requestId, {
+          status: e.response.status,
+          statusText: e.response.statusText,
+          headers: headersObjectToArray(e.response.headers, '\n'),
+        })),
+        eventsHelper.addEventListener(session, 'Network.webSocketFrameSent', e => e.response.payloadData && this._page!.frameManager.onWebSocketFrameSent(e.requestId, e.response.opcode, e.response.payloadData, this._timestampToWallTimeMsForWebSocket(e.requestId, e.timestamp))),
+        eventsHelper.addEventListener(session, 'Network.webSocketFrameReceived', e => e.response.payloadData && this._page!.frameManager.webSocketFrameReceived(e.requestId, e.response.opcode, e.response.payloadData, this._timestampToWallTimeMsForWebSocket(e.requestId, e.timestamp))),
+        eventsHelper.addEventListener(session, 'Network.webSocketClosed', event => this._onWebSocketClosed(event)),
         eventsHelper.addEventListener(session, 'Network.webSocketFrameError', e => this._page!.frameManager.webSocketError(e.requestId, e.errorMessage)),
       ]);
     }
@@ -97,6 +103,8 @@ export class CRNetworkManager {
     if (info)
       eventsHelper.removeEventListeners(info.eventListeners);
     this._sessions.delete(session);
+    for (const request of this._page?.networkRequests() ?? [])
+      InterceptableRequest.detachIfNeeded(request, session);
   }
 
   private async _forEachSession(cb: (sessionInfo: SessionInfo) => Promise<any>) {
@@ -254,7 +262,7 @@ export class CRNetworkManager {
       this._requestIdToRequestWillBeSentEvent.delete(requestId);
     } else {
       const existingRequest = this._requestIdToRequest.get(requestId);
-      const alreadyContinuedParams = existingRequest?._route?._alreadyContinuedParams;
+      const alreadyContinuedParams = existingRequest?._originalRequestRoute?._alreadyContinuedParams;
       if (alreadyContinuedParams && !event.redirectedRequestId) {
         // Sometimes Chromium network stack restarts the request internally.
         // For example, when no-cors request hits a "less public address space", it should be resent with cors.
@@ -340,6 +348,10 @@ export class CRNetworkManager {
       if (redirectedFrom || (!this._userRequestInterceptionEnabled && this._protocolRequestInterceptionEnabled)) {
         // Chromium does not preserve header overrides between redirects, so we have to do it ourselves.
         headersOverride = redirectedFrom?._originalRequestRoute?._alreadyContinuedParams?.headers;
+        if (headersOverride) {
+          const originalHeaders = Object.entries(requestPausedEvent.request.headers).map(([name, value]) => ({ name, value }));
+          headersOverride = removeCookieHeader(network.applyHeadersOverrides(originalHeaders, headersOverride));
+        }
         requestPausedSessionInfo!.session._sendMayFail('Fetch.continueRequest', { requestId: requestPausedEvent.requestId, headers: headersOverride });
       } else {
         route = new RouteImpl(requestPausedSessionInfo!.session, requestPausedEvent.requestId);
@@ -371,32 +383,7 @@ export class CRNetworkManager {
   }
 
   _createResponse(request: InterceptableRequest, responsePayload: Protocol.Network.Response, hasExtraInfo: boolean): network.Response {
-    const getResponseBody = async () => {
-      const contentLengthHeader = Object.entries(responsePayload.headers).find(header => header[0].toLowerCase() === 'content-length');
-      const expectedLength = contentLengthHeader ? +contentLengthHeader[1] : undefined;
-
-      const session = request.session;
-      const response = await session.send('Network.getResponseBody', { requestId: request._requestId });
-      if (response.body || !expectedLength)
-        return Buffer.from(response.body, response.base64Encoded ? 'base64' : 'utf8');
-
-      // Make sure no network requests sent while reading the body for fulfilled requests.
-      if (request._route?._fulfilled)
-        return Buffer.from('');
-
-      // For <link prefetch we are going to receive empty body with non-empty content-length expectation. Reach out for the actual content.
-      const resource = await session.send('Network.loadNetworkResource', { url: request.request.url(), frameId: this._serviceWorker ? undefined : request.request.frame()!._id, options: { disableCache: false, includeCredentials: true } });
-      const chunks: Buffer[] = [];
-      while (resource.resource.stream) {
-        const chunk = await session.send('IO.read', { handle: resource.resource.stream });
-        chunks.push(Buffer.from(chunk.data, chunk.base64Encoded ? 'base64' : 'utf-8'));
-        if (chunk.eof) {
-          await session.send('IO.close', { handle: resource.resource.stream });
-          break;
-        }
-      }
-      return Buffer.concat(chunks);
-    };
+    const getResponseBody = InterceptableRequest.createResponseBodyCallback(request.request);
     const timingPayload = responsePayload.timing!;
     let timing: network.ResourceTiming;
     if (timingPayload && !this._responseExtraInfoTracker.servedFromCache(request._requestId)) {
@@ -422,7 +409,8 @@ export class CRNetworkManager {
         responseStart: -1,
       };
     }
-    const response = new network.Response(request.request, responsePayload.status, responsePayload.statusText, headersObjectToArray(responsePayload.headers), timing, getResponseBody, !!responsePayload.fromServiceWorker, responsePayload.protocol);
+    const response = new network.Response(request.request, responsePayload.status, responsePayload.statusText, headersObjectToArray(responsePayload.headers), timing, getResponseBody, !!responsePayload.fromServiceWorker);
+    response._setHttpVersion(responsePayload?.protocol ?? null);
     if (responsePayload?.remoteIPAddress && typeof responsePayload?.remotePort === 'number') {
       response._serverAddrFinished({
         ipAddress: responsePayload.remoteIPAddress,
@@ -540,6 +528,24 @@ export class CRNetworkManager {
     (this._page?.frameManager || this._serviceWorker)!.requestFailed(request.request, !!event.canceled);
   }
 
+  _onWebSocketWillSendHandshakeRequest(event: Protocol.Network.webSocketWillSendHandshakeRequestPayload) {
+    const wallTimeMs = event.wallTime * 1000;
+    this._timestampBaselineForWebSocket.set(event.requestId, wallTimeMs - event.timestamp * 1000);
+    this._page!.frameManager.onWebSocketRequest(event.requestId, {
+      headers: headersObjectToArray(event.request.headers, '\n'),
+      wallTimeMs,
+    });
+  }
+
+  _onWebSocketClosed(event: Protocol.Network.webSocketClosedPayload) {
+    this._timestampBaselineForWebSocket.delete(event.requestId);
+    this._page!.frameManager.webSocketClosed(event.requestId);
+  }
+
+  _timestampToWallTimeMsForWebSocket(requestId: string, timestamp: number): number {
+    return this._timestampBaselineForWebSocket.get(requestId)! + timestamp * 1000;
+  }
+
   private _maybeUpdateRequestSession(sessionInfo: SessionInfo, request: InterceptableRequest) {
     // OOPIF has a main request that starts in the parent session but finishes in the child session.
     // We check for the main request by matching loaderId and requestId, and if it now belongs to
@@ -555,6 +561,8 @@ export class CRNetworkManager {
   }
 }
 
+const kInterceptableRequest = Symbol('InterceptableRequest');
+
 class InterceptableRequest {
   readonly request: network.Request;
   readonly _requestId: string;
@@ -562,11 +570,53 @@ class InterceptableRequest {
   readonly _documentId: string | undefined;
   readonly _timestamp: number;
   readonly _wallTime: number;
-  readonly _route: RouteImpl | null;
   // Only first request in the chain can be intercepted, so this will
   // store the first and only Route in the chain (if any).
   readonly _originalRequestRoute: RouteImpl | undefined;
   session: CRSession;
+
+  private static from(request: network.Request): InterceptableRequest | undefined {
+    return (request as any)[kInterceptableRequest];
+  }
+
+  static detachIfNeeded(request: network.Request, session: CRSession) {
+    if (InterceptableRequest.from(request)?.session === session)
+      (request as any)[kInterceptableRequest] = undefined;
+  }
+
+  static createResponseBodyCallback(request: network.Request): () => Promise<Buffer> {
+    return async () => {
+      // Lookup the request lazily, so that the response does not retain the
+      // InterceptableRequest and its session after detachIfNeeded().
+      const interceptable = InterceptableRequest.from(request);
+      if (!interceptable)
+        throw new Error('Response body is unavailable');
+      const contentLength = request._existingResponse()?.headerValue('content-length');
+      const expectedLength = contentLength ? +contentLength : undefined;
+
+      const session = interceptable.session;
+      const response = await session.send('Network.getResponseBody', { requestId: interceptable._requestId });
+      if (response.body || !expectedLength)
+        return Buffer.from(response.body, response.base64Encoded ? 'base64' : 'utf8');
+
+      // Make sure no network requests sent while reading the body for fulfilled requests.
+      if (interceptable._originalRequestRoute?._fulfilled)
+        return Buffer.from('');
+
+      // For <link prefetch we are going to receive empty body with non-empty content-length expectation. Reach out for the actual content.
+      const resource = await session.send('Network.loadNetworkResource', { url: request.url(), frameId: request.serviceWorker() ? undefined : request.frame()!._id, options: { disableCache: false, includeCredentials: true } });
+      const chunks: Buffer[] = [];
+      while (resource.resource.stream) {
+        const chunk = await session.send('IO.read', { handle: resource.resource.stream });
+        chunks.push(Buffer.from(chunk.data, chunk.base64Encoded ? 'base64' : 'utf-8'));
+        if (chunk.eof) {
+          await session.send('IO.close', { handle: resource.resource.stream });
+          break;
+        }
+      }
+      return Buffer.concat(chunks);
+    };
+  }
 
   constructor(options: {
     session: CRSession,
@@ -587,7 +637,6 @@ class InterceptableRequest {
     this._requestId = requestWillBeSentEvent.requestId;
     this._interceptionId = requestPausedEvent && requestPausedEvent.requestId;
     this._documentId = documentId;
-    this._route = route;
     this._originalRequestRoute = route ?? redirectedFrom?._originalRequestRoute;
 
     const {
@@ -596,13 +645,13 @@ class InterceptableRequest {
       url,
       postDataEntries = null,
     } = requestPausedEvent ? requestPausedEvent.request : requestWillBeSentEvent.request;
-    const type = (requestWillBeSentEvent.type || '').toLowerCase();
     let postDataBuffer = null;
     const entries = postDataEntries?.filter(entry => entry.bytes);
     if (entries && entries.length)
       postDataBuffer = Buffer.concat(entries.map(entry => Buffer.from(entry.bytes!, 'base64')));
 
-    this.request = new network.Request(context, frame, serviceWorker, redirectedFrom?.request || null, documentId, url, type, method, postDataBuffer,  headersOverride || headersObjectToArray(headers));
+    this.request = new network.Request(context, frame, serviceWorker, redirectedFrom?.request || null, documentId, url, toResourceType(requestWillBeSentEvent.type || 'Other'), method, postDataBuffer,  headersOverride || headersObjectToArray(headers), requestWillBeSentEvent.wallTime * 1000);
+    (this.request as any)[kInterceptableRequest] = this;
   }
 }
 
@@ -621,7 +670,7 @@ class RouteImpl implements network.RouteDelegate {
     this._alreadyContinuedParams = {
       requestId: this._interceptionId!,
       url: overrides.url,
-      headers: overrides.headers,
+      headers: overrides.headers && removeCookieHeader(overrides.headers),
       method: overrides.method,
       postData: overrides.postData ? overrides.postData.toString('base64') : undefined
     };
@@ -671,6 +720,13 @@ async function catchDisallowedErrors(callback: () => Promise<void>) {
   }
 }
 
+
+// Never forward the `cookie` header to Fetch.continueRequest: since Chromium 145 it overrides
+// the cookie store, which leaks the value captured at interception time. Omitting it lets the
+// network stack source the cookie from the store. https://github.com/microsoft/playwright/issues/41428
+function removeCookieHeader(headers: types.HeadersArray): types.HeadersArray {
+  return headers.filter(header => header.name.toLowerCase() !== 'cookie');
+}
 
 function splitSetCookieHeader(headers: types.HeadersArray): types.HeadersArray {
   const index = headers.findIndex(({ name }) => name.toLowerCase() === 'set-cookie');
@@ -835,5 +891,44 @@ class ResponseExtraInfoTracker {
 
   private _stopTracking(requestId: string) {
     this._requests.delete(requestId);
+  }
+}
+
+function toResourceType(type: Protocol.Network.ResourceType): network.ResourceType {
+  switch (type) {
+    case 'Document':
+      return 'document';
+    case 'Stylesheet':
+      return 'stylesheet';
+    case 'Image':
+      return 'image';
+    case 'Media':
+      return 'media';
+    case 'Font':
+      return 'font';
+    case 'Script':
+      return 'script';
+    case 'TextTrack':
+      return 'texttrack';
+    case 'XHR':
+      return 'xhr';
+    case 'Fetch':
+      return 'fetch';
+    case 'EventSource':
+      return 'eventsource';
+    case 'WebSocket':
+      return 'websocket';
+    case 'Manifest':
+      return 'manifest';
+    case 'Ping':
+      return 'ping';
+    case 'CSPViolationReport':
+      return 'cspreport';
+    case 'Prefetch':
+    case 'SignedExchange':
+    case 'Preflight':
+    case 'FedCM':
+    default:
+      return 'other';
   }
 }

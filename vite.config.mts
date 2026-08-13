@@ -26,15 +26,37 @@ const baseDir = __dirname.replace(/\\/g, '/');
 export default defineConfig({
   resolve: {
     alias: {
+      // 1.60 moved utils and isomorphic out of playwright-core into top-level packages,
+      // and upstream reaches them through these aliases; src/ now does the same.
+      // Same reason as the tsconfig path: one yaml, the one the vendored tree uses.
+      'yaml': path.resolve(__dirname, './playwright/node_modules/yaml'),
+      '@isomorphic': path.resolve(__dirname, './playwright/packages/isomorphic'),
+      '@utils': path.resolve(__dirname, './playwright/packages/utils'),
+      '@injected': path.resolve(__dirname, './playwright/packages/injected/src'),
+      '@protocol': path.resolve(__dirname, './playwright/packages/protocol/src'),
+      '@recorder': path.resolve(__dirname, './playwright/packages/recorder/src'),
+      '@web': path.resolve(__dirname, './playwright/packages/web/src'),
+      '@trace': path.resolve(__dirname, './playwright/packages/trace/src'),
+      // Must precede the 'playwright-core/lib' alias below — first match wins, and this
+      // one is the more specific.
+      'playwright-core/lib/bootstrap': path.resolve(__dirname, './src/shims/bootstrap'),
       'playwright-core/lib': path.resolve(__dirname, './playwright/packages/playwright-core/src'),
       '@playwright/test/lib': path.resolve(__dirname, './playwright/packages/playwright/src'),
       'playwright-core': path.resolve(__dirname, './src/index'),
 
-      // for bundles, we use relative paths because different utilsBundleImpl exists in both playwright-core and playwright
-      './utilsBundleImpl': '../bundles/utils/src/utilsBundleImpl',
-      './zipBundleImpl': '../bundles/zip/src/zipBundleImpl',
-      './babelBundleImpl': '../../bundles/babel/src/babelBundleImpl',
-      './expectBundleImpl': '../../bundles/expect/src/expectBundleImpl',
+      // No *BundleImpl aliases here any more. Through 1.59 each vendored dependency was
+      // reached through a per-bundle indirection (`./utilsBundleImpl` -> a sub-package with
+      // its own node_modules), and every one needed an alias because two different
+      // utilsBundleImpl existed. 1.60 (playwright#40074, #40102) deleted that layer
+      // outright: utilsBundle.ts and friends now import `colors`, `mime`, `expect` and the
+      // rest directly, resolved from playwright/node_modules. `npm run ci:pw:bundles`
+      // installs that one tree, and ordinary resolution does the rest.
+
+      // 1.56 made `playwright/src/index.ts` import the MCP test backend, which drags the
+      // whole MCP tree — SDK, zod, zod-to-json-schema, node built-ins — into the service
+      // worker for a code path that can only no-op inside an extension. Cut at the one
+      // edge that reaches it; see the shim for why this is not bundled instead.
+      './mcp/test/browserBackend': path.resolve(__dirname, './src/shims/mcpTestBrowserBackend'),
 
       // shims
       '_url': path.resolve(__dirname, './node_modules/url'),
@@ -46,6 +68,8 @@ export default defineConfig({
       'buffer': path.resolve(__dirname, './node_modules/buffer'),
       'child_process': path.resolve(__dirname, './src/shims/child_process'),
       'chokidar': path.resolve(__dirname, './src/shims/chokidar'),
+      // The CLI argument parser, re-exported by utilsBundle. No argv here — see the shim.
+      'commander': path.resolve(__dirname, './src/shims/commander'),
       'constants': path.resolve(__dirname, './node_modules/constants-browserify'),
       'crypto': path.resolve(__dirname, './node_modules/crypto-browserify'),
       'debug': path.resolve(__dirname, './node_modules/debug'),
@@ -56,8 +80,16 @@ export default defineConfig({
       'http': path.resolve(__dirname, './node_modules/stream-http'),
       'http2': path.resolve(__dirname, './node_modules/stream-http'),
       'https': path.resolve(__dirname, './node_modules/https-browserify'),
+      // Node's inspector module — and, more importantly, NOT the unrelated npm package of
+      // the same name that sits in devDependencies and cannot load in a browser.
+      'inspector': path.resolve(__dirname, './src/shims/inspector'),
+      // Unresolved, Vite stubs this under a name Chrome refuses to load — see the shim.
+      'kerberos': path.resolve(__dirname, './src/shims/kerberos'),
       'module': path.resolve(__dirname, './src/shims/module'),
       'net': path.resolve(__dirname, './src/shims/net'),
+      // `open` launches a desktop browser, which an extension has no way to do. Shimmed at
+      // the package rather than patching around its PowerShell/WSL helpers — see the shim.
+      'open': path.resolve(__dirname, './src/shims/open'),
       'os': path.resolve(__dirname, './node_modules/os-browserify/browser'),
       'path': path.resolve(__dirname, './node_modules/path'),
       'process': path.resolve(__dirname, './node_modules/process'),
@@ -70,6 +102,16 @@ export default defineConfig({
 
       'fs/promises': path.resolve(__dirname, './src/shims/fs/promises'),
 
+      // The MCP SDK imports its node built-ins with the `node:` prefix, which the
+      // unprefixed aliases above do not match. Same targets, so a module reached both
+      // ways resolves to one shim rather than two copies of it.
+      'node:child_process': path.resolve(__dirname, './src/shims/child_process'),
+      'node:crypto': path.resolve(__dirname, './node_modules/crypto-browserify'),
+      'node:fs': path.resolve(__dirname, './src/shims/fs'),
+      'node:path': path.resolve(__dirname, './node_modules/path'),
+      'node:process': path.resolve(__dirname, './node_modules/process'),
+      'node:tls': path.resolve(__dirname, './src/shims/tls'),
+      'node:url': path.resolve(__dirname, './src/shims/url'),
       'node:events': path.resolve(__dirname, './node_modules/events'),
       'node:module': path.resolve(__dirname, './src/shims/module'),
       'node:stream': path.resolve(__dirname, './node_modules/readable-stream'),
@@ -124,9 +166,12 @@ export default defineConfig({
       ],
       include: [
         path.resolve(__dirname, './playwright/packages/playwright/src/**/*'),
-        path.resolve(__dirname, './playwright/packages/playwright/bundles/*/src/**/*'),
         path.resolve(__dirname, './playwright/packages/playwright-core/src/**/*'),
-        path.resolve(__dirname, './playwright/packages/playwright-core/bundles/*/src/**/*'),
+        // 1.60 moved these out of playwright-core, and they carry vendored CJS of their
+        // own (utils/third_party/pixelmatch.js). Without them here the CommonJS transform
+        // skips those files and a default import of one resolves to nothing.
+        path.resolve(__dirname, './playwright/packages/utils/**/*'),
+        path.resolve(__dirname, './playwright/packages/isomorphic/**/*'),
         /node_modules/,
       ],
     }

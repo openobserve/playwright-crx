@@ -15,8 +15,9 @@
  */
 
 import crypto from 'crypto';
+import { filterStackFile } from '@utils/stackTrace';
 
-import { filterStackFile, formatLocation } from '../util';
+import { formatLocation } from '../util';
 
 import type { FixturesWithLocation } from './config';
 import type { Fixtures } from '../../types/test';
@@ -25,7 +26,7 @@ import type { Location } from '../../types/testReporter';
 export type FixtureScope = 'test' | 'worker';
 type FixtureAuto = boolean | 'all-hooks-included';
 const kScopeOrder: FixtureScope[] = ['test', 'worker'];
-type FixtureOptions = { auto?: FixtureAuto, scope?: FixtureScope, option?: boolean, timeout?: number | undefined, title?: string, box?: boolean };
+type FixtureOptions = { auto?: FixtureAuto, scope?: FixtureScope, option?: boolean, timeout?: number | undefined, title?: string, box?: boolean | 'self' };
 type FixtureTuple = [ value: any, options: FixtureOptions ];
 export type FixtureRegistration = {
   // Fixture registration location.
@@ -52,7 +53,7 @@ export type FixtureRegistration = {
   // Whether this fixture is an option override value set from the config.
   optionOverride?: boolean;
   // Do not generate the step for this fixture, consider it internal.
-  box?: boolean;
+  box?: boolean | 'self';
 };
 export type LoadError = {
   message: string;
@@ -70,6 +71,12 @@ function isFixtureTuple(value: any): value is FixtureTuple {
 
 function isFixtureOption(value: any): value is FixtureTuple {
   return isFixtureTuple(value) && !!value[1].option;
+}
+
+function isOptionFixture(registration: FixtureRegistration): boolean {
+  while (!registration.option && registration.super)
+    registration = registration.super;
+  return registration.option;
 }
 
 export class FixturePool {
@@ -97,6 +104,14 @@ export class FixturePool {
         this._appendFixtureList({ fixtures: selectedOverrides, location: optionOverrides!.location }, !!disallowWorkerFixtures, true);
     }
 
+    if (optionOverrides) {
+      for (const key of overrideKeys) {
+        const registration = this._registrations.get(key);
+        if (registration && !isOptionFixture(registration))
+          this._addLoadError(`Fixture "${key}" cannot be overridden in the configuration "use" section. Only fixtures registered with { option: true } can be set in the config.`, optionOverrides.location);
+      }
+    }
+
     this.digest = this.validate();
   }
 
@@ -105,12 +120,12 @@ export class FixturePool {
     for (const entry of Object.entries(fixtures)) {
       const name = entry[0];
       let value = entry[1];
-      let options: { auto: FixtureAuto, scope: FixtureScope, option: boolean, timeout: number | undefined, customTitle?: string, box?: boolean } | undefined;
+      let options: { auto: FixtureAuto, scope: FixtureScope, option?: boolean, timeout: number | undefined, customTitle?: string, box?: boolean | 'self' } | undefined;
       if (isFixtureTuple(value)) {
         options = {
           auto: value[1].auto ?? false,
           scope: value[1].scope || 'test',
-          option: !!value[1].option,
+          option: value[1].option,
           timeout: value[1].timeout,
           customTitle: value[1].title,
           box: value[1].box,
@@ -129,8 +144,13 @@ export class FixturePool {
           this._addLoadError(`Fixture "${name}" has already been registered as a { auto: '${previous.scope}' } fixture defined in ${formatLocation(previous.location)}.`, location);
           continue;
         }
+        if (previous.option !== options.option && options.option !== undefined) {
+          this._addLoadError(`Fixture "${name}" has already been registered as a { option: ${previous.option} } fixture defined in ${formatLocation(previous.location)}.`, location);
+          continue;
+        }
       } else if (previous) {
-        options = { auto: previous.auto, scope: previous.scope, option: previous.option, timeout: previous.timeout, customTitle: previous.customTitle, box: previous.box };
+        // Note: deliberately not inheriting "options.box" so that fixture override is visible by default.
+        options = { auto: previous.auto, scope: previous.scope, option: previous.option, timeout: previous.timeout, customTitle: previous.customTitle };
       } else if (!options) {
         options = { auto: false, scope: 'test', option: false, timeout: undefined };
       }
@@ -146,7 +166,7 @@ export class FixturePool {
 
       // Overriding option with "undefined" value means setting it to the default value
       // from the config or from the original declaration of the option.
-      if (fn === undefined && options.option && previous) {
+      if (fn === undefined && previous && isOptionFixture(previous)) {
         let original = previous;
         while (!original.optionOverride && original.super)
           original = original.super;
@@ -154,7 +174,7 @@ export class FixturePool {
       }
 
       const deps = fixtureParameterNames(fn, location, e => this._onLoadError(e));
-      const registration: FixtureRegistration = { id: '', name, location, scope: options.scope, fn, auto: options.auto, option: options.option, timeout: options.timeout, customTitle: options.customTitle, box: options.box, deps, super: previous, optionOverride: isOptionsOverride };
+      const registration: FixtureRegistration = { id: '', name, location, scope: options.scope, fn, auto: options.auto, option: !!options.option, timeout: options.timeout, customTitle: options.customTitle, box: options.box, deps, super: previous, optionOverride: isOptionsOverride };
       registrationId(registration);
       this._registrations.set(name, registration);
     }

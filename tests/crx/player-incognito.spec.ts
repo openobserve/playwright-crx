@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { dumpLogHeaders, expect, test } from './crxRecorderTest';
+import { dumpLogHeaders, expect, test, recordButton } from './crxRecorderTest';
 // The test below drives the crx API directly through runCrxTest, which needs the
 // harness extension's `_runTest` global. recorder-crx (what `test` above loads)
 // does not have it, so that test uses the base fixtures instead.
@@ -25,7 +25,7 @@ test('should play in incognito', async ({ configureRecorder, attachRecorder, pag
   await configureRecorder({ playInIncognito: true });
 
   const recorderPage = await attachRecorder(page);
-  await recorderPage.getByTitle('Record').click();
+  await recordButton(recorderPage).click();
 
   editCode(recorderPage, `import { test, expect } from '@playwright/test';
 
@@ -55,7 +55,7 @@ test('should close and reopen incognito window on replay', async ({ configureRec
   await configureRecorder({ playInIncognito: true });
 
   const recorderPage = await attachRecorder(page);
-  await recorderPage.getByTitle('Record').click();
+  await recordButton(recorderPage).click();
 
   editCode(recorderPage, `import { test, expect } from '@playwright/test';
 
@@ -94,7 +94,8 @@ crxTest('should replay against the started tab, not whatever attached first', as
 
     await incognitoApp.recorder.runActions([
       {
-        frame: { pageAlias: 'page', framePath: [] },
+        // 1.62 replaced `frame: { pageGuid, pageAlias, framePath }` with a bare `pageGuid`.
+        pageGuid: 'page',
         action: { name: 'click', selector: 'internal:testid=[data-test="login-user-id-field"s]', signals: [] },
       },
     ]);

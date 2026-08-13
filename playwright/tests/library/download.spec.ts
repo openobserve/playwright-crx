@@ -51,7 +51,8 @@ it.describe('download event', () => {
     });
   });
 
-  it('should report download when navigation turns into download @smoke', async ({ browser, server, browserName, mode }) => {
+  it('should report download when navigation turns into download @smoke', async ({ browser, server, browserName, browserMajorVersion, isBidi }) => {
+    it.skip(browserName === 'chromium' && browserMajorVersion < 140, 'old chromium throws net::ERR_ABORTED, depends on https://chromium-review.googlesource.com/c/chromium/src/+/6696011');
     const page = await browser.newPage();
     const [download, responseOrError] = await Promise.all([
       page.waitForEvent('download'),
@@ -62,22 +63,17 @@ it.describe('download event', () => {
     const path = await download.path();
     expect(fs.existsSync(path)).toBeTruthy();
     expect(fs.readFileSync(path).toString()).toBe('Hello world');
-    if (browserName === 'chromium') {
-      expect(responseOrError instanceof Error).toBeTruthy();
-      expect(responseOrError.message).toContain('net::ERR_ABORTED');
+
+    expect(responseOrError instanceof Error).toBeTruthy();
+    expect(responseOrError.message).toContain('Download is starting');
+
+    if (browserName !== 'firefox' || isBidi)
       expect(page.url()).toBe('about:blank');
-    } else if (browserName === 'webkit') {
-      expect(responseOrError instanceof Error).toBeTruthy();
-      expect(responseOrError.message).toContain('Download is starting');
-      expect(page.url()).toBe('about:blank');
-    } else {
-      expect(responseOrError instanceof Error).toBeTruthy();
-      expect(responseOrError.message).toContain('Download is starting');
-    }
     await page.close();
   });
 
-  it('should work with Cross-Origin-Opener-Policy', async ({ browser, server, browserName }) => {
+  it('should work with Cross-Origin-Opener-Policy', async ({ browser, server, browserName, browserMajorVersion, isBidi }) => {
+    it.skip(browserName === 'chromium' && browserMajorVersion < 140, 'old chromium throws net::ERR_ABORTED, depends on https://chromium-review.googlesource.com/c/chromium/src/+/6696011');
     const page = await browser.newPage();
     const [download, responseOrError] = await Promise.all([
       page.waitForEvent('download'),
@@ -88,18 +84,10 @@ it.describe('download event', () => {
     const path = await download.path();
     expect(fs.existsSync(path)).toBeTruthy();
     expect(fs.readFileSync(path).toString()).toBe('Hello world');
-    if (browserName === 'chromium') {
-      expect(responseOrError instanceof Error).toBeTruthy();
-      expect(responseOrError.message).toContain('net::ERR_ABORTED');
+    expect(responseOrError instanceof Error).toBeTruthy();
+    expect(responseOrError.message).toContain('Download is starting');
+    if (browserName !== 'firefox' || isBidi)
       expect(page.url()).toBe('about:blank');
-    } else if (browserName === 'webkit') {
-      expect(responseOrError instanceof Error).toBeTruthy();
-      expect(responseOrError.message).toContain('Download is starting');
-      expect(page.url()).toBe('about:blank');
-    } else {
-      expect(responseOrError instanceof Error).toBeTruthy();
-      expect(responseOrError.message).toContain('Download is starting');
-    }
     await page.close();
   });
 
@@ -387,7 +375,7 @@ it.describe('download event', () => {
   });
 
   it('should delete downloads on browser gone', async ({ server, browserType }) => {
-    const browser = await browserType.launch();
+    const browser = await browserType.launch({ artifactsDir: undefined });
     const page = await browser.newPage();
     await page.setContent(`<a href="${server.PREFIX}/download">download</a>`);
     const [download1] = await Promise.all([
@@ -406,6 +394,24 @@ it.describe('download event', () => {
     expect(fs.existsSync(path1)).toBeFalsy();
     expect(fs.existsSync(path2)).toBeFalsy();
     expect(fs.existsSync(path.join(path1, '..'))).toBeFalsy();
+  });
+
+  it('should save downloads to artifactsDir', async ({ server, browserType, isFrozenWebkit }, testInfo) => {
+    it.skip(isFrozenWebkit, 'needs recent webkit');
+    const artifactsDir = testInfo.outputPath('artifacts');
+    const browser = await browserType.launch({ artifactsDir });
+    const page = await browser.newPage();
+    await page.setContent(`<a href="${server.PREFIX}/download">download</a>`);
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.click('a')
+    ]);
+    const downloadPath = await download.path();
+    expect(downloadPath.startsWith(artifactsDir)).toBeTruthy();
+    expect(fs.existsSync(downloadPath)).toBeTruthy();
+    await browser.close();
+    // User-provided artifactsDir should not be cleaned up.
+    expect(fs.existsSync(artifactsDir)).toBeTruthy();
   });
 
   it('should close the context without awaiting the failed download', async ({ browser, server, httpsServer, browserName, headless }, testInfo) => {
@@ -432,8 +438,8 @@ it.describe('download event', () => {
     ]).toContain(saveError.message);
   });
 
-  it('should close the context without awaiting the download', async ({ browser, server, browserName, platform }, testInfo) => {
-    it.skip(browserName === 'webkit' && platform === 'linux', 'WebKit on linux does not convert to the download immediately upon receiving headers');
+  it('should close the context without awaiting the download', async ({ browser, server, browserName, platform, channel }, testInfo) => {
+    it.skip(browserName === 'webkit' && (platform === 'linux' || channel === 'webkit-wsl'), 'WebKit on linux does not convert to the download immediately upon receiving headers');
 
     server.setRoute('/downloadStall', (req, res) => {
       res.setHeader('Content-Type', 'application/octet-stream');
@@ -467,8 +473,8 @@ it.describe('download event', () => {
     ]).toContain(saveError.message);
   });
 
-  it('should throw if browser dies', async ({ server, browserType, browserName, platform }, testInfo) => {
-    it.skip(browserName === 'webkit' && platform === 'linux', 'WebKit on linux does not convert to the download immediately upon receiving headers');
+  it('should throw if browser dies', async ({ server, browserType, browserName, platform, channel }, testInfo) => {
+    it.skip(browserName === 'webkit' && (platform === 'linux' || channel === 'webkit-wsl'), 'WebKit on linux does not convert to the download immediately upon receiving headers');
     server.setRoute('/downloadStall', (req, res) => {
       res.setHeader('Content-Type', 'application/octet-stream');
       res.setHeader('Content-Disposition', 'attachment; filename=file.txt');
@@ -636,8 +642,9 @@ it('should be able to download a inline PDF file via response interception', asy
   await page.close();
 });
 
-it('should be able to download a inline PDF file via navigation', async ({ browser, server, asset, browserName, isHeadlessShell }) => {
+it('should be able to download a inline PDF file via navigation', async ({ browser, server, asset, browserName, isHeadlessShell, isBidi }) => {
   it.skip(browserName === 'chromium' && !isHeadlessShell, 'We expect PDF Viewer to open up in headed Chromium');
+  it.skip(browserName === 'firefox' && isBidi, 'We expect PDF Viewer to open up in Firefox with Bidi');
 
   const page = await browser.newPage();
   await page.goto(server.EMPTY_PAGE);
@@ -665,10 +672,6 @@ it('should save to user-specified path', async ({ browser, server, mode }, testI
     page.waitForEvent('download'),
     page.click('a')
   ]);
-  if (mode.startsWith('service')) {
-    const error = await download.path().catch(e => e);
-    expect(error.message).toContain('Path is not available when connecting remotely. Use saveAs() to save a local copy.');
-  }
   const userPath = testInfo.outputPath('download.txt');
   await download.saveAs(userPath);
   expect(fs.existsSync(userPath)).toBeTruthy();

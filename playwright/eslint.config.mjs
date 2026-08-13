@@ -21,6 +21,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import stylistic from "@stylistic/eslint-plugin";
 import importRules from "eslint-plugin-import";
+import progressPlugin from "./utils/eslint-plugin-progress/index.js";
 import { fixupConfigRules } from "@eslint/compat";
 import { FlatCompat } from "@eslint/eslintrc";
 import js from "@eslint/js";
@@ -44,12 +45,16 @@ const ignores = [
   "node_modules/",
   "output/",
   "**/playwright-report/",
+  "examples",
   "packages/*/lib/",
-  "packages/playwright-core/bundles/zip/src/third_party/",
+  "packages/playwright-core/bundles/utils/src/third_party/",
+  "packages/utils/webp/webp_codec.js",
   "packages/playwright-core/src/generated/*",
   "packages/playwright-core/src/third_party/",
   "packages/playwright-core/types/*",
   "packages/playwright-ct-core/src/generated/*",
+  "packages/playwright/bundles/expect/third_party/",
+  "packages/playwright-core/src/tools/skills/",
   "packages/html-reporter/bundle.ts",
   "packages/html-reporter/playwright.config.ts",
   "packages/html-reporter/playwright/*",
@@ -106,6 +111,7 @@ export const baseRules = {
   "new-parens": 2,
   "arrow-parens": [2, "as-needed"],
   "prefer-const": 2,
+  "one-var": [2, "never"],
   "quote-props": [2, "consistent"],
   "nonblock-statement-body-position": [2, "below"],
 
@@ -145,7 +151,6 @@ export const baseRules = {
   "space-in-parens": [2, "never"],
   "array-bracket-spacing": [2, "never"],
   "comma-spacing": [2, { before: false, after: true }],
-  "keyword-spacing": [2, "always"],
   "space-before-function-paren": [
     2,
     {
@@ -176,7 +181,7 @@ export const baseRules = {
       before: true,
     },
   ],
-  "@stylistic/func-call-spacing": 2,
+  "@stylistic/function-call-spacing": 2,
   "@stylistic/type-annotation-spacing": 2,
 
   // file whitespace
@@ -184,7 +189,7 @@ export const baseRules = {
   "no-mixed-spaces-and-tabs": 2,
   "no-trailing-spaces": 2,
   "linebreak-style": [process.platform === "win32" ? 0 : 2, "unix"],
-  indent: [
+  "@stylistic/indent": [
     2,
     2,
     { SwitchCase: 1, CallExpression: { arguments: 2 }, MemberExpression: 2 },
@@ -243,14 +248,12 @@ const importOrderRules = {
     2,
     {
       groups: [
-        "builtin",
-        "external",
+        ["builtin", "external"],
         "internal",
         ["parent", "sibling"],
         "index",
         "type",
       ],
-      "newlines-between": "always",
     },
   ],
   "import/consistent-type-specifier-style": [2, "prefer-top-level"],
@@ -286,6 +289,8 @@ const reactFiles = [
   `packages/recorder/src/**/*.tsx`,
   `packages/trace-viewer/src/**/*.ts`,
   `packages/trace-viewer/src/**/*.tsx`,
+  `packages/dashboard/src/**/*.ts`,
+  `packages/dashboard/src/**/*.tsx`,
   `packages/web/src/**/*.ts`,
   `packages/web/src/**/*.tsx`,
 ];
@@ -298,17 +303,17 @@ function reactPackageSection(packageName) {
       `packages/web/src/**/*.ts`,
       `packages/web/src/**/*.tsx`,
     ],
-    languageOptions: {
-      parser: tsParser,
-      ecmaVersion: 9,
-      sourceType: "module",
-      parserOptions: {
-        project: path.join(__dirname, "packages", packageName, "tsconfig.json"),
-      },
-    },
+    languageOptions: languageOptionsWithTsConfig,
     rules: {
       ...baseRules,
       "no-console": 2,
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "JSXElement > JSXText[value=/^;\n/]",
+          message: 'Unexpected semicolon after JSX element',
+        },
+      ]
     },
   };
 }
@@ -339,6 +344,8 @@ export default [
           message:
             "Please use gracefullyProcessExitDoNotHang function to exit the process.",
         },
+        { object: "process", property: "stdout" },
+        { object: "process", property: "stderr" },
       ],
     },
   },
@@ -355,15 +362,77 @@ export default [
     },
   },
   {
-    files: ["packages/playwright/src/reporters/**/*.ts"],
-    languageOptions: languageOptionsWithTsConfig,
+    files: ["packages/playwright-core/src/**/*.ts"],
+    ignores: [
+      "packages/playwright-core/src/entry/**",
+    ],
     rules: {
-      "no-console": "off",
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [{
+            group: ["**/coreBundle"],
+            message: "coreBundle can only be imported from entry/ files. Use direct imports instead.",
+          }],
+        },
+      ],
+    },
+  },
+  {
+    files: ["packages/playwright-core/src/**/*.ts"],
+    ignores: [
+      "packages/playwright-core/src/package.ts",
+      "packages/playwright-core/src/cli/programWithTestStub.ts",
+    ],
+    rules: {
+      "no-restricted-properties": [
+        "error",
+        {
+          object: "process",
+          property: "exit",
+          message:
+            "Please use gracefullyProcessExitDoNotHang function to exit the process.",
+        },
+        { object: "process", property: "stdout" },
+        { object: "process", property: "stderr" },
+        {
+          object: "require",
+          property: "resolve",
+          message: "Use libPath() from package.ts instead of require.resolve.",
+        },
+      ],
+    },
+  },
+  {
+    files: ["packages/playwright-core/src/tools/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/client", "**/client/**"],
+              message: "tools/ must not import from client/",
+            },
+            {
+              group: ["**/coreBundle"],
+              message: "coreBundle can only be imported from entry/ files. Use direct imports instead.",
+            },
+          ],
+        },
+      ],
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "TSAsExpression > TSAnyKeyword",
+          message: "Avoid 'as any' — risk of accidentally casting to client interfaces. Use a precise type or add an eslint-disable with justification.",
+        },
+      ],
     },
   },
   {
     files: [
-      "packages/playwright-core/src/utils/**/*.ts",
+      "packages/isomorphic/**/*.ts",
     ],
     languageOptions: languageOptionsWithTsConfig,
     rules: {
@@ -393,7 +462,7 @@ export default [
   {
     files: [
       "packages/playwright-core/src/client/**/*.ts",
-      "packages/playwright-core/src/protocol/**/*.ts",
+      "packages/protocol/src/**/*.ts",
     ],
     languageOptions: languageOptionsWithTsConfig,
     rules: {
@@ -403,6 +472,19 @@ export default [
       ],
       ...noFloatingPromisesRules,
       ...noBooleanCompareRules,
+    },
+  },
+  {
+    files: [
+      "packages/playwright-core/src/server/**/*.ts",
+      "packages/utils/**/*.ts",
+    ],
+    plugins: {
+      "progress": progressPlugin,
+    },
+    languageOptions: languageOptionsWithTsConfig,
+    rules: {
+      "progress/await-must-use-progress": "error",
     },
   },
   {
@@ -417,6 +499,29 @@ export default [
     },
     rules: {
       ...noFloatingPromisesRules,
+    },
+  },
+  {
+    files: ["packages/extension/src/**/*.ts", "packages/extension/src/**/*.tsx"],
+    ignores: ["packages/extension/src/ui/**"],
+    languageOptions: {
+      parser: tsParser,
+      ecmaVersion: 9,
+      sourceType: "module",
+      parserOptions: {
+        project: path.join(__dirname, "packages", "extension", "tsconfig.json"),
+      },
+    },
+  },
+  {
+    files: ["packages/extension/src/ui/**/*.ts", "packages/extension/src/ui/**/*.tsx"],
+    languageOptions: {
+      parser: tsParser,
+      ecmaVersion: 9,
+      sourceType: "module",
+      parserOptions: {
+        project: path.join(__dirname, "packages", "extension", "tsconfig.ui.json"),
+      },
     },
   },
   ...reactBaseConfig.map((config) => ({

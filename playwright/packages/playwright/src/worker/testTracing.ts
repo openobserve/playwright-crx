@@ -17,18 +17,20 @@
 import fs from 'fs';
 import path from 'path';
 
-import { ManualPromise, SerializedFS, calculateSha1, createGuid, monotonicTime } from 'playwright-core/lib/utils';
-import { yauzl, yazl } from 'playwright-core/lib/zipBundle';
+import * as yazl from 'yazl';
+import * as yauzl from 'yauzl';
+import { ManualPromise } from '@isomorphic/manualPromise';
+import { monotonicTime } from '@isomorphic/time';
+import { calculateSha1, createGuid } from '@utils/crypto';
+import { SerializedFS } from '@utils/serializedFS';
+import { getPlaywrightVersion } from 'playwright-core/lib/coreBundle';
+import { filteredStackTrace } from '@utils/stackTrace';
 
-import { filteredStackTrace, stepTitle } from '../util';
-
-import type { TestInfoImpl } from './testInfo';
-import type { PlaywrightWorkerOptions, TestInfo, TraceMode } from '../../types/test';
-import type { TestInfoErrorImpl } from '../common/ipc';
-import type { SerializedError, StackFrame } from '@protocol/channels';
+import type { TestStepCategory, TestInfoImpl } from './testInfo';
+import type { PlaywrightWorkerOptions, TestInfo, TestInfoError, TraceMode } from '../../types/test';
+import type { StackFrame } from '@utils/stackTrace';
 import type * as trace from '@trace/trace';
 import type EventEmitter from 'events';
-import type { TestStepCategory } from '../util';
 
 export type Attachment = TestInfo['attachments'][0];
 export const testTraceEntryName = 'test.trace';
@@ -36,7 +38,7 @@ const version: trace.VERSION = 8;
 let traceOrdinal = 0;
 
 type TraceFixtureValue =  PlaywrightWorkerOptions['trace'] | undefined;
-type TraceOptions = { screenshots: boolean, snapshots: boolean, sources: boolean, attachments: boolean, _live: boolean, mode: TraceMode };
+type TraceOptions = { screenshots: boolean, snapshots: boolean, sources: boolean, attachments: boolean, live: boolean, mode: TraceMode };
 
 export class TestTracing {
   private _testInfo: TestInfoImpl;
@@ -58,6 +60,7 @@ export class TestTracing {
       type: 'context-options',
       origin: 'testRunner',
       browserName: '',
+      playwrightVersion: getPlaywrightVersion(),
       options: {},
       platform: process.platform,
       wallTime: Date.now(),
@@ -68,9 +71,6 @@ export class TestTracing {
   }
 
   private _shouldCaptureTrace() {
-    if (process.env.PW_TEST_DISABLE_TRACING)
-      return false;
-
     if (this._options?.mode === 'on')
       return true;
 
@@ -86,11 +86,14 @@ export class TestTracing {
     if (this._options?.mode === 'retain-on-first-failure' && this._testInfo.retry === 0)
       return true;
 
+    if (this._options?.mode === 'retain-on-failure-and-retries')
+      return true;
+
     return false;
   }
 
   async startIfNeeded(value: TraceFixtureValue) {
-    const defaultTraceOptions: TraceOptions = { screenshots: true, snapshots: true, sources: true, attachments: true, _live: false, mode: 'off' };
+    const defaultTraceOptions: TraceOptions = { screenshots: true, snapshots: true, sources: true, attachments: true, live: false, mode: 'off' };
 
     if (!value) {
       this._options = defaultTraceOptions;
@@ -106,7 +109,7 @@ export class TestTracing {
       return;
     }
 
-    if (!this._liveTraceFile && this._options._live) {
+    if (!this._liveTraceFile && this._options.live) {
       // Note that trace name must start with testId for live tracing to work.
       this._liveTraceFile = { file: path.join(this._tracesDir, `${this._testInfo.testId}-test.trace`), fs: new SerializedFS() };
       this._liveTraceFile.fs.mkdir(path.dirname(this._liveTraceFile.file));
@@ -162,10 +165,14 @@ export class TestTracing {
     if (!this._options)
       return true;
     const testFailed = this._testInfo.status !== this._testInfo.expectedStatus;
+    if (this._options.mode === 'retain-on-failure-and-retries')
+      return !testFailed && this._testInfo.retry === 0;
     return !testFailed && (this._options.mode === 'retain-on-failure' || this._options.mode === 'retain-on-first-failure');
   }
 
   async stopIfNeeded() {
+    this._contextCreatedEvent.testTimeout = this._testInfo.timeout;
+
     if (!this._options)
       return;
 
@@ -230,9 +237,9 @@ export class TestTracing {
     const traceContent = Buffer.from(this._traceEvents.map(e => JSON.stringify(e)).join('\n'));
     zipFile.addBuffer(traceContent, testTraceEntryName);
 
-    await new Promise(f => {
+    await new Promise<void>((resolve, reject) => {
       zipFile.end(undefined, () => {
-        zipFile.outputStream.pipe(fs.createWriteStream(this._generateNextTraceRecordingPath())).on('close', f);
+        zipFile.outputStream.pipe(fs.createWriteStream(this._generateNextTraceRecordingPath())).on('close', resolve).on('error', reject);
       });
     });
 
@@ -241,7 +248,7 @@ export class TestTracing {
     this._testInfo.attachments.push({ name: 'trace', path: tracePath, contentType: 'application/zip' });
   }
 
-  appendForError(error: TestInfoErrorImpl) {
+  appendForError(error: TestInfoError) {
     const rawStack = error.stack?.split('\n') || [];
     const stack = rawStack ? filteredStackTrace(rawStack) : [];
     this._appendTraceEvent({
@@ -251,7 +258,7 @@ export class TestTracing {
     });
   }
 
-  _formatError(error: TestInfoErrorImpl) {
+  _formatError(error: TestInfoError) {
     const parts: string[] = [error.message || String(error.value)];
     if (error.cause)
       parts.push('[cause]: ' + this._formatError(error.cause));
@@ -267,22 +274,23 @@ export class TestTracing {
     });
   }
 
-  appendBeforeActionForStep(callId: string, parentId: string | undefined, options: { title: string, category: TestStepCategory, params?: Record<string, any>, stack: StackFrame[] }) {
+  appendBeforeActionForStep(options: { stepId: string, parentId?: string, title: string, category: TestStepCategory, params?: Record<string, any>, stack: StackFrame[], group?: string }) {
     this._appendTraceEvent({
       type: 'before',
-      callId,
-      stepId: callId,
-      parentId,
+      callId: options.stepId,
+      stepId: options.stepId,
+      parentId: options.parentId,
       startTime: monotonicTime(),
       class: 'Test',
-      method: 'step',
-      title: stepTitle(options.category, options.title),
+      method: options.category,
+      title: options.title,
       params: Object.fromEntries(Object.entries(options.params || {}).map(([name, value]) => [name, generatePreview(value)])),
       stack: options.stack,
+      group: options.group,
     });
   }
 
-  appendAfterActionForStep(callId: string, error?: SerializedError['error'], attachments: Attachment[] = [], annotations?: trace.AfterActionTraceEventAnnotation[]) {
+  appendAfterActionForStep(callId: string, error?: trace.SerializedError['error'], attachments: Attachment[] = [], annotations?: trace.AfterActionTraceEventAnnotation[]) {
     this._appendTraceEvent({
       type: 'after',
       callId,

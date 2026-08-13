@@ -1,7 +1,7 @@
 /**
  * Copyright (c) Microsoft Corporation.
  *
- * Licensed under the Apache License, Version 2.0 (the 'License");
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -16,15 +16,18 @@
 
 import { ArtifactDispatcher } from './artifactDispatcher';
 import { Dispatcher } from './dispatcher';
+import { nullProgress } from '../progress';
 
 import type { BrowserContextDispatcher } from './browserContextDispatcher';
 import type { APIRequestContextDispatcher } from './networkDispatchers';
+import type { PageDispatcher } from './pageDispatcher';
 import type { Tracing } from '../trace/recorder/tracing';
-import type { CallMetadata } from '@protocol/callMetadata';
-import type * as channels from '@protocol/channels';
+import type * as channels from '../channels';
+import type { Progress } from '../progress';
 
 export class TracingDispatcher extends Dispatcher<Tracing, channels.TracingChannel, BrowserContextDispatcher | APIRequestContextDispatcher> implements channels.TracingChannel {
   _type_Tracing = true;
+  private _started = false;
 
   static from(scope: BrowserContextDispatcher | APIRequestContextDispatcher, tracing: Tracing): TracingDispatcher {
     const result = scope.connection.existingDispatcher<TracingDispatcher>(tracing);
@@ -35,30 +38,50 @@ export class TracingDispatcher extends Dispatcher<Tracing, channels.TracingChann
     super(scope, tracing, 'Tracing', {});
   }
 
-  async tracingStart(params: channels.TracingTracingStartParams): Promise<channels.TracingTracingStartResult> {
-    await this._object.start(params);
+  async tracingStart(params: channels.TracingTracingStartParams, progress: Progress): Promise<channels.TracingTracingStartResult> {
+    this._object.start(progress, params);
+    this._started = true;
   }
 
-  async tracingStartChunk(params: channels.TracingTracingStartChunkParams): Promise<channels.TracingTracingStartChunkResult> {
-    return await this._object.startChunk(params);
+  async tracingStartChunk(params: channels.TracingTracingStartChunkParams, progress: Progress): Promise<channels.TracingTracingStartChunkResult> {
+    return await this._object.startChunk(progress, params);
   }
 
-  async tracingGroup(params: channels.TracingTracingGroupParams, metadata: CallMetadata): Promise<channels.TracingTracingGroupResult> {
+  async tracingGroup(params: channels.TracingTracingGroupParams, progress: Progress): Promise<channels.TracingTracingGroupResult> {
     const { name, location } = params;
-    await this._object.group(name, location, metadata);
+    this._object.group(progress, name, location);
   }
 
-  async tracingGroupEnd(params: channels.TracingTracingGroupEndParams): Promise<channels.TracingTracingGroupEndResult> {
-    await this._object.groupEnd();
+  async tracingGroupEnd(params: channels.TracingTracingGroupEndParams, progress: Progress): Promise<channels.TracingTracingGroupEndResult> {
+    this._object.groupEnd(progress);
   }
 
-  async tracingStopChunk(params: channels.TracingTracingStopChunkParams): Promise<channels.TracingTracingStopChunkResult> {
-    const { artifact, entries } = await this._object.stopChunk(params);
+  async tracingStopChunk(params: channels.TracingTracingStopChunkParams, progress: Progress): Promise<channels.TracingTracingStopChunkResult> {
+    const { artifact, entries } = await this._object.stopChunk(progress, params);
     return { artifact: artifact ? ArtifactDispatcher.from(this, artifact) : undefined, entries };
   }
 
-  async tracingStop(params: channels.TracingTracingStopParams): Promise<channels.TracingTracingStopResult> {
-    await this._object.stop();
+  async tracingStop(params: channels.TracingTracingStopParams, progress: Progress): Promise<channels.TracingTracingStopResult> {
+    await this._object.stop(progress);
   }
 
+  async harStart(params: channels.TracingHarStartParams, progress: Progress): Promise<channels.TracingHarStartResult> {
+    const harId = this._object.harStart(params.page ? (params.page as PageDispatcher)._object : null, params.options);
+    return { harId };
+  }
+
+  async harExport(params: channels.TracingHarExportParams, progress: Progress): Promise<channels.TracingHarExportResult> {
+    const { artifact, entries } = await this._object.harExport(progress, params.harId, params.mode);
+    return {
+      artifact: artifact ? ArtifactDispatcher.from(this, artifact) : undefined,
+      entries,
+    };
+  }
+
+  override _onDispose() {
+    // Avoid protocol calls for the closed context.
+    if (this._started)
+      this._object.stopChunk(nullProgress, { mode: 'discard' }).then(() => this._object.stop(nullProgress)).catch(() => {});
+    this._started = false;
+  }
 }

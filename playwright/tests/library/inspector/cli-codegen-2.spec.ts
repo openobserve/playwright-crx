@@ -15,12 +15,8 @@
  */
 
 import { test, expect } from './inspectorTest';
-import * as url from 'url';
-import fs from 'fs';
 
 test.describe('cli codegen', () => {
-  test.skip(({ mode }) => mode !== 'default');
-
   test('should contain open page', async ({ openRecorder }) => {
     const { recorder } = await openRecorder();
 
@@ -90,7 +86,9 @@ var page1 = await context.NewPageAsync();`);
 await page.CloseAsync();`);
   });
 
-  test('should not lead to an error if html gets clicked', async ({ openRecorder }) => {
+  test('should not lead to an error if html gets clicked', async ({ openRecorder, platform, macVersion }) => {
+    test.skip(platform === 'darwin' && macVersion < 15, 'recorder.page.evaluate hangs on CDP layer for some reason on macOS 14.');
+
     const { page, recorder } = await openRecorder();
 
     await recorder.setContentAndWait('');
@@ -112,14 +110,21 @@ await page.CloseAsync();`);
     </form>
   `);
 
-    await page.focus('input[type=file]');
-    await page.setInputFiles('input[type=file]', asset('file-to-upload.txt'));
-    await page.click('input[type=file]');
+    await recorder.hoverOverElement('input[type=file]');
+    const [chooser] = await Promise.all([
+      page.waitForEvent('filechooser'),
+      recorder.trustedClick(),
+    ]);
+    // Simulate the time a real user takes to pick a file from the OS dialog
+    // so the merge logic cannot rely on a short delay between click and setInputFiles.
+    await new Promise(f => setTimeout(f, 1000));
+    await chooser.setFiles(asset('file-to-upload.txt'));
 
     const sources = await recorder.waitForOutput('JavaScript', 'setInputFiles');
 
     expect(sources.get('JavaScript')!.text).toContain(`
   await page.getByRole('button', { name: 'Choose File' }).setInputFiles('file-to-upload.txt');`);
+    expect(sources.get('JavaScript')!.text).not.toContain(`click()`);
 
     expect(sources.get('Java')!.text).toContain(`
       page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("Choose File")).setInputFiles(Paths.get("file-to-upload.txt"));`);
@@ -194,11 +199,33 @@ await page.GetByRole(AriaRole.Button, new() { Name = "Choose File" }).SetInputFi
 await page.GetByRole(AriaRole.Button, new() { Name = "Choose File" }).SetInputFilesAsync(new[] {  });`);
   });
 
+  test('should upload a file via hidden input triggered by button', async ({ openRecorder, browserName, asset, isLinux }) => {
+    const { page, recorder } = await openRecorder();
+    await recorder.setContentAndWait(`
+    <button onclick="document.querySelector('input[type=file]').click()">select file</button>
+    <input type="file" style="display: none">
+  `);
+
+    await recorder.hoverOverElement('button');
+    const [chooser] = await Promise.all([
+      page.waitForEvent('filechooser'),
+      recorder.trustedClick(),
+    ]);
+    await new Promise(f => setTimeout(f, 1000));
+    await chooser.setFiles(asset('file-to-upload.txt'));
+
+    const sources = await recorder.waitForOutput('JavaScript', 'setInputFiles');
+
+    // The setInputFiles call must target the actual file input, not the trigger button.
+    expect(sources.get('JavaScript')!.text).toContain(`setInputFiles('file-to-upload.txt')`);
+    expect(sources.get('JavaScript')!.text).not.toContain(`getByRole('button', { name: 'select file' }).setInputFiles`);
+  });
+
   test('should download files', async ({ openRecorder, server }) => {
     const { page, recorder } = await openRecorder();
 
     server.setRoute('/download', (req, res) => {
-      const pathName = url.parse(req.url!).path;
+      const pathName = new URL(req.url, 'http://localhost').pathname;
       if (pathName === '/download') {
         res.setHeader('Content-Type', 'application/octet-stream');
         res.setHeader('Content-Disposition', 'attachment; filename=file.txt');
@@ -216,7 +243,7 @@ await page.GetByRole(AriaRole.Button, new() { Name = "Choose File" }).SetInputFi
       page.waitForEvent('download'),
       page.click('a')
     ]);
-    const sources = await recorder.waitForOutput('JavaScript', 'downloadPromise');
+    const sources = await recorder.waitForOutput('JavaScript', 'await downloadPromise');
 
     expect.soft(sources.get('JavaScript')!.text).toContain(`
   const downloadPromise = page.waitForEvent('download');
@@ -412,7 +439,7 @@ await page1.GotoAsync("about:blank?foo");`);
   });
 
   test('should update active model on action', async ({ openRecorder, browserName, headless }) => {
-    test.fixme(browserName === 'webkit');
+    test.skip(browserName === 'webkit', 'webkit does not actually focus the input after click');
 
     const { page, recorder } = await openRecorder();
     await recorder.setContentAndWait(`<input id="checkbox" type="checkbox" name="accept" onchange="checkbox.name='updated'"></input>`);
@@ -449,25 +476,6 @@ await page1.GotoAsync("about:blank?foo");`);
 
     await page.goto(server.PREFIX + '/page2.html');
     await recorder.waitForOutput('JavaScript', `await page.goto('${server.PREFIX}/page2.html');`);
-  });
-
-  test('should save assets via SIGINT', async ({ runCLI, platform }, testInfo) => {
-    test.skip(platform === 'win32', 'SIGINT not supported on Windows');
-
-    const storageFileName = testInfo.outputPath('auth.json');
-    const harFileName = testInfo.outputPath('har.har');
-    const cli = runCLI([`--save-storage=${storageFileName}`, `--save-har=${harFileName}`]);
-    await cli.waitFor(`import { test, expect } from '@playwright/test'`);
-    await cli.process.kill('SIGINT');
-    const { exitCode, signal } = await cli.process.exited;
-    if (exitCode !== null) {
-      expect(exitCode).toBe(130);
-    } else {
-      // If the runner is slow enough, the process will be forcibly terminated by the signal
-      expect(signal).toBe('SIGINT');
-    }
-    expect(fs.existsSync(storageFileName)).toBeTruthy();
-    expect(fs.existsSync(harFileName)).toBeTruthy();
   });
 
   test('should fill tricky characters', async ({ openRecorder }) => {
@@ -513,5 +521,86 @@ await page.Locator("#textarea").FillAsync(\"Hello'\\"\`\\nWorld\");`);
     expect.soft(sources.get('Python')!.text).toContain(`page.get_by_test_id("foo").click()`);
     expect.soft(sources.get('Python Async')!.text).toContain(`await page.get_by_test_id("foo").click()`);
     expect.soft(sources.get('C#')!.text).toContain(`await page.GetByTestId("foo").ClickAsync();`);
+  });
+
+  test('should generate getByTestId for any of the configured testIdAttributes', async ({ openRecorder }) => {
+    const { page, recorder } = await openRecorder({ testIdAttributeName: 'data-pw,data-ti' });
+
+    await recorder.setContentAndWait(`
+      <button data-pw="primary">First</button>
+      <button data-ti="secondary">Second</button>
+    `);
+
+    await page.click('[data-pw=primary]');
+    let sources = await recorder.waitForOutput('JavaScript', `page.getByTestId('primary')`);
+    expect.soft(sources.get('JavaScript')!.text).toContain(`await page.getByTestId('primary').click()`);
+
+    await page.click('[data-ti=secondary]');
+    sources = await recorder.waitForOutput('JavaScript', `page.getByTestId('secondary')`);
+    expect.soft(sources.get('JavaScript')!.text).toContain(`await page.getByTestId('secondary').click()`);
+  });
+
+  test('should auto-generate toBeVisible', async ({ openRecorder }) => {
+    const { page, recorder } = await openRecorder();
+
+    await recorder.setContentAndWait(`
+      <button id=one>one</button>
+      <div id=insertion></div>
+      <button id=two>two</button>
+      <script>
+        const one = document.getElementById('one');
+        const insertion = document.getElementById('insertion');
+        one.addEventListener('click', () => {
+          insertion.innerHTML = '<h2>new header</h2>';
+          console.log('clicked one');
+        });
+        two.addEventListener('click', () => {
+          console.log('clicked two');
+        });
+      </script>
+    `);
+    await recorder.recorderPage.getByRole('button', { name: 'Settings' }).click();
+    await recorder.recorderPage.getByRole('checkbox', { name: 'Generate assertions' }).check();
+
+    const locatorOne = await recorder.hoverOverElement('#one');
+    expect(locatorOne).toBe(`getByRole('button', { name: 'one' })`);
+    await Promise.all([
+      page.waitForEvent('console', msg => msg.text() === 'clicked one'),
+      recorder.waitForOutput('JavaScript', 'one'),
+      recorder.trustedClick(),
+    ]);
+
+    const locatorTwo = await recorder.hoverOverElement('#two');
+    expect(locatorTwo).toBe(`getByRole('button', { name: 'two' })`);
+    const [sources] = await Promise.all([
+      recorder.waitForOutput('JavaScript', 'two'),
+      page.waitForEvent('console', msg => msg.text() === 'clicked two'),
+      recorder.trustedClick(),
+    ]);
+
+    expect.soft(sources.get('Playwright Test')!.text).toContain(`
+  await page.getByRole('button', { name: 'one' }).click();
+  await expect(page.getByRole('heading', { name: 'new header' })).toBeVisible();
+  await page.getByRole('button', { name: 'two' }).click();`);
+
+    expect.soft(sources.get('Python')!.text).toContain(`
+    page.get_by_role("button", name="one").click()
+    expect(page.get_by_role("heading", name="new header")).to_be_visible()
+    page.get_by_role("button", name="two").click()`);
+
+    expect.soft(sources.get('Python Async')!.text).toContain(`
+    await page.get_by_role("button", name="one").click()
+    await expect(page.get_by_role("heading", name="new header")).to_be_visible()
+    await page.get_by_role("button", name="two").click()`);
+
+    expect.soft(sources.get('Java')!.text).toContain(`
+      page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("one")).click();
+      assertThat(page.getByRole(AriaRole.HEADING, new Page.GetByRoleOptions().setName("new header"))).isVisible();
+      page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("two")).click();`);
+
+    expect.soft(sources.get('C#')!.text).toContain(`
+await page.GetByRole(AriaRole.Button, new() { Name = "one" }).ClickAsync();
+await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "new header" })).ToBeVisibleAsync();
+await page.GetByRole(AriaRole.Button, new() { Name = "two" }).ClickAsync();`);
   });
 });

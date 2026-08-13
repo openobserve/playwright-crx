@@ -22,7 +22,7 @@ import os from 'os';
 
 test.slow();
 
-test('should close the browser when the node process closes', async ({ startRemoteServer, isWindows, server }) => {
+test('should close the browser when the node process closes', async ({ startRemoteServer, isWindows, server, mode }) => {
   const remoteServer = await startRemoteServer('launchServer', { url: server.EMPTY_PAGE });
   try {
     if (isWindows)

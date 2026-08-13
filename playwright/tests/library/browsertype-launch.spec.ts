@@ -53,24 +53,23 @@ it('should throw if port option is passed for persistent context', async ({ brow
   expect(error!.message).toContain('Cannot specify a port without launching as a server.');
 });
 
-it('should throw if page argument is passed', async ({ browserType, browserName }) => {
-  it.skip(browserName === 'firefox');
+it('should throw if page argument is passed', async ({ browserType, browserName, isBidi }) => {
+  it.skip(browserName === 'firefox' && !isBidi);
 
   let waitError: Error | undefined;
   await browserType.launch({ args: ['http://example.com'] }).catch(e => waitError = e);
   expect(waitError!.message).toContain('can not specify page');
 });
 
-it('should reject if launched browser fails immediately', async ({ mode, browserType, asset, isWindows }) => {
-  it.skip(mode.startsWith('service'));
-
-  let waitError: Error | undefined;
-  await browserType.launch({ executablePath: asset('dummy_bad_browser_executable.js') }).catch(e => waitError = e);
-  expect(waitError!.message).toContain(isWindows ? 'browserType.launch: spawn UNKNOWN' : 'Browser logs:');
+it('should reject if launched browser fails immediately', async ({ mode, browserType, asset, channel }) => {
+  const error = await browserType.launch({ executablePath: asset('dummy_bad_browser_executable.js') }).catch(e => e);
+  if (channel === 'webkit-wsl')
+    expect(error.message).toContain('Failed to launch');
+  else
+    expect(error.message).toMatch(/browserType\.launch(.|\n)*(spawn UNKNOWN|spawn EFTYPE|Browser logs:)/gim);
 });
 
 it('should reject if executable path is invalid', async ({ browserType, mode }) => {
-  it.skip(mode.startsWith('service'), 'on service mode we dont allow passing custom executable path');
   let waitError: Error | undefined;
   await browserType.launch({ executablePath: 'random-invalid-path' }).catch(e => waitError = e);
   expect(waitError!.message).toContain('Failed to launch');
@@ -86,27 +85,17 @@ it('should handle timeout', async ({ browserType, mode }) => {
   expect(error!.message).toContain(`<launched> pid=`);
 });
 
-it('should handle exception', async ({ browserType, mode }) => {
+it('should handle exception and report launch log', async ({ browserType, mode }) => {
   it.skip(mode !== 'default');
 
   const e = new Error('Dummy');
-  const options = { __testHookBeforeCreateBrowser: () => { throw e; }, timeout: 9000 };
+  const options = { __testHookBeforeCreateBrowser: () => { throw e; }, timeout: 15000 };
   const error = await browserType.launch(options).catch(e => e);
-  expect(error!.message).toContain('Dummy');
-});
-
-it('should report launch log', async ({ browserType, mode }) => {
-  it.skip(mode !== 'default');
-
-  const e = new Error('Dummy');
-  const options = { __testHookBeforeCreateBrowser: () => { throw e; }, timeout: 9000 };
-  const error = await browserType.launch(options).catch(e => e);
-  expect(error!.message).toContain('<launching>');
+  expect(error.message).toContain('Dummy');
+  expect(error.message).toContain('<launching>');
 });
 
 it('should accept objects as options', async ({ mode,   browserType }) => {
-  it.skip(mode.startsWith('service'));
-
   // @ts-expect-error process is not a real option.
   const browser = await browserType.launch({ process });
   await browser.close();

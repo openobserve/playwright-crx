@@ -190,6 +190,24 @@ This makes `hostmachine` point to the host's localhost. Your tests should use `h
 When running tests remotely, ensure the Playwright version in your tests matches the version running in the Docker container.
 :::
 
+### Connecting using noVNC and GitHub Codespaces
+
+For Docker and GitHub Codespaces environments, you can view and generate tests using the `noVNC` viewer built into the Docker image. In order for the VNC webviewer to be accessible outside of the container, you can enable the `desktop-lite` feature and specify the `webPort` in your `.devcontainer/devcontainer.json` file: 
+
+```json
+{
+  "image": "mcr.microsoft.com/playwright:v1.57.0",
+  "forwardPorts": [6080],
+  "features": {
+    "desktop-lite": {
+      "webPort": "6080"
+    }
+  }
+}
+```
+
+Once this is enabled you can open the port specified in a new browser tab and you will have access to the `noVNC` web viewer. This will enable you to record tests, pick selectors, and use codegen directly on your container.
+
 ## Image tags
 
 See [all available image tags].
@@ -198,6 +216,7 @@ We currently publish images with the following tags:
 - `:v%%VERSION%%` - Playwright v%%VERSION%% release docker image based on Ubuntu 24.04 LTS (Noble Numbat).
 - `:v%%VERSION%%-noble` - Playwright v%%VERSION%% release docker image based on Ubuntu 24.04 LTS (Noble Numbat).
 - `:v%%VERSION%%-jammy` - Playwright v%%VERSION%% release docker image based on Ubuntu 22.04 LTS (Jammy Jellyfish).
+- `:v%%VERSION%%-resolute` - Playwright v%%VERSION%% release docker image based on Ubuntu 26.04 LTS (Resolute Raccoon).
 
 :::note
 It is recommended to always pin your Docker image to a specific version if possible. If the Playwright version in your Docker image does not match the version in your project/tests, Playwright will be unable to locate browser executables.
@@ -206,6 +225,7 @@ It is recommended to always pin your Docker image to a specific version if possi
 ### Base images
 
 We currently publish images based on the following [Ubuntu](https://hub.docker.com/_/ubuntu) versions:
+- **Ubuntu 26.04 LTS** (Resolute Raccoon), image tags include `resolute`
 - **Ubuntu 24.04 LTS** (Noble Numbat), image tags include `noble`
 - **Ubuntu 22.04 LTS** (Jammy Jellyfish), image tags include `jammy`
 

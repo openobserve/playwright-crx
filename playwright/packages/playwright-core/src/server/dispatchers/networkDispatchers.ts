@@ -1,7 +1,7 @@
 /**
  * Copyright (c) Microsoft Corporation.
  *
- * Licensed under the Apache License, Version 2.0 (the 'License");
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -19,15 +19,15 @@ import { Dispatcher } from './dispatcher';
 import { FrameDispatcher } from './frameDispatcher';
 import { WorkerDispatcher } from './pageDispatcher';
 import { TracingDispatcher } from './tracingDispatcher';
+import { Request } from '../network';
 
 import type { APIRequestContext } from '../fetch';
-import type { CallMetadata } from '../instrumentation';
-import type { Request, Response, Route } from '../network';
+import type { Response, Route } from '../network';
 import type { BrowserContextDispatcher } from './browserContextDispatcher';
 import type { RootDispatcher } from './dispatcher';
 import type { PageDispatcher } from './pageDispatcher';
-import type * as channels from '@protocol/channels';
-
+import type * as channels from '../channels';
+import type { Progress } from '../progress';
 
 export class RequestDispatcher extends Dispatcher<Request, channels.RequestChannel, BrowserContextDispatcher | PageDispatcher | FrameDispatcher> implements channels.RequestChannel {
   _type_Request: boolean;
@@ -48,9 +48,9 @@ export class RequestDispatcher extends Dispatcher<Request, channels.RequestChann
     const frame = request.frame();
     const page = request.frame()?._page;
     const pageDispatcher = page ? scope.connection.existingDispatcher<PageDispatcher>(page) : null;
-    const frameDispatcher = frame ? FrameDispatcher.from(scope, frame) : null;
+    const frameDispatcher = FrameDispatcher.fromNullable(scope, frame);
     super(pageDispatcher || frameDispatcher || scope, request, 'Request', {
-      frame: FrameDispatcher.fromNullable(scope, request.frame()),
+      frame: frameDispatcher,
       serviceWorker: WorkerDispatcher.fromNullable(scope, request.serviceWorker()),
       url: request.url(),
       resourceType: request.resourceType(),
@@ -62,14 +62,16 @@ export class RequestDispatcher extends Dispatcher<Request, channels.RequestChann
     });
     this._type_Request = true;
     this._browserContextDispatcher = scope;
+    // Push existing response to the client if it exists.
+    ResponseDispatcher.fromNullable(scope, request._existingResponse());
   }
 
-  async rawRequestHeaders(params?: channels.RequestRawRequestHeadersParams): Promise<channels.RequestRawRequestHeadersResult> {
-    return { headers: await this._object.rawRequestHeaders() };
+  async rawRequestHeaders(params: channels.RequestRawRequestHeadersParams, progress: Progress): Promise<channels.RequestRawRequestHeadersResult> {
+    return { headers: await this._object.rawRequestHeaders(progress) };
   }
 
-  async response(): Promise<channels.RequestResponseResult> {
-    return { response: ResponseDispatcher.fromNullable(this._browserContextDispatcher, await this._object.response()) };
+  async response(params: channels.RequestResponseParams, progress: Progress): Promise<channels.RequestResponseResult> {
+    return { response: ResponseDispatcher.fromNullable(this._browserContextDispatcher, await this._object.response(progress)) };
   }
 }
 
@@ -77,8 +79,8 @@ export class ResponseDispatcher extends Dispatcher<Response, channels.ResponseCh
   _type_Response = true;
 
   static from(scope: BrowserContextDispatcher, response: Response): ResponseDispatcher {
-    const result = scope.connection.existingDispatcher<ResponseDispatcher>(response);
     const requestDispatcher = RequestDispatcher.from(scope, response.request());
+    const result = scope.connection.existingDispatcher<ResponseDispatcher>(response);
     return result || new ResponseDispatcher(requestDispatcher, response);
   }
 
@@ -99,24 +101,28 @@ export class ResponseDispatcher extends Dispatcher<Response, channels.ResponseCh
     });
   }
 
-  async body(): Promise<channels.ResponseBodyResult> {
-    return { binary: await this._object.body() };
+  async body(params: channels.ResponseBodyParams, progress: Progress): Promise<channels.ResponseBodyResult> {
+    return { binary: await this._object.body(progress) };
   }
 
-  async securityDetails(): Promise<channels.ResponseSecurityDetailsResult> {
-    return { value: await this._object.securityDetails() || undefined };
+  async securityDetails(params: channels.ResponseSecurityDetailsParams, progress: Progress): Promise<channels.ResponseSecurityDetailsResult> {
+    return { value: await this._object.securityDetails(progress) || undefined };
   }
 
-  async serverAddr(): Promise<channels.ResponseServerAddrResult> {
-    return { value: await this._object.serverAddr() || undefined };
+  async serverAddr(params: channels.ResponseServerAddrParams, progress: Progress): Promise<channels.ResponseServerAddrResult> {
+    return { value: await this._object.serverAddr(progress) || undefined };
   }
 
-  async rawResponseHeaders(params?: channels.ResponseRawResponseHeadersParams): Promise<channels.ResponseRawResponseHeadersResult> {
-    return { headers: await this._object.rawResponseHeaders() };
+  async rawResponseHeaders(params: channels.ResponseRawResponseHeadersParams, progress: Progress): Promise<channels.ResponseRawResponseHeadersResult> {
+    return { headers: await this._object.rawResponseHeaders(progress) };
   }
 
-  async sizes(params?: channels.ResponseSizesParams): Promise<channels.ResponseSizesResult> {
-    return { sizes: await this._object.sizes() };
+  async httpVersion(params: channels.ResponseHttpVersionParams, progress: Progress): Promise<channels.ResponseHttpVersionResult> {
+    return { value: await this._object.httpVersion(progress) };
+  }
+
+  async sizes(params: channels.ResponseSizesParams, progress: Progress): Promise<channels.ResponseSizesResult> {
+    return { sizes: await this._object.sizes(progress) };
   }
 }
 
@@ -138,35 +144,37 @@ export class RouteDispatcher extends Dispatcher<Route, channels.RouteChannel, Re
     this._handled = true;
   }
 
-  async continue(params: channels.RouteContinueParams, metadata: CallMetadata): Promise<channels.RouteContinueResult> {
+  async continue(params: channels.RouteContinueParams, progress: Progress): Promise<channels.RouteContinueResult> {
+    // Note: progress is ignored because this operation is not cancellable and should not block in the browser anyway.
     this._checkNotHandled();
-    await this._object.continue({
+    await progress.race(this._object.continue({
       url: params.url,
       method: params.method,
       headers: params.headers,
       postData: params.postData,
       isFallback: params.isFallback,
-    });
+    }));
   }
 
-  async fulfill(params: channels.RouteFulfillParams, metadata: CallMetadata): Promise<void> {
+  async fulfill(params: channels.RouteFulfillParams, progress: Progress): Promise<void> {
+    // Note: progress is ignored because this operation is not cancellable and should not block in the browser anyway.
     this._checkNotHandled();
-    await this._object.fulfill(params);
+    await progress.race(this._object.fulfill(params));
   }
 
-  async abort(params: channels.RouteAbortParams, metadata: CallMetadata): Promise<void> {
+  async abort(params: channels.RouteAbortParams, progress: Progress): Promise<void> {
+    // Note: progress is ignored because this operation is not cancellable and should not block in the browser anyway.
     this._checkNotHandled();
-    await this._object.abort(params.errorCode || 'failed');
+    await progress.race(this._object.abort(params.errorCode || 'failed'));
   }
 
-  async redirectNavigationRequest(params: channels.RouteRedirectNavigationRequestParams): Promise<void> {
+  async redirectNavigationRequest(params: channels.RouteRedirectNavigationRequestParams, progress: Progress): Promise<void> {
     this._checkNotHandled();
-    await this._object.redirectNavigationRequest(params.url);
+    this._object.redirectNavigationRequest(params.url);
   }
 }
 
 export class WebSocketDispatcher extends Dispatcher<WebSocket, channels.WebSocketChannel, PageDispatcher> implements channels.WebSocketChannel {
-  _type_EventTarget = true;
   _type_WebSocket = true;
 
   constructor(scope: PageDispatcher, webSocket: WebSocket) {
@@ -203,39 +211,29 @@ export class APIRequestContextDispatcher extends Dispatcher<APIRequestContext, c
     this.adopt(tracing);
   }
 
-  async storageState(params: channels.APIRequestContextStorageStateParams): Promise<channels.APIRequestContextStorageStateResult> {
-    return this._object.storageState(params.indexedDB);
+  async storageState(params: channels.APIRequestContextStorageStateParams, progress: Progress): Promise<channels.APIRequestContextStorageStateResult> {
+    return await this._object.storageState(progress, params.indexedDB);
   }
 
-  async dispose(params: channels.APIRequestContextDisposeParams, metadata: CallMetadata): Promise<void> {
-    metadata.potentiallyClosesScope = true;
-    await this._object.dispose(params);
+  async dispose(params: channels.APIRequestContextDisposeParams, progress: Progress): Promise<void> {
+    await progress.race(this._object.dispose(params));
     this._dispose();
   }
 
-  async fetch(params: channels.APIRequestContextFetchParams, metadata: CallMetadata): Promise<channels.APIRequestContextFetchResult> {
-    const fetchResponse = await this._object.fetch(params, metadata);
-    return {
-      response: {
-        url: fetchResponse.url,
-        status: fetchResponse.status,
-        statusText: fetchResponse.statusText,
-        headers: fetchResponse.headers,
-        fetchUid: fetchResponse.fetchUid
-      }
-    };
+  async fetch(params: channels.APIRequestContextFetchParams, progress: Progress): Promise<channels.APIRequestContextFetchResult> {
+    const response = await this._object.fetch(progress, params);
+    return { response };
   }
 
-  async fetchResponseBody(params: channels.APIRequestContextFetchResponseBodyParams): Promise<channels.APIRequestContextFetchResponseBodyResult> {
-    return { binary: this._object.fetchResponses.get(params.fetchUid) };
+  async fetchResponseBody(params: channels.APIRequestContextFetchResponseBodyParams, progress: Progress): Promise<channels.APIRequestContextFetchResponseBodyResult> {
+    return { binary: this._object.fetchResponseBody(progress, params.fetchUid) };
   }
 
-  async fetchLog(params: channels.APIRequestContextFetchLogParams): Promise<channels.APIRequestContextFetchLogResult> {
-    const log = this._object.fetchLog.get(params.fetchUid) || [];
-    return { log };
+  async fetchLog(params: channels.APIRequestContextFetchLogParams, progress: Progress): Promise<channels.APIRequestContextFetchLogResult> {
+    return { log: this._object.fetchLogForUid(progress, params.fetchUid) };
   }
 
-  async disposeAPIResponse(params: channels.APIRequestContextDisposeAPIResponseParams): Promise<void> {
-    this._object.disposeResponse(params.fetchUid);
+  async disposeAPIResponse(params: channels.APIRequestContextDisposeAPIResponseParams, progress: Progress): Promise<void> {
+    this._object.disposeResponse(progress, params.fetchUid);
   }
 }

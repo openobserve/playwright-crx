@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import type * as channels from '@protocol/channels';
+import type * as channels from 'playwright-core/lib/server/channels';
 import { AndroidDispatcher } from 'playwright-core/lib/server/dispatchers/androidDispatcher';
 import { BrowserTypeDispatcher } from 'playwright-core/lib/server/dispatchers/browserTypeDispatcher';
 import type { RootDispatcher } from 'playwright-core/lib/server/dispatchers/dispatcher';
@@ -25,24 +25,31 @@ import { GlobalAPIRequestContext } from 'playwright-core/lib/server/fetch';
 import type { Playwright } from 'playwright-core/lib/server/playwright';
 import { CrxDispatcher } from './crxDispatcher';
 import type { CrxPlaywright } from '../crxPlaywright';
-import { CrxPlaywrightInitializer } from 'src/protocol/channels';
 
 // based on PlaywrightDispatcher
 export class CrxPlaywrightDispatcher extends Dispatcher<Playwright, channels.PlaywrightChannel, RootDispatcher> implements channels.PlaywrightChannel {
   _type_Playwright;
 
   constructor(scope: RootDispatcher, playwright: CrxPlaywright) {
+    // 1.54: browser-type dispatchers take a `denyLaunch` flag. crx never launches a
+    // browser itself (it attaches over chrome.debugger), but denyLaunch stays false to
+    // preserve the previous behaviour of these channels rather than silently tightening
+    // it. 1.57 removed the bidi browser types from PlaywrightInitializer entirely.
+    const denyLaunch = false;
     super(scope, playwright, 'Playwright', {
-      chromium: new BrowserTypeDispatcher(scope, playwright.chromium),
-      firefox: new BrowserTypeDispatcher(scope, playwright.firefox),
-      webkit: new BrowserTypeDispatcher(scope, playwright.webkit),
-      bidiChromium: new BrowserTypeDispatcher(scope, playwright.bidiChromium),
-      bidiFirefox: new BrowserTypeDispatcher(scope, playwright.bidiFirefox),
-      android: new AndroidDispatcher(scope, playwright.android),
-      electron: new ElectronDispatcher(scope, playwright.electron),
+      chromium: new BrowserTypeDispatcher(scope, playwright.chromium, denyLaunch),
+      firefox: new BrowserTypeDispatcher(scope, playwright.firefox, denyLaunch),
+      webkit: new BrowserTypeDispatcher(scope, playwright.webkit, denyLaunch),
+      // 1.55 dropped denyLaunch from AndroidDispatcher and 1.60 reinstated it, this time
+      // actually reading it. Passing the same flag as every other browser type.
+      android: new AndroidDispatcher(scope, playwright.android, denyLaunch),
+      electron: new ElectronDispatcher(scope, playwright.electron, denyLaunch),
       utils: new LocalUtilsDispatcher(scope, playwright),
       _crx: new CrxDispatcher(scope, playwright._crx),
-    } as CrxPlaywrightInitializer);
+      // Same boundary as asChannel(): CrxPlaywrightInitializer is declared on the client
+      // side because that is the public surface, while super() wants the server's. One
+      // process, one object, two spellings of it.
+    } as any);
     this._type_Playwright = true;
   }
 

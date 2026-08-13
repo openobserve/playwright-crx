@@ -57,11 +57,12 @@ export const androidTest = baseTest.extend<PageTestFixtures & AndroidTestFixture
     await run(Number(browserVersion.split('.')[0]));
   }, { scope: 'worker' }],
 
+  isBidi: [false, { scope: 'worker' }],
   isAndroid: [true, { scope: 'worker' }],
   isElectron: [false, { scope: 'worker' }],
   electronMajorVersion: [0, { scope: 'worker' }],
-  isWebView2: [false, { scope: 'worker' }],
   isHeadlessShell: [false, { scope: 'worker' }],
+  isFrozenWebkit: [false, { scope: 'worker' }],
 
   androidDevice: async ({ androidDeviceWorker }, use) => {
     await closeAllActivities(androidDeviceWorker);
@@ -80,8 +81,14 @@ export const androidTest = baseTest.extend<PageTestFixtures & AndroidTestFixture
     // Retain default page, otherwise Clank will re-create it.
     while (androidContext.pages().length > 1)
       await androidContext.pages()[1].close();
-    const page = await androidContext.newPage();
-    await run(page);
-    await androidContext.clearCookies();
+    await run(await androidContext.newPage());
+    const pages = androidContext.pages();
+    // Keep one fresh page - Clank does not like having zero pages.
+    await androidContext.newPage();
+    // Close all existing pages that could be stuck in a navigation, have an open dialog, etc.
+    for (const page of pages)
+      await page.close();
+    // Cleanup as much as we can. This requires a non-stuck page that can respond to CDP.
+    await androidContext.setStorageState({ cookies: [], origins: [] });
   },
 });

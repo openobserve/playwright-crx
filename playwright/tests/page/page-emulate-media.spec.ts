@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import type { Page } from 'packages/playwright-test';
+import type { Page } from '../../packages/playwright-test';
 import { test as it, expect as baseExpect } from './pageTest';
 
 const expect = baseExpect.extend({
@@ -156,7 +156,12 @@ it('should keep reduced motion and color emulation after reload', async ({ page,
   // Force CanonicalBrowsingContext replacement in Firefox.
   server.setRoute('/empty.html', (req, res) => {
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-    res.end();
+    // Note: without 'onload', Firefox sometimes does not fire the load event
+    // over the protocol. The reason is unclear.
+    res.end(`
+      <div>Hello there!</div>
+      <script>window.onload = () => console.log('onload')</script>
+    `);
   });
   await page.goto(server.EMPTY_PAGE);
 
@@ -186,4 +191,11 @@ it('should emulate contrast ', async ({ page }) => {
   await expect(page).toMatchMedia('(prefers-contrast: more)');
   await page.emulateMedia({ contrast: null });
   await expect(page).toMatchMedia('(prefers-contrast: no-preference)');
+});
+
+it('should report hover and fine pointer for desktop', async ({ page, isAndroid }) => {
+  it.skip(isAndroid);
+
+  await expect(page).toMatchMedia('(hover: hover)');
+  await expect(page).toMatchMedia('(pointer: fine)');
 });

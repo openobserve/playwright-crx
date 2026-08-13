@@ -17,31 +17,26 @@
 import fs from 'fs';
 import path from 'path';
 
-import { setExternalDependencies } from 'playwright/lib/transform/compilationCache';
-import { resolveHook } from 'playwright/lib/transform/transform';
+import { iso, utils, getPlaywrightVersion } from 'playwright-core/lib/coreBundle';
+import { colors, debug } from 'playwright-core/lib/utilsBundle';
+import { cc, transform } from 'playwright/lib/common';
 import { removeDirAndLogToConsole } from 'playwright/lib/util';
-import { stoppable } from 'playwright/lib/utilsBundle';
-import { isURLAvailable } from 'playwright-core/lib/utils';
-import { assert, calculateSha1, getPlaywrightVersion } from 'playwright-core/lib/utils';
-import { debug } from 'playwright-core/lib/utilsBundle';
 
-import { runDevServer } from './devServer';
 import { source as injectedSource } from './generated/indexSource';
-import { createConfig, frameworkConfig, hasJSComponents, populateComponentsFromTests, resolveDirs, resolveEndpoint, transformIndexFile } from './viteUtils';
+import { createConfig, frameworkConfig, hasJSComponents, populateComponentsFromTests, resolveDirs, transformIndexFile } from './viteUtils';
 
-import type { ImportInfo } from './tsxTransform';
-import type { ComponentRegistry } from './viteUtils';
-import type { TestRunnerPlugin } from '../../playwright/src/plugins';
 import type http from 'http';
 import type { AddressInfo } from 'net';
 import type { FullConfig, Suite } from 'playwright/types/testReporter';
-import type { PluginContext } from 'rollup';
-import type { Plugin, ResolveFn, ResolvedConfig } from 'vite';
+import type { Plugin, ResolveFn, ResolvedConfig, Rollup } from 'vite';
+import type { TestRunnerPlugin } from '../../playwright/src/plugins';
+import type { ImportInfo } from './tsxTransform';
+import type { ComponentRegistry } from './viteUtils';
 
 
 const log = debug('pw:vite');
 
-let stoppableServer: any;
+let previewHttpServer: http.Server | undefined;
 const playwrightVersion = getPlaywrightVersion();
 
 export function createPlugin(): TestRunnerPlugin {
@@ -63,7 +58,8 @@ export function createPlugin(): TestRunnerPlugin {
       const { viteConfig } = result;
       const { preview } = await import('vite');
       const previewServer = await preview(viteConfig);
-      stoppableServer = stoppable(previewServer.httpServer as http.Server, 0);
+      previewHttpServer = previewServer.httpServer as http.Server;
+      utils.decorateServer(previewHttpServer);
       const isAddressInfo = (x: any): x is AddressInfo => x?.address;
       const address = previewServer.httpServer.address();
       if (isAddressInfo(address)) {
@@ -73,16 +69,12 @@ export function createPlugin(): TestRunnerPlugin {
     },
 
     end: async () => {
-      if (stoppableServer)
-        await new Promise(f => stoppableServer.stop(f));
+      if (previewHttpServer)
+        await new Promise<void>(f => previewHttpServer!.close(() => f()));
     },
 
     populateDependencies: async () => {
       await buildBundle(config, configDir);
-    },
-
-    startDevServer: async () => {
-      return await runDevServer(config);
     },
 
     clearCache: async () => {
@@ -111,23 +103,10 @@ type BuildInfo = {
 
 export async function buildBundle(config: FullConfig, configDir: string): Promise<{ buildInfo: BuildInfo, viteConfig: Record<string, any> } | null> {
   const { registerSourceFile, frameworkPluginFactory } = frameworkConfig(config);
-  {
-    // Detect a running dev server and use it if available.
-    const endpoint = resolveEndpoint(config);
-    const protocol = endpoint.https ? 'https:' : 'http:';
-    const url = new URL(`${protocol}//${endpoint.host}:${endpoint.port}`);
-    if (await isURLAvailable(url, true)) {
-      // eslint-disable-next-line no-console
-      console.log(`Dev Server is already running at ${url.toString()}, using it.\n`);
-      process.env.PLAYWRIGHT_TEST_BASE_URL = url.toString();
-      return null;
-    }
-  }
-
   const dirs = await resolveDirs(configDir, config);
   if (!dirs) {
     // eslint-disable-next-line no-console
-    console.log(`Template file playwright/index.html is missing.`);
+    console.log(colors.red(`Component testing template file playwright/index.html is missing and there is no existing Vite server. Component tests will fail.\n`));
     return null;
   }
 
@@ -137,15 +116,15 @@ export async function buildBundle(config: FullConfig, configDir: string): Promis
   let buildInfo: BuildInfo;
 
   const registerSource = injectedSource + '\n' + await fs.promises.readFile(registerSourceFile, 'utf-8');
-  const registerSourceHash = calculateSha1(registerSource);
+  const registerSourceHash = utils.calculateSha1(registerSource);
 
   const { version: viteVersion, build, mergeConfig } = await import('vite');
 
   try {
     buildInfo = JSON.parse(await fs.promises.readFile(buildInfoFile, 'utf-8')) as BuildInfo;
-    assert(buildInfo.version === playwrightVersion);
-    assert(buildInfo.viteVersion === viteVersion);
-    assert(buildInfo.registerSourceHash === registerSourceHash);
+    iso.assert(buildInfo.version === playwrightVersion);
+    iso.assert(buildInfo.viteVersion === viteVersion);
+    iso.assert(buildInfo.registerSourceHash === registerSourceHash);
     buildExists = true;
   } catch (e) {
     buildInfo = {
@@ -197,7 +176,7 @@ export async function buildBundle(config: FullConfig, configDir: string): Promis
         for (const d of buildInfo.deps[component])
           deps.add(d);
       }
-      setExternalDependencies(importingFile, [...deps]);
+      cc.setExternalDependencies(importingFile, [...deps]);
     }
   }
 
@@ -235,8 +214,16 @@ async function checkNewComponents(buildInfo: BuildInfo, componentRegistry: Compo
       break;
     }
   }
-  for (const c of oldComponents.values())
-    componentRegistry.set(c.id, c);
+  for (const c of oldComponents.values()) {
+    try {
+      if ((await fs.promises.stat(c.filename)))
+        componentRegistry.set(c.id, c);
+    } catch (e) {
+      if (e.code !== 'ENOENT')
+        throw e;
+      log('non existent file, skipping component registry:', c.filename);
+    }
+  }
 
   return hasNewComponents;
 }
@@ -251,7 +238,7 @@ function vitePlugin(registerSource: string, templateDir: string, buildInfo: Buil
       moduleResolver = config.createResolver();
     },
 
-    async transform(this: PluginContext, content, id) {
+    async transform(this: Rollup.PluginContext, content, id) {
       const queryIndex = id.indexOf('?');
       const file = queryIndex !== -1 ? id.substring(0, queryIndex) : id;
       if (!buildInfo.sources[file]) {
@@ -265,9 +252,9 @@ function vitePlugin(registerSource: string, templateDir: string, buildInfo: Buil
       return transformIndexFile(id, content, templateDir, registerSource, importInfos);
     },
 
-    async writeBundle(this: PluginContext) {
+    async writeBundle(this: Rollup.PluginContext) {
       for (const importInfo of importInfos.values()) {
-        const importPath = resolveHook(importInfo.filename, importInfo.importSource);
+        const importPath = transform.resolveHook(importInfo.filename, importInfo.importSource);
         if (!importPath)
           continue;
         const deps = new Set<string>();
@@ -281,10 +268,17 @@ function vitePlugin(registerSource: string, templateDir: string, buildInfo: Buil
   };
 }
 
-function collectViteModuleDependencies(context: PluginContext, id: string, deps: Set<string>) {
-  if (!path.isAbsolute(id))
+function collectViteModuleDependencies(context: Rollup.PluginContext, id: string, deps: Set<string>) {
+  // Example: "src/Component.tsx?raw" or "src/Component.tsx?import" should resolve to the file path.
+  const cleanedId = id.split(/[?#]/)[0];
+  const normalizedId = path.normalize(cleanedId);
+  if (!path.isAbsolute(normalizedId))
     return;
-  const normalizedId = path.normalize(id);
+  // Vite 8 (rolldown) surfaces node_modules in the module graph that earlier
+  // versions hid behind dep optimization. Component dependencies should only
+  // track project sources, so stop at the node_modules boundary.
+  if (normalizedId.includes(`${path.sep}node_modules${path.sep}`))
+    return;
   if (deps.has(normalizedId))
     return;
   deps.add(normalizedId);

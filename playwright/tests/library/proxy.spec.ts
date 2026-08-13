@@ -18,8 +18,6 @@ import { setupSocksForwardingServer } from '../config/proxy';
 import { playwrightTest as it, expect } from '../config/browserTest';
 import net from 'net';
 
-it.skip(({ mode }) => mode.startsWith('service'));
-
 it('should throw for bad server value', async ({ browserType }) => {
   const error = await browserType.launch({
     // @ts-expect-error server must be a string
@@ -33,7 +31,7 @@ it('should use proxy @smoke', async ({ browserType, server, mode }) => {
     res.end('<html><title>Served by the proxy</title></html>');
   });
   const browser = await browserType.launch({
-    proxy: { server: `localhost:${server.PORT}` }
+    proxy: { server: server.HOST }
   });
   const page = await browser.newPage();
   await page.goto('http://non-existent.com/target.html');
@@ -90,8 +88,9 @@ it.describe('should proxy local network requests', () => {
           description: 'link-local'
         }
       ]) {
-        it(`${params.description}`, async ({ platform, browserName, browserType, server, proxyServer }) => {
+        it(`${params.description}`, async ({ platform, browserName, browserType, server, proxyServer, channel }) => {
           it.skip(browserName === 'webkit' && platform === 'darwin' && ['localhost', '127.0.0.1'].includes(params.target) && additionalBypass, 'Mac webkit does not proxy localhost when bypass rules are set.');
+          it.skip(channel?.startsWith('msedge'), 'times out while loading the page');
 
           const path = `/target-${additionalBypass}-${params.target}.html`;
           server.setRoute(path, async (req, res) => {
@@ -122,6 +121,26 @@ it.describe('should proxy local network requests', () => {
   }
 });
 
+for (const host of ['localhost', '127.0.0.1']) {
+  it(`should allow bypassing ${host} requests`, async ({  browserType, server, proxyServer }) => {
+    server.setRoute(`/proxied/target.html`, async (req, res) => {
+      res.end('<html><title>Served by the server</title></html>');
+    });
+    server.setRoute(`/target.html`, async (req, res) => {
+      res.end('<html><title>Served by the proxy</title></html>');
+    });
+    proxyServer.forwardTo(server.PORT, { removePrefix: '/proxied' });
+
+    const browser = await browserType.launch({
+      proxy: { server: `localhost:${proxyServer.PORT}`, bypass: host }
+    });
+    const page = await browser.newPage();
+    await page.goto(`http://${host}:${server.PORT}/proxied/target.html`);
+    expect(await page.title()).toBe('Served by the server');
+    await browser.close();
+  });
+}
+
 it('should authenticate', async ({ browserType, server }) => {
   server.setRoute('/target.html', async (req, res) => {
     const auth = req.headers['proxy-authorization'];
@@ -135,11 +154,49 @@ it('should authenticate', async ({ browserType, server }) => {
     }
   });
   const browser = await browserType.launch({
-    proxy: { server: `localhost:${server.PORT}`, username: 'user', password: 'secret' }
+    proxy: { server: server.HOST, username: 'user', password: 'secret' }
   });
   const page = await browser.newPage();
   await page.goto('http://non-existent.com/target.html');
   expect(await page.title()).toBe('Basic ' + Buffer.from('user:secret').toString('base64'));
+  await browser.close();
+});
+
+it('should reconnect with credentials after CONNECT 407 closes the socket', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/40768' }
+}, async ({ browserType, httpsServer, proxyServer }) => {
+  // Some HTTP proxies send 407 and close the socket on the first CONNECT, expecting
+  // the client to reconnect on a new TCP connection with Proxy-Authorization.
+  httpsServer.setRoute('/target.html', async (req, res) => {
+    res.end('<html><title>Served by https server via proxy</title></html>');
+  });
+  proxyServer.forwardTo(httpsServer.PORT, { allowConnectRequests: true });
+
+  const connectAttempts: { hadAuth: boolean }[] = [];
+  let closedFirstConnect = false;
+  proxyServer.setAuthHandler(req => {
+    // WebKit on Windows uses libcurl and sends Proxy-Authorization preemptively
+    // on every CONNECT, while libsoup on Linux/macOS sends it only after a 407.
+    // Force the first CONNECT to fail regardless to deterministically exercise
+    // the reconnect path on all platforms.
+    if (req.method !== 'CONNECT' || !req.headers.host?.startsWith('non-existent.com'))
+      return true;
+    connectAttempts.push({ hadAuth: !!req.headers['proxy-authorization'] });
+    if (!closedFirstConnect) {
+      closedFirstConnect = true;
+      return false;
+    }
+    return !!req.headers['proxy-authorization'];
+  });
+
+  const browser = await browserType.launch({
+    proxy: { server: proxyServer.HOST, username: 'user', password: 'secret' },
+  });
+  const page = await browser.newPage({ ignoreHTTPSErrors: true });
+  await page.goto('https://non-existent.com/target.html');
+  expect(await page.title()).toBe('Served by https server via proxy');
+  expect(connectAttempts.length).toBeGreaterThanOrEqual(2);
+  expect(connectAttempts.some(a => a.hadAuth)).toBe(true);
   await browser.close();
 });
 
@@ -167,7 +224,7 @@ it('should work with authenticate followed by redirect', async ({ browserName, b
     res.end('<html><title>Served by the proxy</title></html>');
   });
   const browser = await browserType.launch({
-    proxy: { server: `localhost:${server.PORT}`, username: 'user', password: 'secret' }
+    proxy: { server: server.HOST, username: 'user', password: 'secret' }
   });
   const page = await browser.newPage();
   await page.goto('http://non-existent.com/page1.html');
@@ -175,7 +232,9 @@ it('should work with authenticate followed by redirect', async ({ browserName, b
   await browser.close();
 });
 
-it('should exclude patterns', async ({ browserType, server, browserName, headless }) => {
+it('should exclude patterns', async ({ browserType, server, channel }) => {
+  it.skip(channel?.startsWith('msedge'), 'times out while loading the page');
+
   server.setRoute('/target.html', async (req, res) => {
     res.end('<html><title>Served by the proxy</title></html>');
   });
@@ -184,7 +243,7 @@ it('should exclude patterns', async ({ browserType, server, browserName, headles
   //
   // @see https://gist.github.com/CollinChaffin/24f6c9652efb3d6d5ef2f5502720ef00
   const browser = await browserType.launch({
-    proxy: { server: `localhost:${server.PORT}`, bypass: '1.non.existent.domain.for.the.test, 2.non.existent.domain.for.the.test, .another.test' }
+    proxy: { server: server.HOST, bypass: '1.non.existent.domain.for.the.test, 2.non.existent.domain.for.the.test, .another.test' }
   });
 
   {
@@ -224,6 +283,25 @@ it('should exclude patterns', async ({ browserType, server, browserName, headles
 
   await browser.close();
 });
+
+for (const host of ['localhost', '127.0.0.1']) {
+  it(`should bypass proxy for ${host} when ${host} is in bypass list`, async ({ browserType, server, proxyServer }) => {
+    proxyServer.forwardTo(server.PORT, { removePrefix: '/proxied' });
+    server.setRoute(`/proxied/target.html`, async (req, res) => {
+      res.end('<html><title>Served by the server</title></html>');
+    });
+    server.setRoute('/target.html', async (req, res) => {
+      res.end('<html><title>Served by the proxy</title></html>');
+    });
+    const browser = await browserType.launch({
+      proxy: { server: `localhost:${proxyServer.PORT}`, bypass: host }
+    });
+    const page = await browser.newPage();
+    await page.goto(`http://${host}:${server.PORT}/proxied/target.html`);
+    expect(await page.title()).toBe('Served by the server');
+    await browser.close();
+  });
+}
 
 it('should use socks proxy', async ({ browserType, socksPort }) => {
   const browser = await browserType.launch({
@@ -323,7 +401,7 @@ it('should use SOCKS proxy for websocket requests', async ({ browserType, server
   await closeProxyServer();
 });
 
-it('should use http proxy for websocket requests', async ({ browserName, browserType, server, proxyServer, isWindows, isMac, macVersion }) => {
+it('should use http proxy for websocket requests', async ({ browserName, browserType, server, proxyServer, isWindows, isMac, macVersion, channel }) => {
   it.skip(isMac && macVersion === 13, 'Times out on Mac 13');
 
   proxyServer.forwardTo(server.PORT, { allowConnectRequests: true });
@@ -352,7 +430,7 @@ it('should use http proxy for websocket requests', async ({ browserName, browser
 
   // WebKit does not use CONNECT for websockets, but other browsers do.
   if (browserName === 'webkit')
-    expect(proxyServer.wsUrls).toContain(isWindows ? '/ws' : 'ws://fake-localhost-127-0-0-1.nip.io:1337/ws');
+    expect(proxyServer.wsUrls).toContain((isWindows && !channel) ? '/ws' : 'ws://fake-localhost-127-0-0-1.nip.io:1337/ws');
   else
     expect(proxyServer.connectHosts).toContain('fake-localhost-127-0-0-1.nip.io:1337');
 

@@ -14,39 +14,35 @@
  * limitations under the License.
  */
 
-import { isRegExp } from 'playwright-core/lib/utils';
+import { isRegExp } from '@isomorphic/rtti';
 
-import { callLogText, expectTypes } from '../util';
-import { matcherHint } from './matcherHint';
+import { expectTypes, formatMatcherMessage } from './matcherHint';
 
 import type { MatcherResult } from './matcherHint';
-import type { ExpectMatcherState } from '../../types/test';
 import type { Locator } from 'playwright-core';
+import type { ExpectResult } from 'playwright-core/lib/client/frame';
+import type { ExpectMatcherStateInternal } from './matchers';
 
 // Omit colon and one or more spaces, so can call getLabelPrinter.
 const EXPECTED_LABEL = 'Expected';
 const RECEIVED_LABEL = 'Received';
 
 export async function toEqual<T>(
-  this: ExpectMatcherState,
+  this: ExpectMatcherStateInternal,
   matcherName: string,
-  receiver: Locator,
-  receiverType: string,
-  query: (isNot: boolean, timeout: number) => Promise<{ matches: boolean, received?: any, log?: string[], timedOut?: boolean }>,
+  locator: Locator,
+  receiverType: 'Locator',
+  query: (isNot: boolean, timeout: number, signal?: AbortSignal) => Promise<ExpectResult>,
   expected: T,
-  options: { timeout?: number, contains?: boolean } = {},
+  options: { timeout?: number, contains?: boolean, signal?: AbortSignal } = {},
 ): Promise<MatcherResult<any, any>> {
-  expectTypes(receiver, [receiverType], matcherName);
-
-  const matcherOptions = {
-    comment: options.contains ? '' : 'deep equality',
-    isNot: this.isNot,
-    promise: this.promise,
-  };
+  expectTypes(locator, [receiverType], matcherName);
 
   const timeout = options.timeout ?? this.timeout;
 
-  const { matches: pass, received, log, timedOut } = await query(!!this.isNot, timeout);
+  const { matches: pass, received, log, timedOut, errorMessage } = await query(!!this.isNot, timeout, options.signal);
+  const receivedValue = received?.value;
+
   if (pass === !this.isNot) {
     return {
       name: matcherName,
@@ -61,10 +57,12 @@ export async function toEqual<T>(
   let printedDiff: string | undefined;
   if (pass) {
     printedExpected = `Expected: not ${this.utils.printExpected(expected)}`;
-    printedReceived = `Received: ${this.utils.printReceived(received)}`;
-  } else if (Array.isArray(expected) && Array.isArray(received)) {
+    printedReceived = errorMessage ? '' : `Received: ${this.utils.printReceived(receivedValue)}`;
+  } else if (errorMessage) {
+    printedExpected = `Expected: ${this.utils.printExpected(expected)}`;
+  } else if (Array.isArray(expected) && Array.isArray(receivedValue)) {
     const normalizedExpected = expected.map((exp, index) => {
-      const rec = received[index];
+      const rec = receivedValue[index];
       if (isRegExp(exp))
         return exp.test(rec) ? rec : exp;
 
@@ -72,7 +70,7 @@ export async function toEqual<T>(
     });
     printedDiff = this.utils.printDiffOrStringify(
         normalizedExpected,
-        received,
+        receivedValue,
         EXPECTED_LABEL,
         RECEIVED_LABEL,
         false,
@@ -80,26 +78,39 @@ export async function toEqual<T>(
   } else {
     printedDiff = this.utils.printDiffOrStringify(
         expected,
-        received,
+        receivedValue,
         EXPECTED_LABEL,
         RECEIVED_LABEL,
         false,
     );
   }
   const message = () => {
-    const header = matcherHint(this, receiver, matcherName, 'locator', undefined, matcherOptions, timedOut ? timeout : undefined);
-    const details = printedDiff || `${printedExpected}\n${printedReceived}`;
-    return `${header}${details}${callLogText(log)}`;
+    return formatMatcherMessage(this.utils, {
+      isNot: this.isNot,
+      promise: this.promise,
+      matcherName,
+      expectation: 'expected',
+      locator: locator.toString(),
+      timeout,
+      timedOut,
+      printedExpected,
+      printedReceived,
+      printedDiff,
+      errorMessage,
+      log,
+    });
   };
+
   // Passing the actual and expected objects so that a custom reporter
   // could access them, for example in order to display a custom visual diff,
   // or create a different error message
   return {
-    actual: received,
+    actual: receivedValue,
     expected, message,
     name: matcherName,
     pass,
     log,
     timeout: timedOut ? timeout : undefined,
+    ariaSnapshot: received?.ariaSnapshot,
   };
 }

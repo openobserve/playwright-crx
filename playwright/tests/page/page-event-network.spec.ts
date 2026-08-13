@@ -17,7 +17,6 @@
 
 import type { ServerResponse } from 'http';
 import { test as it, expect } from './pageTest';
-import { kTargetClosedErrorMessage } from '../config/errors';
 
 it('Page.Events.Request @smoke', async ({ page, server }) => {
   const requests = [];
@@ -43,7 +42,7 @@ it('Page.Events.Response @smoke', async ({ page, server }) => {
   expect(responses[0].request()).toBeTruthy();
 });
 
-it('Page.Events.RequestFailed @smoke', async ({ page, server, browserName, platform }) => {
+it('Page.Events.RequestFailed @smoke', async ({ page, server, browserName, platform, channel }) => {
   server.setRoute('/one-style.css', (req, res) => {
     res.setHeader('Content-Type', 'text/css');
     res.connection.destroy();
@@ -58,7 +57,7 @@ it('Page.Events.RequestFailed @smoke', async ({ page, server, browserName, platf
   if (browserName === 'chromium') {
     expect(failedRequests[0].failure().errorText).toBe('net::ERR_EMPTY_RESPONSE');
   } else if (browserName === 'webkit') {
-    if (platform === 'linux')
+    if (platform === 'linux' || channel === 'webkit-wsl')
       expect(failedRequests[0].failure().errorText).toMatch(/(Message Corrupt)|(Connection terminated unexpectedly)/i);
     else if (platform === 'darwin')
       expect(failedRequests[0].failure().errorText).toBe('The network connection was lost.');
@@ -137,24 +136,4 @@ it('should resolve responses after a navigation', async ({ page, server, browser
   responseFromServer.end('done');
   // the response should resolve to null, because the page navigated.
   expect(await responsePromise).toBe(null);
-});
-
-it('interrupt request.response() and request.allHeaders() on page.close', async ({ page, server, browserName }) => {
-  it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/27227' });
-  server.setRoute('/one-style.css', (req, res) => {
-    res.setHeader('Content-Type', 'text/css');
-  });
-  const reqPromise = page.waitForRequest('**/one-style.css');
-  await page.goto(server.PREFIX + '/one-style.html', { waitUntil: 'domcontentloaded' });
-  const req = await reqPromise;
-  const respPromise = req.response().catch(e => e);
-  const headersPromise = req.allHeaders().catch(e => e);
-  await page.close();
-  expect((await respPromise).message).toContain(kTargetClosedErrorMessage);
-  // All headers are the same as "provisional" headers in Firefox.
-  if (browserName === 'firefox')
-    expect((await headersPromise)['user-agent']).toBeTruthy();
-  else
-    expect((await headersPromise).message).toContain(kTargetClosedErrorMessage);
-
 });

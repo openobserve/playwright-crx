@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-import type { Action, ActionInContext, AssertAction, AssertCheckedAction } from '@recorder/actions';
+import type { Action, ActionInContext, AssertAction, AssertCheckedAction } from '@isomorphic/codegen/actions';
 import * as acorn from 'acorn';
 import type { AwaitExpression, Expression, ExpressionStatement } from 'acorn';
 import * as walk from 'acorn-walk';
-import { fromKeyboardModifiers } from 'playwright-core/lib/server/codegen/language';
+import { fromKeyboardModifiers } from '@isomorphic/codegen/language';
 import type { BrowserContextOptions, SmartKeyboardModifier } from 'playwright-core/lib/server/types';
-import { locatorOrSelectorAsSelector } from 'playwright-core/lib/utils/isomorphic/locatorParser';
-import type { CallMetadata } from '@protocol/callMetadata';
+import { locatorOrSelectorAsSelector } from '@isomorphic/locatorParser';
+import type { CallMetadata } from 'playwright-core/lib/server/instrumentation';
 
 export type Location = CallMetadata['location'];
 export type ActionInContextWithLocation = ActionInContext & { location?: Location };
@@ -70,7 +70,9 @@ const expectFnActions: Record<AssertFnAction, (...args: Expression[]) => [action
   'toBeVisible': () => ['assertVisible'],
   'toHaveValue': value => ['assertValue', { value }],
   'toBeEmpty': () => ['assertValue'],
-  'toMatchAriaSnapshot': snapshot => ['assertSnapshot', { snapshot }],
+  // 1.54 renamed AssertSnapshotAction.snapshot -> ariaSnapshot; the code generators
+  // read the new name, so emitting the old one made codegen crash on undefined.
+  'toMatchAriaSnapshot': ariaSnapshot => ['assertSnapshot', { ariaSnapshot }],
 };
 
 const fnActions: Record<Exclude<ActionFnName, AssertFnAction>, (...args: any[]) => [action: Exclude<Action, AssertAction>['name'] | 'routeFromHAR', ...any]> = {
@@ -134,8 +136,18 @@ export type TestBrowserContextOptions = Pick<BrowserContextOptions,
   | 'viewport'
   | 'permissions'
   | 'serviceWorkers'
-  | 'recordHar'
-> & { storageState?: string };
+> & {
+  storageState?: string;
+  // 1.54 removed `recordHar` from the protocol's BrowserNewContextOptions, but the
+  // parser still recognises `routeFromHAR(...)` in parsed test code and reports it
+  // here, so the shape is declared locally instead of picked from upstream.
+  recordHar?: {
+    path: string;
+    content?: 'embed' | 'attach' | 'omit';
+    mode?: 'full' | 'minimal';
+    urlGlob?: string;
+  };
+};
 
 export type TestOptions = {
   deviceName?: string;
@@ -295,7 +307,11 @@ export function parse(code: string, file: string = 'playwright-test') {
 
     return {
       action,
-      frame: { pageAlias: pageAlias ?? 'page', framePath: [] },
+      // pageGuid is required on FrameDescription since 1.54; parsed code has no live
+      // page to name, and the player resolves the target through pageAlias.
+      // 1.62: the page key is the guid, and for parsed code that is the alias the author
+      // wrote (`page`, `page1`, …), which is what the player resolves against.
+      pageGuid: pageAlias ?? 'page',
       startTime: 0,
       location: { file, ...indexToLineColumn(code, expr.start) },
     };
@@ -404,7 +420,7 @@ export function parse(code: string, file: string = 'playwright-test') {
       // it has page fixture, let's push a openPage action
       actions.push({
         action: { name: 'openPage', signals: [], url: '' },
-        frame: { pageAlias: 'page', framePath: [] },
+        pageGuid: 'page',
         location: { file, ...indexToLineColumn(code, fn.start) },
         startTime: 0
       });

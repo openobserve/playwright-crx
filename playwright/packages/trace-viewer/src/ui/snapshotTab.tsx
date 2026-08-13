@@ -17,13 +17,15 @@
 import './snapshotTab.css';
 import * as React from 'react';
 import type { ActionTraceEvent } from '@trace/trace';
-import { context, type MultiTraceModel, nextActionByStartTime, previousActionByEndTime } from './modelUtil';
+import { nextActionByStartTime, previousActionByEndTime } from '@isomorphic/trace/traceModel';
+import type { TraceModel } from '@isomorphic/trace/traceModel';
 import { Toolbar } from '@web/components/toolbar';
 import { ToolbarButton } from '@web/components/toolbarButton';
 import { clsx, useMeasure, useSetting } from '@web/uiUtils';
 import { InjectedScript } from '@injected/injectedScript';
 import { Recorder } from '@injected/recorder/recorder';
 import { asLocator } from '@isomorphic/locatorGenerators';
+import { blankSnapshotUrl } from '@isomorphic/trace/snapshotRenderer';
 import type { Language } from '@isomorphic/locatorGenerators';
 import { locatorOrSelectorAsSelector } from '@isomorphic/locatorParser';
 import { TabbedPaneTab } from '@web/components/tabbedPane';
@@ -31,6 +33,8 @@ import { BrowserFrame } from './browserFrame';
 import type { ElementInfo } from '@recorder/recorderTypes';
 import { parseAriaSnapshot } from '@isomorphic/ariaSnapshot';
 import yaml from 'yaml';
+import { PlaybackButtons } from './playbackControl';
+import type { PlaybackState } from './playbackControl';
 
 export type HighlightedElement = {
   locator?: string,
@@ -40,44 +44,49 @@ export type HighlightedElement = {
 
 export const SnapshotTabsView: React.FunctionComponent<{
   action: ActionTraceEvent | undefined,
-  model?: MultiTraceModel,
+  model?: TraceModel,
   sdkLanguage: Language,
   testIdAttributeName: string,
   isInspecting: boolean,
   setIsInspecting: (isInspecting: boolean) => void,
   highlightedElement: HighlightedElement,
   setHighlightedElement: (element: HighlightedElement) => void,
-}> = ({ action, sdkLanguage, testIdAttributeName, isInspecting, setIsInspecting, highlightedElement, setHighlightedElement }) => {
+  playback: PlaybackState
+}> = ({ action, model, sdkLanguage, testIdAttributeName, isInspecting, setIsInspecting, highlightedElement, setHighlightedElement, playback }) => {
   const [snapshotTab, setSnapshotTab] = React.useState<'action'|'before'|'after'>('action');
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [shouldPopulateCanvasFromScreenshot, _] = useSetting('shouldPopulateCanvasFromScreenshot', false);
+  const [shouldPopulateCanvasFromScreenshot] = useSetting('shouldPopulateCanvasFromScreenshot', false);
 
   const snapshots = React.useMemo(() => {
     return collectSnapshots(action);
   }, [action]);
-  const snapshotUrls = React.useMemo(() => {
+  const { snapshotInfoUrl, snapshotUrl, popoutUrl } = React.useMemo(() => {
     const snapshot = snapshots[snapshotTab];
-    return snapshot ? extendSnapshot(snapshot, shouldPopulateCanvasFromScreenshot) : undefined;
-  }, [snapshots, snapshotTab, shouldPopulateCanvasFromScreenshot]);
+    return model && snapshot ? extendSnapshot(model.traceUri, snapshot, shouldPopulateCanvasFromScreenshot) : { snapshotInfoUrl: undefined, snapshotUrl: undefined, popoutUrl: undefined };
+  }, [snapshots, snapshotTab, shouldPopulateCanvasFromScreenshot, model]);
+
+  const snapshotUrls = React.useMemo((): SnapshotUrls | undefined => snapshotInfoUrl !== undefined ? { snapshotInfoUrl, snapshotUrl, popoutUrl } : undefined, [snapshotInfoUrl, snapshotUrl, popoutUrl]);
 
   return <div className='snapshot-tab vbox'>
     <Toolbar>
       <ToolbarButton className='pick-locator' title='Pick locator' icon='target' toggled={isInspecting} onClick={() => setIsInspecting(!isInspecting)} />
-      {['action', 'before', 'after'].map(tab => {
-        return <TabbedPaneTab
-          key={tab}
-          id={tab}
-          title={renderTitle(tab)}
-          selected={snapshotTab === tab}
-          onSelect={() => setSnapshotTab(tab as 'action' | 'before' | 'after')}
-        ></TabbedPaneTab>;
-      })}
+      <div className='hbox' style={{ height: '100%' }} role='tablist'>
+        {(['action', 'before', 'after'] as const).map(tab => {
+          return <TabbedPaneTab
+            key={tab}
+            id={tab}
+            title={renderTitle(tab)}
+            selected={snapshotTab === tab}
+            onSelect={() => setSnapshotTab(tab)}
+          />;
+        })}
+      </div>
       <div style={{ flex: 'auto' }}></div>
+      <PlaybackButtons playback={playback} />
       <ToolbarButton icon='link-external' title='Open snapshot in a new tab' disabled={!snapshotUrls?.popoutUrl} onClick={() => {
         const win = window.open(snapshotUrls?.popoutUrl || '', '_blank');
         win?.addEventListener('DOMContentLoaded', () => {
-          const injectedScript = new InjectedScript(win as any, { isUnderTest, sdkLanguage, testIdAttributeName, stableRafCount: 1, browserName: 'chromium', inputFileRoleTextbox: false, customEngines: [] });
+          const injectedScript = new InjectedScript(win as any, { isUnderTest, frameSeq: 0, sdkLanguage, testIdAttributeName, stableRafCount: 1, browserName: 'chromium', customEngines: [] });
           injectedScript.consoleApi.install();
         });
       }} />
@@ -129,7 +138,7 @@ export const SnapshotView: React.FunctionComponent<{
           iframe.addEventListener('error', loadedCallback);
 
           // Try preventing history entry from being created.
-          const snapshotUrl = snapshotUrls?.snapshotUrl || kBlankSnapshotUrl;
+          const snapshotUrl = snapshotUrls?.snapshotUrl || blankSnapshotUrl;
           if (iframe.contentWindow)
             iframe.contentWindow.location.replace(snapshotUrl);
           else
@@ -179,8 +188,8 @@ export const SnapshotView: React.FunctionComponent<{
       iteration={loadingRef.current.iteration} />
     <SnapshotWrapper snapshotInfo={snapshotInfo}>
       <div className='snapshot-switcher'>
-        <iframe ref={iframeRef0} name='snapshot' title='DOM Snapshot' className={clsx(loadingRef.current.visibleIframe === 0 && 'snapshot-visible')}></iframe>
-        <iframe ref={iframeRef1} name='snapshot' title='DOM Snapshot' className={clsx(loadingRef.current.visibleIframe === 1 && 'snapshot-visible')}></iframe>
+        <iframe ref={iframeRef0} name='snapshot' title='DOM Snapshot' sandbox='allow-same-origin allow-scripts' className={clsx(loadingRef.current.visibleIframe === 0 && 'snapshot-visible')}></iframe>
+        <iframe ref={iframeRef1} name='snapshot' title='DOM Snapshot' sandbox='allow-same-origin allow-scripts' className={clsx(loadingRef.current.visibleIframe === 1 && 'snapshot-visible')}></iframe>
       </div>
     </SnapshotWrapper>
   </div>;
@@ -194,23 +203,41 @@ const SnapshotWrapper: React.FunctionComponent<React.PropsWithChildren<{
   const windowHeaderHeight = 40;
   const snapshotContainerSize = {
     width: snapshotInfo.viewport.width,
-    height: snapshotInfo.viewport.height + windowHeaderHeight,
+    height: snapshotInfo.viewport.height,
   };
 
-  const scale = Math.min(measure.width / snapshotContainerSize.width, measure.height / snapshotContainerSize.height, 1);
+  const renderedBrowserFrameSize = {
+    width: Math.max(snapshotContainerSize.width, 480),
+    height: Math.max(snapshotContainerSize.height + windowHeaderHeight, 320),
+  };
+
+  // `measure` is the wrapper's border box (getBoundingClientRect), which includes the
+  // 10px padding on every side. Fit and center the frame within the content box so it
+  // keeps a padding-sized margin (with room for the box-shadow) when squeezed.
+  const padding = 10;
+  const availableWidth = measure.width - 2 * padding;
+  const availableHeight = measure.height - 2 * padding;
+  const scale = Math.min(availableWidth / renderedBrowserFrameSize.width, availableHeight / renderedBrowserFrameSize.height, 1);
   const translate = {
-    x: (measure.width - snapshotContainerSize.width) / 2,
-    y: (measure.height - snapshotContainerSize.height) / 2,
+    x: (measure.width - renderedBrowserFrameSize.width) / 2 - padding,
+    y: (measure.height - renderedBrowserFrameSize.height) / 2 - padding,
   };
 
   return <div ref={ref} className='snapshot-wrapper'>
     <div className='snapshot-container' style={{
-      width: snapshotContainerSize.width + 'px',
-      height: snapshotContainerSize.height + 'px',
+      width: renderedBrowserFrameSize.width + 'px',
+      height: renderedBrowserFrameSize.height + 'px',
       transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`,
     }}>
       <BrowserFrame url={snapshotInfo.url} />
-      {children}
+      <div className='snapshot-browser-body'>
+        <div style={{
+          width: snapshotContainerSize.width + 'px',
+          height: snapshotContainerSize.height + 'px',
+        }}>
+          {children}
+        </div>
+      </div>
     </div>
   </div>;
 };
@@ -284,7 +311,7 @@ function createRecorders(recorders: { recorder: Recorder, frameSelector: string 
     return;
   const win = frameWindow as any;
   if (!win._recorder && force) {
-    const injectedScript = new InjectedScript(frameWindow as any, { isUnderTest, sdkLanguage, testIdAttributeName, stableRafCount: 1, browserName: 'chromium', inputFileRoleTextbox: false, customEngines: [] });
+    const injectedScript = new InjectedScript(frameWindow as any, { isUnderTest, frameSeq: 0, sdkLanguage, testIdAttributeName, stableRafCount: 1, browserName: 'chromium', customEngines: [] });
     const recorder = new Recorder(injectedScript);
     win._injectedScript = injectedScript;
     win._recorder = { recorder, frameSelector: parentFrameSelector };
@@ -306,8 +333,31 @@ function createRecorders(recorders: { recorder: Recorder, frameSelector: string 
 export type Snapshot = {
   action: ActionTraceEvent;
   snapshotName: string;
+  pageId: string;
   point?: { x: number, y: number };
-  hasInputTarget?: boolean;
+};
+
+const createSnapshot = (action: ActionTraceEvent, snapshotNameKey: 'beforeSnapshot' | 'afterSnapshot' | 'inputSnapshot'): Snapshot | undefined => {
+  if (!action)
+    return undefined;
+
+  const snapshotName = action[snapshotNameKey];
+
+  if (!snapshotName)
+    return undefined;
+
+  if (!action.pageId) {
+    // eslint-disable-next-line no-console
+    console.error('snapshot action must have a pageId');
+    return undefined;
+  }
+
+  return {
+    action,
+    snapshotName,
+    pageId: action.pageId,
+    point: action.point,
+  };
 };
 
 export type SnapshotInfo = {
@@ -333,18 +383,18 @@ export function collectSnapshots(action: ActionTraceEvent | undefined): Snapshot
   if (!action)
     return {};
 
-  let beforeSnapshot: Snapshot | undefined = action.beforeSnapshot ? { action, snapshotName: action.beforeSnapshot } : undefined;
+  let beforeSnapshot = createSnapshot(action, 'beforeSnapshot');
   if (!beforeSnapshot) {
     // If the action has no beforeSnapshot, use the last available afterSnapshot.
     for (let a = previousActionByEndTime(action); a; a = previousActionByEndTime(a)) {
       if (a.endTime <= action.startTime && a.afterSnapshot) {
-        beforeSnapshot = { action: a, snapshotName: a.afterSnapshot };
+        beforeSnapshot = createSnapshot(a, 'afterSnapshot');
         break;
       }
     }
   }
 
-  let afterSnapshot: Snapshot | undefined = action.afterSnapshot ? { action, snapshotName: action.afterSnapshot } : undefined;
+  let afterSnapshot = createSnapshot(action, 'afterSnapshot');
   if (!afterSnapshot) {
     let last: ActionTraceEvent | undefined;
     // - For test.step, we want to use the snapshot of the last nested action.
@@ -362,49 +412,38 @@ export function collectSnapshots(action: ActionTraceEvent | undefined): Snapshot
       last = a;
     }
     if (last)
-      afterSnapshot = { action: last, snapshotName: last.afterSnapshot! };
+      afterSnapshot = createSnapshot(last, 'afterSnapshot');
     else
       afterSnapshot = beforeSnapshot;
   }
 
-  const actionSnapshot: Snapshot | undefined = action.inputSnapshot ? { action, snapshotName: action.inputSnapshot, hasInputTarget: true } : afterSnapshot;
+  const actionSnapshot = createSnapshot(action, 'inputSnapshot') ?? afterSnapshot;
   if (actionSnapshot)
     actionSnapshot.point = action.point;
   return { action: actionSnapshot, before: beforeSnapshot, after: afterSnapshot };
 }
 
 const isUnderTest = new URLSearchParams(window.location.search).has('isUnderTest');
-const serverParam = new URLSearchParams(window.location.search).get('server');
 
-export function extendSnapshot(snapshot: Snapshot, shouldPopulateCanvasFromScreenshot: boolean): SnapshotUrls {
+export function extendSnapshot(traceUri: string, snapshot: Snapshot, shouldPopulateCanvasFromScreenshot: boolean): SnapshotUrls {
   const params = new URLSearchParams();
-  params.set('trace', context(snapshot.action).traceUrl);
+  params.set('trace', traceUri);
   params.set('name', snapshot.snapshotName);
   if (isUnderTest)
     params.set('isUnderTest', 'true');
   if (snapshot.point) {
     params.set('pointX', String(snapshot.point.x));
     params.set('pointY', String(snapshot.point.y));
-    if (snapshot.hasInputTarget)
-      params.set('hasInputTarget', '1');
   }
   if (shouldPopulateCanvasFromScreenshot)
     params.set('shouldPopulateCanvasFromScreenshot', '1');
 
-  const snapshotUrl = new URL(`snapshot/${snapshot.action.pageId}?${params.toString()}`, window.location.href).toString();
-  const snapshotInfoUrl = new URL(`snapshotInfo/${snapshot.action.pageId}?${params.toString()}`, window.location.href).toString();
+  const snapshotUrl = new URL(`snapshot/${snapshot.pageId}?${params.toString()}`, window.location.href).toString();
+  const snapshotInfoUrl = new URL(`snapshotInfo/${snapshot.pageId}?${params.toString()}`, window.location.href).toString();
 
   const popoutParams = new URLSearchParams();
   popoutParams.set('r', snapshotUrl);
-  if (serverParam)
-    popoutParams.set('server', serverParam);
-  popoutParams.set('trace', context(snapshot.action).traceUrl);
-  if (snapshot.point) {
-    popoutParams.set('pointX', String(snapshot.point.x));
-    popoutParams.set('pointY', String(snapshot.point.y));
-    if (snapshot.hasInputTarget)
-      params.set('hasInputTarget', '1');
-  }
+  popoutParams.set('trace', traceUri);
   const popoutUrl = new URL(`snapshot.html?${popoutParams.toString()}`, window.location.href).toString();
   return { snapshotInfoUrl, snapshotUrl, popoutUrl };
 }
@@ -425,4 +464,3 @@ export async function fetchSnapshotInfo(snapshotInfoUrl: string | undefined) {
 }
 
 export const kDefaultViewport = { width: 1280, height: 720 };
-const kBlankSnapshotUrl = 'data:text/html,<body style="background: #ddd"></body>';

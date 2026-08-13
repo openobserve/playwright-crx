@@ -73,6 +73,15 @@ it('should fill color input', async ({ page }) => {
   expect(await page.$eval('input', input => input.value)).toBe('#aaaaaa');
 });
 
+it('should fill color input case insensitive', async ({ page, browserName, isWindows, channel }) => {
+  await page.setContent('<input type=color value="#e66465">');
+  await page.fill('input', '#AbCd00');
+  if (browserName === 'webkit' && isWindows && channel !== 'webkit-wsl')
+    expect(await page.$eval('input', input => input.value)).toBe('#AbCd00');
+  else
+    expect(await page.$eval('input', input => input.value)).toBe('#abcd00');
+});
+
 it('should throw on incorrect color value', async ({ page, browserName, isWindows }) => {
   it.skip(browserName === 'webkit' && isWindows, 'WebKit win does not support color inputs');
   await page.setContent('<input type=color value="#e66465">');
@@ -201,13 +210,38 @@ it('should fill contenteditable', async ({ page, server }) => {
   expect(await page.$eval('div[contenteditable]', div => div.textContent)).toBe('some value');
 });
 
-it('should fill contenteditable with new lines', async ({ page, server, browserName }) => {
-  it.fixme(browserName === 'firefox', 'Firefox does not handle new lines in contenteditable');
+it('should fill contenteditable with new lines', async ({ page, server, browserName, isBidi }) => {
+  it.fixme(browserName === 'firefox' && !isBidi, 'Firefox does not handle new lines in contenteditable');
 
   await page.goto(server.EMPTY_PAGE);
   await page.setContent(`<div contenteditable="true"></div>`);
   await page.locator('div[contenteditable]').fill('John\nDoe');
   expect(await page.locator('div[contenteditable]').innerText()).toBe('John\nDoe');
+});
+
+it('should not double-fill in contenteditable with beforeinput handler in Firefox', {
+  annotation: {
+    type: 'issue',
+    description: 'https://github.com/microsoft/playwright/issues/36715'
+  }
+}, async ({ page, browserName, isBidi }) => {
+  it.fixme(browserName === 'firefox' && !isBidi, 'https://github.com/microsoft/playwright/issues/36715');
+
+  await page.setContent(`
+    <div id="editor" contenteditable="true"></div>
+    <script>
+      const editor = document.getElementById('editor');
+      editor.addEventListener('beforeinput', (event) => {
+        event.preventDefault();
+        editor.textContent = event.data;
+      });
+    </script>
+  `);
+
+  const locator = page.locator('#editor');
+  const testValue = 'Playwright';
+  await locator.fill(testValue);
+  await expect(locator).toHaveText(testValue);
 });
 
 it('should fill elements with existing value and selection', async ({ page, server }) => {
@@ -369,4 +403,26 @@ it('fill back to back', async ({ page }) => {
   await page.fill('id=two', 'second value');
   await expect(page.locator('id=one')).toHaveValue('first value');
   await expect(page.locator('id=two')).toHaveValue('second value');
+});
+
+it('should fill contenteditable with focus handler that collapses selection', {
+  annotation: {
+    type: 'issue',
+    description: 'https://github.com/microsoft/playwright/issues/39492'
+  }
+}, async ({ page }) => {
+  await page.setContent(`
+    <div contenteditable="true">initial text</div>
+    <script>
+      const editor = document.querySelector('[contenteditable]');
+      editor.addEventListener('focus', () => {
+        const selection = window.getSelection();
+        if (selection.rangeCount > 0)
+          selection.collapseToEnd();
+      });
+    </script>
+  `);
+
+  await page.fill('div[contenteditable]', 'some value');
+  expect(await page.locator('div[contenteditable]').textContent()).toBe('some value');
 });

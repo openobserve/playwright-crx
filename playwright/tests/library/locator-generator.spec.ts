@@ -15,9 +15,10 @@
  */
 
 import { contextTest as it, expect } from '../config/browserTest';
-import { asLocator, asLocators } from '../../packages/playwright-core/lib/utils/isomorphic/locatorGenerators';
-import { locatorOrSelectorAsSelector as parseLocator } from '../../packages/playwright-core/lib/utils/isomorphic/locatorParser';
+import { iso } from '../../packages/playwright-core/lib/coreBundle';
 import type { Page, Frame, Locator, FrameLocator } from 'playwright-core';
+
+const { asLocator, asLocators, asLocatorDescription, locatorOrSelectorAsSelector: parseLocator } = iso;
 
 it.skip(({ mode }) => mode !== 'default');
 
@@ -226,6 +227,41 @@ it('reverse engineer getByRole', async ({ page }) => {
     java: `getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setChecked(true).setLevel(3).setPressed(false))`,
     csharp: `GetByRole(AriaRole.Button, new() { Checked = true, Level = 3, Pressed = false })`,
   });
+  expect.soft(generate(page.getByRole('alert', { name: 'Upload', description: 'doc.pdf' }))).toEqual({
+    javascript: `getByRole('alert', { name: 'Upload', description: 'doc.pdf' })`,
+    python: `get_by_role("alert", name="Upload", description="doc.pdf")`,
+    java: `getByRole(AriaRole.ALERT, new Page.GetByRoleOptions().setName("Upload").setDescription("doc.pdf"))`,
+    csharp: `GetByRole(AriaRole.Alert, new() { Name = "Upload", Description = "doc.pdf" })`,
+  });
+  expect.soft(generate(page.getByRole('alert', { description: 'doc.pdf' }))).toEqual({
+    javascript: `getByRole('alert', { description: 'doc.pdf' })`,
+    python: `get_by_role("alert", description="doc.pdf")`,
+    java: `getByRole(AriaRole.ALERT, new Page.GetByRoleOptions().setDescription("doc.pdf"))`,
+    csharp: `GetByRole(AriaRole.Alert, new() { Description = "doc.pdf" })`,
+  });
+  expect.soft(generate(page.getByRole('alert', { description: /doc\.pdf/ }))).toEqual({
+    javascript: `getByRole('alert', { description: /doc\\.pdf/ })`,
+    python: `get_by_role("alert", description=re.compile(r"doc\\.pdf"))`,
+    java: `getByRole(AriaRole.ALERT, new Page.GetByRoleOptions().setDescription(Pattern.compile("doc\\\\.pdf")))`,
+    csharp: `GetByRole(AriaRole.Alert, new() { DescriptionRegex = new Regex("doc\\\\.pdf") })`,
+  });
+  expect.soft(generate(page.getByRole('alert', { name: 'Upload', description: 'doc.pdf', exact: true }))).toEqual({
+    javascript: `getByRole('alert', { name: 'Upload', description: 'doc.pdf', exact: true })`,
+    python: `get_by_role("alert", name="Upload", description="doc.pdf", exact=True)`,
+    java: `getByRole(AriaRole.ALERT, new Page.GetByRoleOptions().setName("Upload").setDescription("doc.pdf").setExact(true))`,
+    csharp: `GetByRole(AriaRole.Alert, new() { Name = "Upload", Description = "doc.pdf", Exact = true })`,
+  });
+});
+
+it('refuses to translate internal:role with conflicting name/description exactness', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41032' }
+}, async () => {
+  const conflicting = 'internal:role=row[name="abc"i][description="d"s]';
+  const conflictingReversed = 'internal:role=row[name="abc"s][description="d"i]';
+  for (const lang of ['javascript', 'python', 'java', 'csharp'] as const) {
+    expect.soft(asLocator(lang, conflicting), lang).toBe(conflicting);
+    expect.soft(asLocator(lang, conflictingReversed), lang).toBe(conflictingReversed);
+  }
 });
 
 it('reverse engineer ignore-case locators', async ({ page }) => {
@@ -653,4 +689,11 @@ it('should not oom in locator parser', async ({ page }) => {
       .contentFrame().locator('text=L28').or(l('text=L29')))));
   const error = await locator.count().catch(e => e);
   expect(error.message).toContain('Frame locators are not allowed inside composite locators');
+});
+
+it('asLocatorDescription invalid input', async () => {
+  expect.soft(asLocatorDescription('javascript', `body >> internal:describe="desc"`)).toBe(`desc`);
+  expect.soft(asLocatorDescription('javascript', `body >> internal:describe=12`)).toBe(`locator('body')`);
+  expect.soft(asLocatorDescription('javascript', `following-sibling::*[1]`)).toBe(`following-sibling::*[1]`);
+  expect.soft(asLocatorDescription('javascript', `body >> internal:describe="desc" >> div`)).toBe(`locator('body').locator('div')`);
 });

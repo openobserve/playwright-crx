@@ -14,11 +14,13 @@
  * limitations under the License.
  */
 
+import { debugLogger } from '@utils/debugLogger';
+
 import type { BrowserContext } from './browserContext';
 import type { LocalUtils } from './localUtils';
 import type { Route } from './network';
 import type { Page } from './page';
-import type { URLMatch } from '../utils/isomorphic/urlMatch';
+import type { URLMatch } from '@isomorphic/urlMatch';
 
 type HarNotFoundAction = 'abort' | 'fallback';
 
@@ -55,7 +57,7 @@ export class HarRouter {
     });
 
     if (response.action === 'redirect') {
-      route._platform.log('api', `HAR: ${route.request().url()} redirected to ${response.redirectURL}`);
+      debugLogger.log('api', `HAR: ${route.request().url()} redirected to ${response.redirectURL}`);
       await route._redirectNavigationRequest(response.redirectURL!);
       return;
     }
@@ -68,16 +70,35 @@ export class HarRouter {
       // test when HAR was recorded but we'd abort it immediately.
       if (response.status === -1)
         return;
+
+
+      // route.fulfill does not support multiple set-cookie headers. We need to merge them into one.
+      const transformedHeaders = response.headers!.reduce((headersMap, { name, value }) => {
+        if (name.toLowerCase() !== 'set-cookie') {
+          // non-set-cookie header gets set as-is
+          headersMap[name] = value;
+        } else {
+          // first set-cookie header gets included as-is
+          if (!headersMap['set-cookie'])
+            headersMap['set-cookie'] = value;
+          else
+            // subsequent set-cookie headers get appended to existing header
+            headersMap['set-cookie'] += `\n${value}`;
+
+        }
+        return headersMap;
+      }, {} as Record<string, string>);
+
       await route.fulfill({
         status: response.status,
-        headers: Object.fromEntries(response.headers!.map(h => [h.name, h.value])),
+        headers: transformedHeaders,
         body: response.body!
       });
       return;
     }
 
     if (response.action === 'error')
-      route._platform.log('api', 'HAR: ' + response.message!);
+      debugLogger.log('api', 'HAR: ' + response.message!);
     // Report the error, but fall through to the default handler.
 
     if (this._notFoundAction === 'abort') {

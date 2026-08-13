@@ -17,24 +17,62 @@
 import EventEmitter from 'events';
 import type { BrowserContext } from 'playwright-core/lib/server/browserContext';
 import { Page } from 'playwright-core/lib/server/page';
-import { createGuid, isUnderTest, ManualPromise, monotonicTime, serializeExpectedTextValues } from 'playwright-core/lib/utils';
-import type { Frame } from 'playwright-core/lib/server/frames';
-import type { CallMetadata } from '@protocol/callMetadata';
+import { isUnderTest } from '@utils/debug';
+import { ManualPromise } from '@isomorphic/manualPromise';
+import { monotonicTime } from '@isomorphic/time';
+// 1.62 made this private to playwright/src/matchers, so it is inlined here. It is a pure
+// shape conversion — a string or RegExp becomes the wire form the expect engine reads —
+// and is copied from upstream rather than reinvented.
+function serializeExpectedTextValues(
+  items: (string | RegExp)[],
+  options: { matchSubstring?: boolean, normalizeWhiteSpace?: boolean, ignoreCase?: boolean } = {},
+) {
+  return items.map(i => ({
+    string: typeof i === 'string' ? i : undefined,
+    regexSource: typeof i === 'string' ? undefined : i.source,
+    regexFlags: typeof i === 'string' ? undefined : i.flags,
+    matchSubstring: options.matchSubstring,
+    ignoreCase: options.ignoreCase,
+    normalizeWhiteSpace: options.normalizeWhiteSpace,
+  }));
+}
 import { serializeError } from 'playwright-core/lib/server/errors';
-import { buildFullSelector } from 'playwright-core/lib/server/recorder/recorderUtils';
-import { toKeyboardModifiers } from 'playwright-core/lib/server/codegen/language';
+import { toKeyboardModifiers } from '@isomorphic/codegen/language';
 import type { ActionInContextWithLocation, Location } from './parser';
-import type { ActionInContext, FrameDescription } from '@recorder/actions';
 import type { StructuredError } from './syntheticsRecorderApp';
 import { toClickOptions } from 'playwright-core/lib/server/recorder/recorderRunner';
-import { parseAriaSnapshotUnsafe } from 'playwright-core/lib/utils/isomorphic/ariaSnapshot';
-import { serverSideCallMetadata } from 'playwright-core/lib/server';
+import { nullProgress, ProgressController } from 'playwright-core/lib/server/progress';
+import type { CallMetadata } from 'playwright-core/lib/server/instrumentation';
+import type { Progress } from 'playwright-core/lib/server/progress';
+import { primaryPageGuid } from './actionMapper';
 import type { Crx } from '../crx';
-import type { InstrumentationListener } from 'playwright-core/lib/server/instrumentation';
-import { traceParamsForAction } from './recorderUtils';
-import { yaml } from 'playwright-core/lib/utilsBundle';
+import type { InstrumentationListener, SdkObject } from 'playwright-core/lib/server/instrumentation';
 
 class Stopped extends Error {}
+
+// 1.55 deleted `serverSideCallMetadata()` and gave ProgressController a default
+// metadata of its own — but that default is `internal: true`, which upstream uses to
+// keep housekeeping calls out of traces. Replay steps are not housekeeping, so the
+// player keeps building the same non-internal metadata 1.54 gave it.
+function playerCallMetadata(): CallMetadata {
+  return { id: '', startTime: 0, endTime: 0, type: 'Internal', method: '', params: {}, log: [] };
+}
+
+// 1.55 also removed ProgressController's SdkObject, and with it the instrumentation
+// call it used to make from `progress.log` (see the 1.54 controller, which did
+// `instrumentation.onCallLog(sdkObject, metadata, logName, message)` on every log).
+// The controller now only offers an opt-in callback, so callers forward the logs
+// themselves; upstream's own dispatcher does exactly this in `_runCommand`.
+//
+// This is not cosmetic for us: the recorder's call-log panel — and the incognito
+// forwarding listener installed in run() — are fed entirely from onCallLog. Without
+// this, a replay executes correctly but narrates nothing.
+function progressControllerFor(sdkObject: SdkObject): ProgressController {
+  const metadata = playerCallMetadata();
+  return new ProgressController(metadata, message => {
+    sdkObject.instrumentation.onCallLog(sdkObject, metadata, sdkObject.logName || 'api', message);
+  });
+}
 
 function buildStructuredError(
   e: unknown,
@@ -59,7 +97,8 @@ export type PerformAction = ActionInContextWithLocation | {
   action: {
     name: 'pause';
   };
-  frame: FrameDescription;
+  // 1.62 replaced the action's FrameDescription with a bare page key.
+  pageGuid: string;
   location?: Location;
 };
 
@@ -70,9 +109,14 @@ export default class CrxPlayer extends EventEmitter {
   private _stopping?: ManualPromise;
   private _pageAliases = new Map<Page, string>();
   private _pause?: Promise<void>;
-  // Context the current run() is executing against. stop() needs it to abort the
-  // in-flight call; _checkStopped() alone only lands at the next step boundary.
-  private _runningContext?: BrowserContext;
+  // The controller driving the call that is in flight right now. stop() aborts it;
+  // _checkStopped() alone only lands at the next step boundary.
+  //
+  // 1.54 removed `BrowserContext.stopPendingOperations()`, which is what this used to
+  // call. ProgressController.abort() is the replacement and is strictly better here:
+  // it cancels exactly this player's call instead of every pending operation on the
+  // context, so a stop can no longer disturb unrelated work (e.g. the recorder's own).
+  private _currentController?: ProgressController;
 
   constructor(crx: Crx) {
     super();
@@ -84,7 +128,7 @@ export default class CrxPlayer extends EventEmitter {
       const context = (await this._crx.get({ incognito: false }))!._context;
       const pauseAction = {
         action: { name: 'pause' },
-        frame: { pageAlias: 'page', framePath: [] },
+        pageGuid: 'page',
       } satisfies PerformAction;
       this._pause = this
           ._performAction(context, pauseAction)
@@ -94,7 +138,20 @@ export default class CrxPlayer extends EventEmitter {
     await this._pause;
   }
 
-  async run(pageOrContext: Page | BrowserContext, actions: PerformAction[]) {
+  /**
+   * `primaryPageGuid` names the page the journey started on — the one already open, whose
+   * `openPage` must not be replayed.
+   *
+   * It is a parameter rather than something derived from `actions`, because `actions` is
+   * not always the journey: stepping calls run() once per action, so `actions[0]` is
+   * merely the current step. Deriving it here made every single-action run believe its own
+   * page was the primary one, which skipped the openPage that should have created the
+   * second page and then failed the next action with "page not found".
+   *
+   * Defaulted for callers that do pass whole journeys (the synthetics replay path), which
+   * relies on the leading openPage being skipped.
+   */
+  async run(pageOrContext: Page | BrowserContext, actions: PerformAction[], primaryPageGuidOverride?: string) {
     if (this.isPlaying())
       return;
 
@@ -108,7 +165,8 @@ export default class CrxPlayer extends EventEmitter {
       context = page.browserContext;
     } else {
       context = pageOrContext;
-      page = context.pages()[0] ?? await context.newPage(serverSideCallMetadata());
+      page = context.pages()[0] ?? await progressControllerFor(context)
+          .run(progress => context.newPage(progress, false));
     }
 
     const crxApp = await this._crx.get({ incognito: false });
@@ -119,7 +177,8 @@ export default class CrxPlayer extends EventEmitter {
       // we intercept incognito call logs and forward them into the recorder
       const instrumentationListener: InstrumentationListener = {
         onBeforeCall: recorder.onBeforeCall.bind(recorder),
-        onBeforeInputAction: recorder.onBeforeInputAction.bind(recorder),
+        // 1.59 dropped onBeforeInputAction from the Recorder. It only ever cleared the
+        // highlight before an input action; the recorder now does that from onBeforeCall.
         onCallLog: recorder.onCallLog.bind(recorder),
         onAfterCall: recorder.onAfterCall.bind(recorder),
       };
@@ -127,15 +186,22 @@ export default class CrxPlayer extends EventEmitter {
         context.instrumentation.addListener(instrumentationListener, context);
     }
 
-    this._pageAliases.clear();
-    this._pageAliases.set(page, 'page');
-    this._runningContext = context;
+    // The key the journey uses for its primary page — an alias when the actions were
+    // parsed or restored, a real guid when they were captured live. See primaryPageGuid.
+    const primaryGuid = primaryPageGuidOverride ?? primaryPageGuid(actions as { pageGuid: string }[]) ?? 'page';
+
+    // Preserve aliases across calls: stepping runs one action per run(), and clearing
+    // here would drop the aliases that earlier openPage steps created.
+    if (!this._pageAliases.has(page)) {
+      this._pageAliases.clear();
+      this._pageAliases.set(page, primaryGuid);
+    }
     this.emit('start');
 
     try {
       let actionIndex = 0;
       for (const action of actions) {
-        if (action.action.name === 'openPage' && action.frame.pageAlias === 'page')
+        if (action.action.name === 'openPage' && action.pageGuid === primaryGuid)
           continue;
         // A stop that landed between two actions has no pending call to abort, so check
         // before announcing the step. Announcing it and only then throwing Stopped is what
@@ -181,7 +247,6 @@ export default class CrxPlayer extends EventEmitter {
       throw e;
     } finally {
       this._currAction = undefined;
-      this._runningContext = undefined;
       this.pause().catch(() => {});
       if (instrumentationListener)
         context.instrumentation.removeListener(instrumentationListener);
@@ -192,6 +257,11 @@ export default class CrxPlayer extends EventEmitter {
     return !!this._currAction;
   }
 
+  /** Drops page aliases so the next run() starts a fresh replay. */
+  resetPageAliases() {
+    this._pageAliases.clear();
+  }
+
   async stop() {
     if (this._currAction || this._pause) {
       this._currAction = undefined;
@@ -199,7 +269,7 @@ export default class CrxPlayer extends EventEmitter {
       // Abort whatever call is pending right now. _checkStopped() only runs at the START
       // of an action, so without this the stop waits out the in-flight click/fill/expect
       // — up to kActionTimeout, 60s — and only lands one step later.
-      await this._runningContext?.stopPendingOperations('Stopped').catch(() => {});
+      await this._currentController?.abort(new Stopped()).catch(() => {});
       await Promise.all([
         this._stopping,
         this._pause,
@@ -210,47 +280,24 @@ export default class CrxPlayer extends EventEmitter {
     }
   }
 
-  // "borrowed" from ContextRecorder
+  // Mirrors playwright/packages/playwright-core/src/server/recorder/recorderRunner.ts,
+  // which since 1.54 drives frame methods with a Progress from a ProgressController
+  // instead of hand-built CallMetadata (microsoft/playwright#36429 and follow-ups).
+  //
+  // The controller is stored on the instance so stop() can abort the call in flight.
+  private async _runWithProgress<T>(sdkObject: SdkObject, task: (progress: Progress) => Promise<T>, timeout: number): Promise<T> {
+    const controller = progressControllerFor(sdkObject);
+    this._currentController = controller;
+    try {
+      return await controller.run(task, timeout);
+    } finally {
+      if (this._currentController === controller)
+        this._currentController = undefined;
+    }
+  }
+
   private async _performAction(browserContext: BrowserContext, actionInContext: PerformAction) {
     this._checkStopped();
-
-    const innerPerformAction = async (mainFrame: Frame | null, actionInContext: PerformAction, cb: (callMetadata: CallMetadata) => Promise<any>): Promise<void> => {
-      // we must use the default browser context here!
-      const context = mainFrame ?? browserContext;
-
-      const traceParams = actionInContext.action.name === 'pause' ?
-        { method: 'pause', params: {}, apiName: 'page.pause' } :
-        traceParamsForAction(actionInContext as ActionInContext);
-
-      const callMetadata: CallMetadata = {
-        id: `call@${createGuid()}`,
-        internal: actionInContext.action.name === 'pause',
-        objectId: context.guid,
-        pageId: mainFrame?._page.guid,
-        frameId: mainFrame?.guid,
-        startTime: monotonicTime(),
-        endTime: 0,
-        type: 'Frame',
-        log: [],
-        location: actionInContext.location,
-        playing: true,
-        ...traceParams,
-      };
-
-      try {
-        this._checkStopped();
-        await context.instrumentation.onBeforeCall(context, callMetadata);
-        this._checkStopped();
-        await cb(callMetadata);
-      } catch (e) {
-        callMetadata.error = serializeError(e);
-      } finally {
-        callMetadata.endTime = monotonicTime();
-        await context.instrumentation.onAfterCall(context, callMetadata);
-        if (callMetadata.error)
-          throw callMetadata.error.error;
-      }
-    };
 
     // similar to playwright/packages/playwright-core/src/server/recorder/recorderRunner.ts
     //
@@ -283,109 +330,124 @@ export default class CrxPlayer extends EventEmitter {
       return;
 
     if (action.name === 'pause')
-      return await innerPerformAction(null, actionInContext, () => Promise.resolve());
+      return;
 
     if (action.name === 'openPage') {
-      return await innerPerformAction(null, actionInContext, async callMetadata => {
-        const pageAlias = actionInContext.frame.pageAlias;
-        if ([...pageAliases.values()].includes(pageAlias))
-          throw new Error(`Page with alias ${pageAlias} already exists`);
-        const newPage = await context.newPage(callMetadata);
-        if (action.url && action.url !== 'about:blank' && action.url !== 'chrome://newtab/') {
-          const navigateCallMetadata = {
-            ...callMetadata,
-            ...traceParamsForAction({ ...actionInContext, action: { name: 'navigate', url: action.url } } as ActionInContext),
-          };
-          await newPage.mainFrame().goto(navigateCallMetadata, action.url, { timeout: kActionTimeout });
-        }
-        pageAliases.set(newPage, pageAlias);
-      });
+      const pageAlias = actionInContext.pageGuid;
+      if ([...pageAliases.values()].includes(pageAlias))
+        throw new Error(`Page with alias ${pageAlias} already exists`);
+      const newPage = await this._runWithProgress(context, progress => context.newPage(progress, false), kActionTimeout);
+      if (action.url && action.url !== 'about:blank' && action.url !== 'chrome://newtab/') {
+        await this._runWithProgress(newPage.mainFrame(),
+            progress => newPage.mainFrame().goto(progress, action.url), kActionTimeout);
+      }
+      pageAliases.set(newPage, pageAlias);
+      return;
     }
 
-    const pageAlias = actionInContext.frame.pageAlias;
+    // 1.62 replaced the action's FrameDescription with a bare pageGuid. For a live
+    // recording that is the real guid; for a journey replayed from storage it is the alias
+    // the step was saved under (see mapBrowserStepToAction). Either way it is the key.
+    const pageAlias = actionInContext.pageGuid;
     const page = [...pageAliases.entries()].find(([, alias]) => pageAlias === alias)?.[0];
     if (!page)
       throw new Error('Internal error: page not found');
     const mainFrame = page.mainFrame();
 
-    if (action.name === 'navigate')
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.goto(callMetadata, action.url, { timeout: kActionTimeout }));
-
     if (action.name === 'closePage') {
-      return await innerPerformAction(mainFrame, actionInContext, async callMetadata => {
-        pageAliases.delete(page);
-        await page.close(callMetadata, { runBeforeUnload: true });
-      });
+      pageAliases.delete(page);
+      // 1.60 made Page.close take a Progress; 1.61 moved runBeforeUnload out of its
+      // options into a method of its own. Nothing here is cancellable — the step is
+      // closing a page it already owns — so both run unbounded, as the untimed close did.
+      await page.runBeforeUnload(nullProgress);
+      await page.close(nullProgress);
+      return;
     }
 
-    const selector = buildFullSelector(actionInContext.frame.framePath, action.selector);
+    await this._runWithProgress(mainFrame, async progress => {
+      this._checkStopped();
 
-    if (action.name === 'click') {
-      const options = toClickOptions(action);
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.click(callMetadata, selector, { ...options, timeout: kActionTimeout, strict: true }));
-    }
-    if (action.name === 'press') {
-      const modifiers = toKeyboardModifiers(action.modifiers);
-      const shortcut = [...modifiers, action.key].join('+');
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.press(callMetadata, selector, shortcut, { timeout: kActionTimeout, strict: true }));
-    }
-    if (action.name === 'fill')
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.fill(callMetadata, selector, action.text, { timeout: kActionTimeout, strict: true }));
-    if (action.name === 'setInputFiles')
-      return await innerPerformAction(mainFrame, actionInContext, () => Promise.reject(new Error(`player does not support setInputFiles yet`)));
-    if (action.name === 'check')
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.check(callMetadata, selector, { timeout: kActionTimeout, strict: true }));
-    if (action.name === 'uncheck')
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.uncheck(callMetadata, selector, { timeout: kActionTimeout, strict: true }));
-    if (action.name === 'select') {
-      const values = action.options.map((value: any) => ({ value }));
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.selectOption(callMetadata, selector, [], values, { timeout: kActionTimeout, strict: true }));
-    }
-    if (action.name === 'assertChecked') {
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.expect(callMetadata, selector, {
-        selector,
-        expression: 'to.be.checked',
-        expectedValue: { checked: true },
-        isNot: !action.checked,
-        timeout: kActionTimeout,
-      }));
-    }
-    if (action.name === 'assertText') {
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.expect(callMetadata, selector, {
-        selector,
-        expression: 'to.have.text',
-        expectedText: serializeExpectedTextValues([action.text], { matchSubstring: true, normalizeWhiteSpace: true }),
-        isNot: false,
-        timeout: kActionTimeout,
-      }));
-    }
-    if (action.name === 'assertValue') {
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.expect(callMetadata, selector, {
-        selector,
-        expression: 'to.have.value',
-        expectedText: serializeExpectedTextValues([action.value], { matchSubstring: false, normalizeWhiteSpace: true }),
-        isNot: false,
-        timeout: kActionTimeout,
-      }));
-    }
-    if (action.name === 'assertVisible') {
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.expect(callMetadata, selector, {
-        selector,
-        expression: 'to.be.visible',
-        isNot: false,
-        timeout: kActionTimeout,
-      }));
-    }
-    if (action.name === 'assertSnapshot') {
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.expect(callMetadata, selector, {
-        selector,
-        expression: 'to.match.aria',
-        expectedValue: parseAriaSnapshotUnsafe(yaml, action.snapshot),
-        isNot: false,
-        timeout: kActionTimeout,
-      }));
-    }
-    throw new Error('Internal error: unexpected action ' + (action as any).name);
+      if (action.name === 'navigate')
+        return await mainFrame.goto(progress, action.url);
+
+      // 1.62 folds the frame path into the selector at capture time, so prepending one
+      // here would double it.
+      const selector = action.selector;
+
+      if (action.name === 'click')
+        return await mainFrame.click(progress, selector, { ...toClickOptions(action), strict: true });
+      // 1.56 added hover to the recorder model. Frame.hover was always available —
+      // there was simply never an action that reached it.
+      if (action.name === 'hover')
+        return await mainFrame.hover(progress, selector, { strict: true });
+      if (action.name === 'press') {
+        const shortcut = [...toKeyboardModifiers(action.modifiers), action.key].join('+');
+        return await mainFrame.press(progress, selector, shortcut, { strict: true });
+      }
+      if (action.name === 'fill')
+        return await mainFrame.fill(progress, selector, action.text, { strict: true });
+      if (action.name === 'setInputFiles')
+        throw new Error(`player does not support setInputFiles yet`);
+      if (action.name === 'check')
+        return await mainFrame.check(progress, selector, { strict: true });
+      if (action.name === 'uncheck')
+        return await mainFrame.uncheck(progress, selector, { strict: true });
+      if (action.name === 'select')
+        return await mainFrame.selectOption(progress, selector, [], action.options.map((value: any) => ({ value })), { strict: true });
+
+      // 1.54 had made Frame.expect() RESOLVE with { matches } instead of throwing, so this
+      // wrapped it and turned a false result back into a throw — without which every
+      // failing assertion replayed as a pass. 1.61 returned it to throwing (it now returns
+      // void), which makes the wrapper not merely redundant but inverted: `result.matches`
+      // on undefined would throw on every assertion that PASSED. Calling it directly again.
+      const expectAndThrow = (options: Parameters<typeof mainFrame.expect>[2]) =>
+        mainFrame.expect(progress, selector, options);
+
+      if (action.name === 'assertChecked') {
+        return await expectAndThrow({
+          selector,
+          expression: 'to.be.checked',
+          expectedValue: { checked: action.checked },
+          isNot: false,
+        });
+      }
+      if (action.name === 'assertText') {
+        return await expectAndThrow({
+          selector,
+          expression: 'to.have.text',
+          expectedText: serializeExpectedTextValues([action.text], { matchSubstring: true, normalizeWhiteSpace: true }),
+          isNot: false,
+        });
+      }
+      if (action.name === 'assertValue') {
+        return await expectAndThrow({
+          selector,
+          expression: 'to.have.value',
+          expectedText: serializeExpectedTextValues([action.value], { matchSubstring: false, normalizeWhiteSpace: true }),
+          isNot: false,
+        });
+      }
+      if (action.name === 'assertVisible') {
+        return await expectAndThrow({
+          selector,
+          expression: 'to.be.visible',
+          isNot: false,
+        });
+      }
+      if (action.name === 'assertSnapshot') {
+        return await expectAndThrow({
+          selector,
+          expression: 'to.match.aria',
+          // 1.54 renamed the action field `snapshot` -> `ariaSnapshot`. 1.61 moved the
+          // parsing into Frame.expect itself, so the raw string goes across now — parsing
+          // it here first made expect parse an already-parsed template and every
+          // aria-snapshot assertion replayed red.
+          expectedValue: action.ariaSnapshot,
+          isNot: false,
+        });
+      }
+      throw new Error('Internal error: unexpected action ' + (action as any).name);
+    }, kActionTimeout);
   }
 
   private _checkStopped() {

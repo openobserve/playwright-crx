@@ -14,13 +14,17 @@
  * limitations under the License.
  */
 import { Worker } from '../page';
-import { CRExecutionContext } from './crExecutionContext';
+import { createHandle, CRExecutionContext } from './crExecutionContext';
 import { CRNetworkManager } from './crNetworkManager';
 import { BrowserContext } from '../browserContext';
 import * as network from '../network';
+import { ConsoleMessage } from '../console';
+import { stackTraceToLocation } from './crProtocolHelper';
+import { calculateUserAgentMetadata } from './crPage';
 
 import type { CRBrowserContext } from './crBrowser';
 import type { CRSession } from './crConnection';
+import type { Protocol } from './protocol';
 
 export class CRServiceWorker extends Worker {
   readonly browserContext: CRBrowserContext;
@@ -31,22 +35,39 @@ export class CRServiceWorker extends Worker {
     super(browserContext, url);
     this._session = session;
     this.browserContext = browserContext;
-    if (!!process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS)
+    if (!process.env.PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK)
       this._networkManager = new CRNetworkManager(null, this);
-    session.once('Runtime.executionContextCreated', event => {
+
+    session.on('Inspector.targetCrashed', () => this.destroyExecutionContext('Service worker restarted'));
+
+    session.on('Runtime.executionContextCreated', (event: Protocol.Runtime.executionContextCreatedPayload) => {
       this.createExecutionContext(new CRExecutionContext(session, event.context));
+      if (this.browserContext._browser.majorVersion() < 143)
+        this.workerScriptLoaded();
     });
+
+    if (this.browserContext._browser.majorVersion() >= 143)
+      session.on('Inspector.workerScriptLoaded', () => this.workerScriptLoaded());
 
     if (this._networkManager && this._isNetworkInspectionEnabled()) {
       this.updateRequestInterception();
       this.updateExtraHTTPHeaders();
       this.updateHttpCredentials();
       this.updateOffline();
+      this.updateUserAgent();
       this._networkManager.addSession(session, undefined, true /* isMain */).catch(() => {});
     }
 
-    session.send('Runtime.enable', {}).catch(e => { });
-    session.send('Runtime.runIfWaitingForDebugger').catch(e => { });
+    session.on('Runtime.consoleAPICalled', event => {
+      if (!this.existingExecutionContext || process.env.PLAYWRIGHT_DISABLE_SERVICE_WORKER_CONSOLE)
+        return;
+      const args = event.args.map(o => createHandle(this.existingExecutionContext!, o));
+      const message = new ConsoleMessage(null, this, event.type, undefined, args, stackTraceToLocation(event.stackTrace), event.timestamp);
+      this.browserContext.emit(BrowserContext.Events.Console, message);
+    });
+
+    session.send('Runtime.enable', {}).catch(e => {});
+    session.send('Runtime.runIfWaitingForDebugger').catch(e => {});
     session.on('Inspector.targetReloadedAfterCrash', () => {
       // Resume service worker after restart.
       session._sendMayFail('Runtime.runIfWaitingForDebugger', {});
@@ -75,6 +96,15 @@ export class CRServiceWorker extends Worker {
     if (!this._isNetworkInspectionEnabled())
       return;
     await this._networkManager?.setExtraHTTPHeaders(this.browserContext._options.extraHTTPHeaders || []).catch(() => {});
+  }
+
+  async updateUserAgent(): Promise<void> {
+    const options = this.browserContext._options;
+    await this._session.send('Emulation.setUserAgentOverride', {
+      userAgent: options.userAgent || '',
+      acceptLanguage: options.locale,
+      userAgentMetadata: calculateUserAgentMetadata(options),
+    }).catch(() => {});
   }
 
   async updateRequestInterception(): Promise<void> {

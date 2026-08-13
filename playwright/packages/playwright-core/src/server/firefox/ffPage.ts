@@ -15,25 +15,25 @@
  * limitations under the License.
  */
 
-import { eventsHelper } from '../utils/eventsHelper';
+import { assert } from '@isomorphic/assert';
+import { splitErrorMessage } from '@utils/stackTrace';
+import { eventsHelper } from '@utils/eventsHelper';
 import * as dialog from '../dialog';
 import * as dom from '../dom';
+import * as network from '../network';
 import { InitScript } from '../page';
 import { Page, Worker } from '../page';
-import { getAccessibilityTree } from './ffAccessibility';
 import { FFSession } from './ffConnection';
 import { createHandle, FFExecutionContext } from './ffExecutionContext';
 import { RawKeyboardImpl, RawMouseImpl, RawTouchscreenImpl } from './ffInput';
 import { FFNetworkManager } from './ffNetworkManager';
-import { debugLogger } from '../utils/debugLogger';
-import { splitErrorMessage } from '../../utils/isomorphic/stackTrace';
-import { BrowserContext } from '../browserContext';
 import { TargetClosedError } from '../errors';
+import { startAutomaticVideoRecording } from '../videoRecorder';
 
 import type { Progress } from '../progress';
 import type { FFBrowserContext } from './ffBrowser';
 import type { Protocol } from './protocol';
-import type { RegisteredListener } from '../utils/eventsHelper';
+import type { RegisteredListener } from '@utils/eventsHelper';
 import type * as frames from '../frames';
 import type { PageDelegate } from '../page';
 import type * as types from '../types';
@@ -54,8 +54,9 @@ export class FFPage implements PageDelegate {
   private readonly _contextIdToContext: Map<string, dom.FrameExecutionContext>;
   private _eventListeners: RegisteredListener[];
   private _workers = new Map<string, { frameId: string, session: FFSession }>();
-  private _screencastId: string | undefined;
   private _initScripts: { initScript: InitScript, worldName?: string }[] = [];
+  private _webSocketRequests = new Map<string, { url: string, headers: types.HeadersArray }>();
+  private _webSocketResponses = new Map<string, { status: number, statusText: string, headers: types.HeadersArray }>();
 
   constructor(session: FFSession, browserContext: FFBrowserContext, opener: FFPage | null) {
     this._session = session;
@@ -67,7 +68,7 @@ export class FFPage implements PageDelegate {
     this._browserContext = browserContext;
     this._page = new Page(this, browserContext);
     this.rawMouse.setPage(this._page);
-    this._networkManager = new FFNetworkManager(session, this._page);
+    this._networkManager = new FFNetworkManager(session, this);
     this._page.on(Page.Events.FrameDetached, frame => this._removeContextsForFrame(frame));
     // TODO: remove Page.willOpenNewWindowAsynchronously from the protocol.
     this._eventListeners = [
@@ -91,27 +92,29 @@ export class FFPage implements PageDelegate {
       eventsHelper.addEventListener(this._session, 'Page.workerDestroyed', this._onWorkerDestroyed.bind(this)),
       eventsHelper.addEventListener(this._session, 'Page.dispatchMessageFromWorker', this._onDispatchMessageFromWorker.bind(this)),
       eventsHelper.addEventListener(this._session, 'Page.crashed', this._onCrashed.bind(this)),
-      eventsHelper.addEventListener(this._session, 'Page.videoRecordingStarted', this._onVideoRecordingStarted.bind(this)),
 
       eventsHelper.addEventListener(this._session, 'Page.webSocketCreated', this._onWebSocketCreated.bind(this)),
+      eventsHelper.addEventListener(this._session, 'Page.webSocketOpened', this._onWebSocketOpened.bind(this)),
       eventsHelper.addEventListener(this._session, 'Page.webSocketClosed', this._onWebSocketClosed.bind(this)),
       eventsHelper.addEventListener(this._session, 'Page.webSocketFrameReceived', this._onWebSocketFrameReceived.bind(this)),
       eventsHelper.addEventListener(this._session, 'Page.webSocketFrameSent', this._onWebSocketFrameSent.bind(this)),
       eventsHelper.addEventListener(this._session, 'Page.screencastFrame', this._onScreencastFrame.bind(this)),
 
     ];
-    this._session.once('Page.ready', () => {
-      if (this._reportedAsNew)
-        return;
-      this._reportedAsNew = true;
-      this._page.reportAsNew(this._opener?._page);
-    });
+
+    const promises: Promise<any>[] = [];
+    if (!this._page.isStorageStatePage)
+      startAutomaticVideoRecording(this._page);
+    promises.push(new Promise(f => this._session.once('Page.ready', f)));
+    Promise.all(promises).then(() => this._reportAsNew(), error => this._reportAsNew(error));
+
     // Ideally, we somehow ensure that utility world is created before Page.ready arrives, but currently it is racy.
+    // Even worse, sometimes this protocol call never returns, for example when popup opens a dialog synchronously.
     // Therefore, we can end up with an initialized page without utility world, although very unlikely.
-    this.addInitScript(new InitScript(''), UTILITY_WORLD_NAME).catch(e => this._markAsError(e));
+    this.addInitScript(new InitScript(this._page, ''), UTILITY_WORLD_NAME).catch(e => this._reportAsNew(e));
   }
 
-  async _markAsError(error: Error) {
+  _reportAsNew(error?: Error) {
     // Same error may be reported twice: channel disconnected and session.send fails.
     if (this._reportedAsNew)
       return;
@@ -121,7 +124,57 @@ export class FFPage implements PageDelegate {
 
   _onWebSocketCreated(event: Protocol.Page.webSocketCreatedPayload) {
     this._page.frameManager.onWebSocketCreated(webSocketId(event.frameId, event.wsid), event.requestURL);
-    this._page.frameManager.onWebSocketRequest(webSocketId(event.frameId, event.wsid));
+  }
+
+  _onWebSocketRequestWillBeSent(requestId: string, url: string, headers: types.HeadersArray) {
+    this._webSocketRequests.set(requestId, { url, headers });
+  }
+
+  _onWebSocketResponseReceived(requestId: string, status: number, statusText: string, headers: types.HeadersArray) {
+    this._webSocketResponses.set(requestId, { status, statusText, headers });
+  }
+
+  _onWebSocketRequestFinished(requestId: string) {
+    const response = this._webSocketResponses.get(requestId);
+    assert(response);
+    // If the request does not succeed then the WebSocket will never open, so pretend that it did.
+    if (response.status >= 400) {
+      const request = this._webSocketRequests.get(requestId);
+      assert(request);
+
+      this._webSocketRequests.delete(requestId);
+      this._webSocketResponses.delete(requestId);
+
+      const url = network.parseURL(request.url);
+      assert(url);
+      url.protocol = url.protocol === 'https' ? 'wss' : 'ws';
+
+      this._page.frameManager.onWebSocketCreated(requestId, url.toString());
+      this._page.frameManager.onWebSocketRequest(requestId, request);
+      this._page.frameManager.onWebSocketResponse(requestId, response);
+      this._page.frameManager.webSocketClosed(requestId);
+      return;
+    }
+  }
+
+  _onWebSocketOpened(event: Protocol.Page.webSocketOpenedPayload) {
+    const socketId = webSocketId(event.frameId, event.wsid);
+    const request = this._webSocketRequests.get(event.requestId);
+    const response = this._webSocketResponses.get(event.requestId);
+    // A `WebSocket` opened inside a worker is reported here, but its upgrade request is
+    // never seen by the network stack, so there is no handshake metadata to attach.
+    // TODO: Remove this workaround and make `requestData` required in `FrameManager.onWebSocketRequest`
+    // once Playwright's bundled Firefox includes https://phabricator.services.mozilla.com/D310690.
+    if (!request || !response) {
+      this._page.frameManager.onWebSocketRequest(socketId);
+      return;
+    }
+
+    this._webSocketRequests.delete(event.requestId);
+    this._webSocketResponses.delete(event.requestId);
+
+    this._page.frameManager.onWebSocketRequest(socketId, request);
+    this._page.frameManager.onWebSocketResponse(socketId, response);
   }
 
   _onWebSocketClosed(event: Protocol.Page.webSocketClosedPayload) {
@@ -131,11 +184,11 @@ export class FFPage implements PageDelegate {
   }
 
   _onWebSocketFrameReceived(event: Protocol.Page.webSocketFrameReceivedPayload) {
-    this._page.frameManager.webSocketFrameReceived(webSocketId(event.frameId, event.wsid), event.opcode, event.data);
+    this._page.frameManager.webSocketFrameReceived(webSocketId(event.frameId, event.wsid), event.opcode, event.data, event.timestamp * 1000);
   }
 
   _onWebSocketFrameSent(event: Protocol.Page.webSocketFrameSentPayload) {
-    this._page.frameManager.onWebSocketFrameSent(webSocketId(event.frameId, event.wsid), event.opcode, event.data);
+    this._page.frameManager.onWebSocketFrameSent(webSocketId(event.frameId, event.wsid), event.opcode, event.data, event.timestamp * 1000);
   }
 
   _onExecutionContextCreated(payload: Protocol.Runtime.executionContextCreatedPayload) {
@@ -151,7 +204,7 @@ export class FFPage implements PageDelegate {
       worldName = 'main';
     const context = new dom.FrameExecutionContext(delegate, frame, worldName);
     if (worldName)
-      frame._contextCreated(worldName, context);
+      frame.contextCreated(worldName, context);
     this._contextIdToContext.set(executionContextId, context);
   }
 
@@ -161,7 +214,7 @@ export class FFPage implements PageDelegate {
     if (!context)
       return;
     this._contextIdToContext.delete(executionContextId);
-    context.frame._contextDestroyed(context);
+    context.frame.contextDestroyed(context);
   }
 
   _onExecutionContextsCleared() {
@@ -224,7 +277,7 @@ export class FFPage implements PageDelegate {
     const error = new Error(message);
     error.stack = params.message + '\n' + params.stack.split('\n').filter(Boolean).map(a => a.replace(/([^@]*)@(.*)/, '    at $1 ($2)')).join('\n');
     error.name = name;
-    this._page.emitOnContextOnceInitialized(BrowserContext.Events.PageError, error, this._page);
+    this._page.addPageError(error, params.location);
   }
 
   _onConsole(payload: Protocol.Runtime.consolePayload) {
@@ -232,8 +285,9 @@ export class FFPage implements PageDelegate {
     const context = this._contextIdToContext.get(executionContextId);
     if (!context)
       return;
+    const timestamp = Date.now();
     // Juggler reports 'warn' for some internal messages generated by the browser.
-    this._page.addConsoleMessage(type === 'warn' ? 'warning' : type, args.map(arg => createHandle(context, arg)), location);
+    this._page.addConsoleMessage(null, type === 'warn' ? 'warning' : type, args.map(arg => createHandle(context, arg)), location, undefined, timestamp);
   }
 
   _onDialogOpened(params: Protocol.Page.dialogOpenedPayload) {
@@ -281,11 +335,12 @@ export class FFPage implements PageDelegate {
     this._page.addWorker(workerId, worker);
     workerSession.once('Runtime.executionContextCreated', event => {
       worker.createExecutionContext(new FFExecutionContext(workerSession, event.executionContextId));
+      worker.workerScriptLoaded();
     });
     workerSession.on('Runtime.console', event => {
       const { type, args, location } = event;
       const context = worker.existingExecutionContext!;
-      this._page.addConsoleMessage(type, args.map(arg => createHandle(context, arg)), location);
+      this._page.addConsoleMessage(worker, type, args.map(arg => createHandle(context, arg)), location, undefined, Date.now());
     });
     // Note: we receive worker exceptions directly from the page.
   }
@@ -312,12 +367,9 @@ export class FFPage implements PageDelegate {
     this._page._didCrash();
   }
 
-  _onVideoRecordingStarted(event: Protocol.Page.videoRecordingStartedPayload) {
-    this._browserContext._browser._videoStarted(this._browserContext, event.screencastId, event.file, this._page.waitForInitializedOrError());
-  }
 
   didClose() {
-    this._markAsError(new TargetClosedError());
+    this._reportAsNew(new TargetClosedError(this._page.closeReason()));
     this._session.dispose();
     eventsHelper.removeEventListeners(this._eventListeners);
     this._networkManager.dispose();
@@ -334,8 +386,12 @@ export class FFPage implements PageDelegate {
   }
 
   async updateEmulatedViewportSize(): Promise<void> {
-    const viewportSize = this._page.emulatedSize()?.viewport ?? null;
-    await this._session.send('Page.setViewportSize', { viewportSize });
+    const emulatedSize = this._page.emulatedSize();
+    await this._session.send('Page.setViewportSize', {
+      viewportSize: emulatedSize?.viewport ?? null,
+      screenSize: emulatedSize?.screen,
+      isMobile: !!this._browserContext._options.isMobile,
+    });
   }
 
   async bringToFront(): Promise<void> {
@@ -401,7 +457,7 @@ export class FFPage implements PageDelegate {
   }
 
   async closePage(runBeforeUnload: boolean): Promise<void> {
-    await this._session.send('Page.close', { runBeforeUnload });
+    await this._session.sendEvenAfterCrash('Page.close', { runBeforeUnload });
   }
 
   async setBackgroundColor(color?: { r: number; g: number; b: number; a: number; }): Promise<void> {
@@ -409,7 +465,7 @@ export class FFPage implements PageDelegate {
       throw new Error('Not implemented');
   }
 
-  async takeScreenshot(progress: Progress, format: 'png' | 'jpeg', documentRect: types.Rect | undefined, viewportRect: types.Rect | undefined, quality: number | undefined, fitsViewport: boolean, scale: 'css' | 'device'): Promise<Buffer> {
+  async takeScreenshot(progress: Progress, format: 'png' | 'jpeg' | 'webp', documentRect: types.Rect | undefined, viewportRect: types.Rect | undefined, quality: number | undefined, fitsViewport: boolean, scale: 'css' | 'device'): Promise<Buffer> {
     if (!documentRect) {
       const scrollOffset = await this._page.mainFrame().waitForFunctionValueInUtility(progress, () => ({ x: window.scrollX, y: window.scrollY }));
       documentRect = {
@@ -419,13 +475,12 @@ export class FFPage implements PageDelegate {
         height: viewportRect!.height,
       };
     }
-    progress.throwIfAborted();
-    const { data } = await this._session.send('Page.screenshot', {
-      mimeType: ('image/' + format) as ('image/png' | 'image/jpeg'),
+    const { data } = await progress.race(this._session.send('Page.screenshot', {
+      mimeType: ('image/' + format) as ('image/png' | 'image/jpeg' | 'image/webp'),
       clip: documentRect,
       quality,
       omitDeviceScaleFactor: scale === 'css',
-    });
+    }));
     return Buffer.from(data, 'base64');
   }
 
@@ -480,28 +535,23 @@ export class FFPage implements PageDelegate {
     });
   }
 
-  async setScreencastOptions(options: { width: number, height: number, quality: number } | null): Promise<void> {
-    if (options) {
-      const { screencastId } = await this._session.send('Page.startScreencast', options);
-      this._screencastId = screencastId;
-    } else {
-      await this._session.send('Page.stopScreencast');
-    }
+  startScreencast(options: { width: number, height: number, quality: number }) {
+    this._session.sendMayFail('Page.startScreencast', { width: options.width, height: options.height, quality: options.quality });
+  }
+
+  stopScreencast() {
+    this._session.sendMayFail('Page.stopScreencast');
   }
 
   private _onScreencastFrame(event: Protocol.Page.screencastFramePayload) {
-    if (!this._screencastId)
-      return;
-    const screencastId = this._screencastId;
-    this._page.throttleScreencastFrameAck(() => {
-      this._session.send('Page.screencastFrameAck', { screencastId }).catch(e => debugLogger.log('error', e));
-    });
-
     const buffer = Buffer.from(event.data, 'base64');
-    this._page.emit(Page.Events.ScreencastFrame, {
+    void this._page.screencast.onScreencastFrame({
       buffer,
-      width: event.deviceWidth,
-      height: event.deviceHeight,
+      frameSwapWallTime: event.timestamp * 1000, // timestamp is in seconds, we need to convert to milliseconds.
+      viewportWidth: event.deviceWidth,
+      viewportHeight: event.deviceHeight,
+    }).then(() => {
+      this._session.sendMayFail('Page.screencastFrameAck');
     });
   }
 
@@ -519,12 +569,12 @@ export class FFPage implements PageDelegate {
     return result.quads.map(quad => [quad.p1, quad.p2, quad.p3, quad.p4]);
   }
 
-  async setInputFilePaths(handle: dom.ElementHandle<HTMLInputElement>, files: string[]): Promise<void> {
-    await this._session.send('Page.setFileInputFiles', {
+  async setInputFilePaths(progress: Progress, handle: dom.ElementHandle<HTMLInputElement>, files: string[]): Promise<void> {
+    await progress.race(this._session.send('Page.setFileInputFiles', {
       frameId: handle._context.frame._id,
       objectId: handle._objectId,
       files
-    });
+    }));
   }
 
   async adoptElementHandle<T extends Node>(handle: dom.ElementHandle<T>, to: dom.FrameExecutionContext): Promise<dom.ElementHandle<T>> {
@@ -538,26 +588,22 @@ export class FFPage implements PageDelegate {
     return createHandle(to, result.remoteObject) as dom.ElementHandle<T>;
   }
 
-  async getAccessibilityTree(needle?: dom.ElementHandle) {
-    return getAccessibilityTree(this._session, needle);
-  }
-
   async inputActionEpilogue(): Promise<void> {
   }
 
-  async resetForReuse(): Promise<void> {
+  async resetForReuse(progress: Progress): Promise<void> {
     // Firefox sometimes keeps the last mouse position in the page,
     // which affects things like hovered state.
     // See https://github.com/microsoft/playwright/issues/22432.
     // Move mouse to (-1, -1) to avoid anything being hovered.
-    await this.rawMouse.move(-1, -1, 'none', new Set(), new Set(), false);
+    await this.rawMouse.move(progress, -1, -1, 'none', new Set(), new Set(), false);
   }
 
   async getFrameElement(frame: frames.Frame): Promise<dom.ElementHandle> {
     const parent = frame.parentFrame();
     if (!parent)
       throw new Error('Frame has been detached.');
-    const context = await parent._mainContext();
+    const context = await parent.mainContext();
     const result = await this._session.send('Page.adoptNode', {
       frameId: frame._id,
       executionContextId: (context.delegate as FFExecutionContext)._executionContextId
@@ -569,6 +615,9 @@ export class FFPage implements PageDelegate {
 
   shouldToggleStyleSheetToSyncAnimations(): boolean {
     return false;
+  }
+
+  async setDockTile(image: Buffer): Promise<void> {
   }
 }
 

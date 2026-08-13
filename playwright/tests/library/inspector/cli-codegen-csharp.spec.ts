@@ -14,11 +14,9 @@
  * limitations under the License.
  */
 
-import path from 'path';
 import fs from 'fs';
 import { test, expect } from './inspectorTest';
 
-const emptyHTML = new URL('file://' + path.join(__dirname, '..', '..', 'assets', 'empty.html')).toString();
 const launchOptions = (channel: string) => {
   return channel ? `Channel = "${channel}",\n    Headless = false,` : `Headless = false,`;
 };
@@ -27,14 +25,14 @@ function capitalize(browserName: string): string {
   return browserName[0].toUpperCase() + browserName.slice(1);
 }
 
-test('should print the correct imports and context options', async ({ browserName, channel, runCLI }) => {
-  const cli = runCLI(['--target=csharp', emptyHTML]);
+test('should print the correct imports and context options', async ({ browserName, channel, runCLI, server }) => {
+  const cli = runCLI(['--target=csharp', server.EMPTY_PAGE]);
   const expectedResult = `using Microsoft.Playwright;
 using System;
 using System.Threading.Tasks;
 
 using var playwright = await Playwright.CreateAsync();
-await using var browser = await playwright.${capitalize(browserName)}.LaunchAsync(new BrowserTypeLaunchOptions
+await using var browser = await playwright.${capitalize(browserName)}.LaunchAsync(new()
 {
     ${launchOptions(channel)}
 });
@@ -42,40 +40,41 @@ var context = await browser.NewContextAsync();`;
   await cli.waitFor(expectedResult);
 });
 
-test('should print the correct context options for custom settings', async ({ browserName, channel, runCLI }) => {
+test('should print the correct context options for custom settings', async ({ browserName, channel, runCLI, server, proxyServer }) => {
+  proxyServer.forwardTo(server.PORT);
   const cli = runCLI([
     '--color-scheme=dark',
     '--geolocation=37.819722,-122.478611',
     '--lang=es',
-    '--proxy-server=http://myproxy:3128',
+    '--proxy-server=' + proxyServer.HOST,
     '--timezone=Europe/Rome',
     '--user-agent=hardkodemium',
     '--viewport-size=1280,720',
     '--target=csharp',
-    emptyHTML]);
+    server.EMPTY_PAGE]);
   const expectedResult = `
 using var playwright = await Playwright.CreateAsync();
-await using var browser = await playwright.${capitalize(browserName)}.LaunchAsync(new BrowserTypeLaunchOptions
+await using var browser = await playwright.${capitalize(browserName)}.LaunchAsync(new()
 {
     ${launchOptions(channel)}
-    Proxy = new ProxySettings
+    Proxy = new()
     {
-        Server = "http://myproxy:3128",
+        Server = "${proxyServer.HOST}",
     },
 });
-var context = await browser.NewContextAsync(new BrowserNewContextOptions
+var context = await browser.NewContextAsync(new()
 {
     ColorScheme = ColorScheme.Dark,
-    Geolocation = new Geolocation
+    Geolocation = new()
     {
         Latitude = 37.819722m,
         Longitude = -122.478611m,
     },
     Locale = "es",
-    Permissions = new[] { ContextPermission.Geolocation },
+    Permissions = new[] { "geolocation" },
     TimezoneId = "Europe/Rome",
     UserAgent = "hardkodemium",
-    ViewportSize = new ViewportSize
+    ViewportSize = new()
     {
         Height = 720,
         Width = 1280,
@@ -84,13 +83,13 @@ var context = await browser.NewContextAsync(new BrowserNewContextOptions
   await cli.waitFor(expectedResult);
 });
 
-test('should print the correct context options when using a device', async ({ browserName, channel, runCLI }) => {
+test('should print the correct context options when using a device', async ({ browserName, channel, runCLI, server }) => {
   test.skip(browserName !== 'chromium');
 
-  const cli = runCLI(['--device=Pixel 2', '--target=csharp', emptyHTML]);
+  const cli = runCLI(['--device=Pixel 2', '--target=csharp', server.EMPTY_PAGE]);
   const expectedResult = `
 using var playwright = await Playwright.CreateAsync();
-await using var browser = await playwright.${capitalize(browserName)}.LaunchAsync(new BrowserTypeLaunchOptions
+await using var browser = await playwright.${capitalize(browserName)}.LaunchAsync(new()
 {
     ${launchOptions(channel)}
 });
@@ -98,43 +97,51 @@ var context = await browser.NewContextAsync(playwright.Devices["Pixel 2"]);`;
   await cli.waitFor(expectedResult);
 });
 
-test('should print the correct context options when using a device and additional options', async ({ browserName, channel, runCLI }) => {
+test('should print the correct context options when using a device and additional options', async ({ browserName, channel, runCLI, server, proxyServer }) => {
   test.skip(browserName !== 'webkit');
 
+  proxyServer.forwardTo(server.PORT);
   const cli = runCLI([
     '--device=iPhone 11',
     '--color-scheme=dark',
     '--geolocation=37.819722,-122.478611',
     '--lang=es',
-    '--proxy-server=http://myproxy:3128',
+    '--proxy-server=' + proxyServer.HOST,
     '--timezone=Europe/Rome',
     '--user-agent=hardkodemium',
     '--viewport-size=1280,720',
     '--target=csharp',
-    emptyHTML]);
+    server.EMPTY_PAGE]);
   const expectedResult = `
 using var playwright = await Playwright.CreateAsync();
-await using var browser = await playwright.${capitalize(browserName)}.LaunchAsync(new BrowserTypeLaunchOptions
+await using var browser = await playwright.${capitalize(browserName)}.LaunchAsync(new()
 {
     ${launchOptions(channel)}
-    Proxy = new ProxySettings
+    Proxy = new()
     {
-        Server = "http://myproxy:3128",
+        Server = "${proxyServer.HOST}",
     },
 });
-var context = await browser.NewContextAsync(new BrowserNewContextOptions(playwright.Devices["iPhone 11"])
+var context = await browser.NewContextAsync(new()
 {
     ColorScheme = ColorScheme.Dark,
-    Geolocation = new Geolocation
+    Geolocation = new()
     {
         Latitude = 37.819722m,
         Longitude = -122.478611m,
-    },
+    },${process.platform === 'linux' && browserName === 'webkit' ? '' : `
+    HasTouch = true,
+    IsMobile = true,`}
     Locale = "es",
-    Permissions = new[] { ContextPermission.Geolocation },
+    Permissions = new[] { "geolocation" },
+    Screen = new()
+    {
+        Height = 896,
+        Width = 414,
+    },
     TimezoneId = "Europe/Rome",
     UserAgent = "hardkodemium",
-    ViewportSize = new ViewportSize
+    ViewportSize = new()
     {
         Height = 720,
         Width = 1280,
@@ -143,24 +150,24 @@ var context = await browser.NewContextAsync(new BrowserNewContextOptions(playwri
   await cli.waitFor(expectedResult);
 });
 
-test('should print load/save storageState', async ({ browserName, channel, runCLI }, testInfo) => {
+test('should print load/save storageState', async ({ browserName, channel, runCLI, server }, testInfo) => {
   const loadFileName = testInfo.outputPath('load.json');
   const saveFileName = testInfo.outputPath('save.json');
   await fs.promises.writeFile(loadFileName, JSON.stringify({ cookies: [], origins: [] }), 'utf8');
-  const cli = runCLI([`--load-storage=${loadFileName}`, `--save-storage=${saveFileName}`, '--target=csharp', emptyHTML]);
+  const cli = runCLI([`--load-storage=${loadFileName}`, `--save-storage=${saveFileName}`, '--target=csharp', server.EMPTY_PAGE]);
   const expectedResult1 = `
 using var playwright = await Playwright.CreateAsync();
-await using var browser = await playwright.${capitalize(browserName)}.LaunchAsync(new BrowserTypeLaunchOptions
+await using var browser = await playwright.${capitalize(browserName)}.LaunchAsync(new()
 {
     ${launchOptions(channel)}
 });
-var context = await browser.NewContextAsync(new BrowserNewContextOptions
+var context = await browser.NewContextAsync(new()
 {
     StorageStatePath = "${loadFileName.replace(/\\/g, '\\\\')}",
 });`;
   await cli.waitFor(expectedResult1);
   const expectedResult2 = `
-await context.StorageStateAsync(new BrowserContextStorageStateOptions
+await context.StorageStateAsync(new()
 {
     Path = "${saveFileName.replace(/\\/g, '\\\\')}"
 });
@@ -171,41 +178,39 @@ await context.StorageStateAsync(new BrowserContextStorageStateOptions
 test('should work with --save-har', async ({ runCLI }, testInfo) => {
   const harFileName = testInfo.outputPath('har.har');
   const expectedResult = `await context.RouteFromHARAsync(${JSON.stringify(harFileName)});`;
-  const cli = runCLI(['--target=csharp', `--save-har=${harFileName}`], {
-    autoExitWhen: expectedResult,
-  });
-  await cli.waitForCleanExit();
+  const cli = runCLI(['--target=csharp', `--save-har=${harFileName}`]);
+  await cli.waitFor(expectedResult);
+  await cli.exit();
   const json = JSON.parse(fs.readFileSync(harFileName, 'utf-8'));
   expect(json.log.creator.name).toBe('Playwright');
 });
 
 test('should work with --save-har and --save-har-glob', async ({ runCLI }, testInfo) => {
   const harFileName = testInfo.outputPath('har.har');
-  const expectedResult = `await context.RouteFromHARAsync(${JSON.stringify(harFileName)}, new BrowserContextRouteFromHAROptions
+  const expectedResult = `await context.RouteFromHARAsync(${JSON.stringify(harFileName)}, new()
 {
     Url = "**/*.js",
 });`;
-  const cli = runCLI(['--target=csharp', `--save-har=${harFileName}`, '--save-har-glob=**/*.js'], {
-    autoExitWhen: expectedResult,
-  });
-  await cli.waitForCleanExit();
+  const cli = runCLI(['--target=csharp', `--save-har=${harFileName}`, '--save-har-glob=**/*.js']);
+  await cli.waitFor(expectedResult);
+  await cli.exit();
   const json = JSON.parse(fs.readFileSync(harFileName, 'utf-8'));
   expect(json.log.creator.name).toBe('Playwright');
 });
 
-for (const testFramework of ['nunit', 'mstest'] as const) {
-  test(`should not print context options method override in ${testFramework} if no options were passed`, async ({ runCLI }) => {
-    const cli = runCLI([`--target=csharp-${testFramework}`, emptyHTML]);
-    await cli.waitFor(`Page.GotoAsync("${emptyHTML}")`);
-    expect(cli.text()).not.toContain('public override BrowserNewContextOptions ContextOptions()');
+for (const testFramework of ['nunit', 'mstest', 'xunit'] as const) {
+  test(`should not print context options method override in ${testFramework} if no options were passed`, async ({ runCLI, server }) => {
+    const cli = runCLI([`--target=csharp-${testFramework}`, server.EMPTY_PAGE]);
+    await cli.waitFor(`Page.GotoAsync("${server.EMPTY_PAGE}")`);
+    expect(await cli.text()).not.toContain('public override BrowserNewContextOptions ContextOptions()');
   });
 
-  test(`should print context options method override in ${testFramework} if options were passed`, async ({ runCLI }) => {
-    const cli = runCLI([`--target=csharp-${testFramework}`, '--color-scheme=dark', emptyHTML]);
-    await cli.waitFor(`Page.GotoAsync("${emptyHTML}")`);
-    expect(cli.text()).toContain(`    public override BrowserNewContextOptions ContextOptions()
+  test(`should print context options method override in ${testFramework} if options were passed`, async ({ runCLI, server }) => {
+    const cli = runCLI([`--target=csharp-${testFramework}`, '--color-scheme=dark', server.EMPTY_PAGE]);
+    await cli.waitFor(`Page.GotoAsync("${server.EMPTY_PAGE}")`);
+    expect(await cli.text()).toContain(`    public override BrowserNewContextOptions ContextOptions()
     {
-        return new BrowserNewContextOptions
+        return new()
         {
             ColorScheme = ColorScheme.Dark,
         };
@@ -216,32 +221,30 @@ for (const testFramework of ['nunit', 'mstest'] as const) {
   test(`should work with --save-har in ${testFramework}`, async ({ runCLI }, testInfo) => {
     const harFileName = testInfo.outputPath('har.har');
     const expectedResult = `await Context.RouteFromHARAsync(${JSON.stringify(harFileName)});`;
-    const cli = runCLI([`--target=csharp-${testFramework}`, `--save-har=${harFileName}`], {
-      autoExitWhen: expectedResult,
-    });
-    await cli.waitForCleanExit();
+    const cli = runCLI([`--target=csharp-${testFramework}`, `--save-har=${harFileName}`]);
+    await cli.waitFor(expectedResult);
+    await cli.exit();
     const json = JSON.parse(fs.readFileSync(harFileName, 'utf-8'));
     expect(json.log.creator.name).toBe('Playwright');
   });
 
   test(`should work with --save-har and --save-har-glob in ${testFramework}`, async ({ runCLI }, testInfo) => {
     const harFileName = testInfo.outputPath('har.har');
-    const expectedResult = `await Context.RouteFromHARAsync(${JSON.stringify(harFileName)}, new BrowserContextRouteFromHAROptions
+    const expectedResult = `await Context.RouteFromHARAsync(${JSON.stringify(harFileName)}, new()
         {
             Url = "**/*.js",
         });`;
-    const cli = runCLI([`--target=csharp-${testFramework}`, `--save-har=${harFileName}`, '--save-har-glob=**/*.js'], {
-      autoExitWhen: expectedResult,
-    });
-    await cli.waitForCleanExit();
+    const cli = runCLI([`--target=csharp-${testFramework}`, `--save-har=${harFileName}`, '--save-har-glob=**/*.js']);
+    await cli.waitFor(expectedResult);
+    await cli.exit();
     const json = JSON.parse(fs.readFileSync(harFileName, 'utf-8'));
     expect(json.log.creator.name).toBe('Playwright');
   });
 }
 
-test(`should print a valid basic program in mstest`, async ({ runCLI }) => {
-  const cli = runCLI([`--target=csharp-mstest`, '--color-scheme=dark', emptyHTML]);
-  await cli.waitFor(`Page.GotoAsync("${emptyHTML}")`);
+test(`should print a valid basic program in mstest`, async ({ runCLI, server }) => {
+  const cli = runCLI([`--target=csharp-mstest`, '--color-scheme=dark', server.EMPTY_PAGE]);
+  await cli.waitFor(`Page.GotoAsync("${server.EMPTY_PAGE}")`);
   const expected = `using Microsoft.Playwright.MSTest;
 using Microsoft.Playwright;
 
@@ -250,7 +253,7 @@ public class Tests : PageTest
 {
     public override BrowserNewContextOptions ContextOptions()
     {
-        return new BrowserNewContextOptions
+        return new()
         {
             ColorScheme = ColorScheme.Dark,
         };
@@ -259,15 +262,15 @@ public class Tests : PageTest
     [TestMethod]
     public async Task MyTest()
     {
-        await Page.GotoAsync("${emptyHTML}");
+        await Page.GotoAsync("${server.EMPTY_PAGE}");
     }
 }`;
-  expect(cli.text()).toContain(expected);
+  expect(await cli.text()).toContain(expected);
 });
 
-test(`should print a valid basic program in nunit`, async ({ runCLI }) => {
-  const cli = runCLI([`--target=csharp-nunit`, '--color-scheme=dark', emptyHTML]);
-  await cli.waitFor(`Page.GotoAsync("${emptyHTML}")`);
+test(`should print a valid basic program in nunit`, async ({ runCLI, server }) => {
+  const cli = runCLI([`--target=csharp-nunit`, '--color-scheme=dark', server.EMPTY_PAGE]);
+  await cli.waitFor(`Page.GotoAsync("${server.EMPTY_PAGE}")`);
   const expected = `using Microsoft.Playwright.NUnit;
 using Microsoft.Playwright;
 
@@ -277,7 +280,7 @@ public class Tests : PageTest
 {
     public override BrowserNewContextOptions ContextOptions()
     {
-        return new BrowserNewContextOptions
+        return new()
         {
             ColorScheme = ColorScheme.Dark,
         };
@@ -286,8 +289,34 @@ public class Tests : PageTest
     [Test]
     public async Task MyTest()
     {
-        await Page.GotoAsync("${emptyHTML}");
+        await Page.GotoAsync("${server.EMPTY_PAGE}");
     }
 }`;
-  expect(cli.text()).toContain(expected);
+  expect(await cli.text()).toContain(expected);
+});
+
+test(`should print a valid basic program in xunit`, async ({ runCLI, server }) => {
+  const cli = runCLI([`--target=csharp-xunit`, '--color-scheme=dark', server.EMPTY_PAGE]);
+  await cli.waitFor(`Page.GotoAsync("${server.EMPTY_PAGE}")`);
+  const expected = `using Microsoft.Playwright.Xunit;
+using Microsoft.Playwright;
+using Xunit;
+
+public class Tests : PageTest
+{
+    public override BrowserNewContextOptions ContextOptions()
+    {
+        return new()
+        {
+            ColorScheme = ColorScheme.Dark,
+        };
+    }
+
+    [Fact]
+    public async Task MyTest()
+    {
+        await Page.GotoAsync("${server.EMPTY_PAGE}");
+    }
+}`;
+  expect(await cli.text()).toContain(expected);
 });

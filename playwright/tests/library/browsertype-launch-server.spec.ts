@@ -26,6 +26,10 @@ it.describe('launch server', () => {
     await browserServer.close();
   });
 
+  it('should validate options', async ({ browserType }) => {
+    await expect(browserType.launchServer({ channel: null })).rejects.toThrow(/channel: expected string, got object/);
+  });
+
   it('should work with host', async ({ browserType }) => {
     const host = '0.0.0.0';
     const browserServer = await browserType.launchServer({ host });
@@ -62,7 +66,7 @@ it.describe('launch server', () => {
 
   it('should provide an error when ws endpoint is incorrect', async ({ browserType }) => {
     const browserServer = await browserType.launchServer();
-    const error = await browserType.connect({ wsEndpoint: browserServer.wsEndpoint() + '-foo' }).catch(e => e);
+    const error = await browserType.connect(browserServer.wsEndpoint() + '-foo').catch(e => e);
     await browserServer.close();
     expect(error.message).toContain('400 Bad Request');
   });

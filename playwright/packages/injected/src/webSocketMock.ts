@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-export type WebSocketMessage = string | ArrayBufferLike | Blob | ArrayBufferView;
+export type WebSocketMessage = string | ArrayBuffer | Blob | ArrayBufferView<ArrayBuffer>;
 export type WSData = { data: string, isBase64: boolean };
 
-export type OnCreatePayload = { type: 'onCreate', id: string, url: string };
+export type OnCreatePayload = { type: 'onCreate', id: string, url: string, protocols: string[] };
 export type OnMessageFromPagePayload = { type: 'onMessageFromPage', id: string, data: WSData };
 export type OnClosePagePayload = { type: 'onClosePage', id: string, code: number | undefined, reason: string | undefined, wasClean: boolean };
 export type OnMessageFromServerPayload = { type: 'onMessageFromServer', id: string, data: WSData };
@@ -33,7 +33,6 @@ export type ClosePageRequest = { type: 'closePage', id: string, code: number | u
 export type CloseServerRequest = { type: 'closeServer', id: string, code: number | undefined, reason: string | undefined, wasClean: boolean };
 export type APIRequest = ConnectRequest | PassthroughRequest | EnsureOpenedRequest | SendToPageRequest | SendToServerRequest | ClosePageRequest | CloseServerRequest;
 
-// eslint-disable-next-line no-restricted-globals
 type GlobalThis = typeof globalThis;
 
 export function inject(globalThis: GlobalThis) {
@@ -148,7 +147,8 @@ export function inject(globalThis: GlobalThis) {
 
       this._id = generateId();
       idToWebSocket.set(this._id, this);
-      binding({ type: 'onCreate', id: this._id, url: this.url });
+      const protocolsList = Array.isArray(protocols) ? [...protocols] : (protocols ? [protocols] : []);
+      binding({ type: 'onCreate', id: this._id, url: this.url, protocols: protocolsList });
     }
 
     // --- native WebSocket implementation ---
@@ -360,5 +360,5 @@ export function inject(globalThis: GlobalThis) {
         idToWebSocket.delete(this._id);
     }
   }
-  globalThis.WebSocket = class WebSocket extends WebSocketMock {};
+  globalThis.WebSocket = class WebSocket extends WebSocketMock {} as typeof globalThis.WebSocket;
 }

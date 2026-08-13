@@ -218,7 +218,7 @@ it('should support timeout option in route.fetch', async ({ page, server, isElec
   });
   await page.route('**/*', async route => {
     const error = await route.fetch({ timeout: 1000 }).catch(e => e);
-    expect(error.message).toContain(`Request timed out after 1000ms`);
+    expect(error.message).toContain(`route.fetch: Timeout 1000ms exceeded`);
   });
   const error = await page.goto(server.PREFIX + '/slow', { timeout: 2000 }).catch(e => e);
   expect(error.message).toContain(`Timeout 2000ms exceeded`);
@@ -264,22 +264,6 @@ it('should intercept with post data override', async ({ page, server, isElectron
   await page.goto(server.PREFIX + '/empty.html');
   const request = await requestPromise;
   expect((await request.postBody).toString()).toBe(JSON.stringify({ 'foo': 'bar' }));
-});
-
-it('should fulfill popup main request using alias', async ({ page, server, isElectron, electronMajorVersion, isAndroid }) => {
-  it.skip(isElectron && electronMajorVersion < 30, 'error: Browser context management is not supported.');
-  it.skip(isAndroid, 'The internal Android localhost (10.0.0.2) != the localhost on the host');
-
-  await page.context().route('**/*', async route => {
-    const response = await route.fetch();
-    await route.fulfill({ response, body: 'hello' });
-  });
-  await page.setContent(`<a target=_blank href="${server.EMPTY_PAGE}">click me</a>`);
-  const [popup] = await Promise.all([
-    page.waitForEvent('popup'),
-    page.getByText('click me').click(),
-  ]);
-  await expect(popup.locator('body')).toHaveText('hello');
 });
 
 it('request.postData is not null when fetching FormData with a Blob', {

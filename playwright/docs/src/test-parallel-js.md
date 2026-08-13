@@ -136,6 +136,44 @@ test.describe('runs in parallel with other describes', () => {
 });
 ```
 
+## Avoiding shared state in parallel tests
+
+Playwright runs tests in separate worker processes, each with its own isolated [BrowserContext], so cookies, storage and in-memory globals are already isolated. Flakiness comes from state that lives *outside* a single test. Here are recipes for the common cases.
+
+### Give each test its own backend data
+
+Two tests that create or edit the same record race with each other. Derive a unique identifier from [`property: TestInfo.testId`] so parallel tests never collide:
+
+```js
+import { test, expect } from '@playwright/test';
+
+test('creates an order', async ({ page }, testInfo) => {
+  const orderId = `order-${testInfo.testId}`;
+  await page.goto(`/orders/new?id=${orderId}`);
+  await expect(page.getByText(orderId)).toBeVisible();
+});
+```
+
+If many tests can share one dataset, create it once per worker instead — see [Isolate test data between parallel workers](#isolate-test-data-between-parallel-workers).
+
+### Write to a unique file path
+
+Multiple tests writing the same path clobber each other. [`method: TestInfo.outputPath`] returns a path scoped to the current test:
+
+```js
+import { test } from '@playwright/test';
+import fs from 'fs';
+
+test('exports a CSV', async ({ page }, testInfo) => {
+  const file = testInfo.outputPath('export.csv');
+  await fs.promises.writeFile(file, 'a,b,c', 'utf8');
+});
+```
+
+### Keep tests independent
+
+Above all, [keep your tests isolated](./writing-tests.md#test-isolation) from one another. A test that leaks state through a module-level variable or depends on another test's side effects works when tests run in order, but breaks the moment they run in parallel or in a different order. Set up everything a test needs in that test or in a [fixture](./test-fixtures.md#creating-a-fixture), and never rely on another test having run first.
+
 ## Shard tests between multiple machines
 
 Playwright Test can shard a test suite, so that it can be executed on multiple machines.

@@ -20,9 +20,12 @@ import './colors.css';
 import './common.css';
 import './headerView.css';
 import * as icons from './icons';
-import { Link, navigate, SearchParamsContext } from './links';
+import { Link, navigate, useSearchParams } from './links';
 import { statusIcon } from './statusIcon';
-import { filterWithToken } from './filter';
+import { filterWithQuery } from './filter';
+import { linkifyText } from '@web/renderUtils';
+import { Dialog } from '@web/shared/dialog';
+import { kThemeOptions, type Theme, useThemeSetting } from '@web/theme';
 
 export const HeaderView: React.FC<{
   title: string | undefined,
@@ -35,7 +38,7 @@ export const HeaderView: React.FC<{
       <div style={{ flex: 'auto' }}></div>
       {rightSuperHeader}
     </div>
-    {title && <div className='header-title'>{title}</div>}
+    {title && <div className='header-title'>{linkifyText(title)}</div>}
   </div>;
 };
 
@@ -44,12 +47,11 @@ export const GlobalFilterView: React.FC<{
   filterText: string,
   setFilterText: (filterText: string) => void,
 }> = ({ stats, filterText, setFilterText }) => {
-  const searchParams = React.useContext(SearchParamsContext);
+  const query = useSearchParams().get('q');
   React.useEffect(() => {
     // Add an extra space such that users can easily add to query
-    const query = searchParams.get('q');
     setFilterText(query ? `${query.trim()} ` : '');
-  }, [searchParams, setFilterText]);
+  }, [query, setFilterText]);
 
   return (<>
     <div className='pt-3'>
@@ -60,16 +62,21 @@ export const GlobalFilterView: React.FC<{
         event => {
           event.preventDefault();
           const url = new URL(window.location.href);
+          const currentParams = new URLSearchParams(url.hash.slice(1));
           // If <form/> onSubmit happens immediately after <input/> onChange, the filterText state is not updated yet.
           // Using FormData here is a workaround to get the latest value.
           const q = new FormData(event.target as HTMLFormElement).get('q') as string;
-          url.hash = q ? '?' + new URLSearchParams({ q }) : '';
+          const params = new URLSearchParams({ q });
+          if (currentParams.has('speedboard'))
+            params.set('speedboard', '');
+          if (!!params.toString())
+            url.hash = '?' + params.toString();
           navigate(url);
         }
       }>
         {icons.search()}
         {/* Use navigationId to reset defaultValue */}
-        <input name='q' spellCheck={false} className='form-control subnav-search-input input-contrast width-full' value={filterText} onChange={e => {
+        <input name='q' spellCheck={false} className='form-control subnav-search-input input-contrast width-full' aria-label='Search tests' placeholder='Search tests' value={filterText} onChange={e => {
           setFilterText(e.target.value);
         }}></input>
       </form>
@@ -80,24 +87,87 @@ export const GlobalFilterView: React.FC<{
 const StatsNavView: React.FC<{
   stats: Stats
 }> = ({ stats }) => {
-  const searchParams = React.useContext(SearchParamsContext);
-  const q = searchParams.get('q')?.toString() || '';
-  const tokens = q.split(' ');
+  const isSpeedboard = useSearchParams().has('speedboard');
+
   return <nav>
     <Link className='subnav-item' href='#?'>
-      All <span className='d-inline counter'>{stats.total - stats.skipped}</span>
+      <span className='subnav-item-label'>All</span>
+      <span className='d-inline counter'>{stats.total - stats.skipped}</span>
     </Link>
-    <Link className='subnav-item' click={filterWithToken(tokens, 's:passed', false)} ctrlClick={filterWithToken(tokens, 's:passed', true)}>
-      Passed <span className='d-inline counter'>{stats.expected}</span>
+    <NavLink token='passed' count={stats.expected} />
+    <NavLink token='failed' count={stats.unexpected} />
+    <NavLink token='flaky' count={stats.flaky} />
+    <NavLink token='skipped' count={stats.skipped} />
+    <Link className='subnav-item' href='#?speedboard' title='Speedboard' aria-selected={isSpeedboard}>
+      {icons.clock()}
     </Link>
-    <Link className='subnav-item' click={filterWithToken(tokens, 's:failed', false)} ctrlClick={filterWithToken(tokens, 's:failed', true)}>
-      {!!stats.unexpected && statusIcon('unexpected')} Failed <span className='d-inline counter'>{stats.unexpected}</span>
-    </Link>
-    <Link className='subnav-item' click={filterWithToken(tokens, 's:flaky', false)} ctrlClick={filterWithToken(tokens, 's:flaky', true)}>
-      {!!stats.flaky && statusIcon('flaky')} Flaky <span className='d-inline counter'>{stats.flaky}</span>
-    </Link>
-    <Link className='subnav-item' click={filterWithToken(tokens, 's:skipped', false)} ctrlClick={filterWithToken(tokens, 's:skipped', true)}>
-      Skipped <span className='d-inline counter'>{stats.skipped}</span>
-    </Link>
+    <SettingsButton />
   </nav>;
+};
+
+const NavLink: React.FC<{
+  token: string,
+  count: number,
+}> = ({ token, count }) => {
+  const searchParams = new URLSearchParams(useSearchParams());
+  searchParams.delete('speedboard');
+  searchParams.delete('testId');
+
+  const queryToken = `s:${token}`;
+
+  const clickUrl = filterWithQuery(searchParams, queryToken, false);
+  const ctrlClickUrl = filterWithQuery(searchParams, queryToken, true);
+
+  const label = token.charAt(0).toUpperCase() + token.slice(1);
+
+  return <Link className='subnav-item' href={clickUrl} click={clickUrl} ctrlClick={ctrlClickUrl}>
+    {count > 0 && statusIcon(token as any)}
+    <span className='subnav-item-label'>{label}</span>
+    <span className='d-inline counter'>{count}</span>
+  </Link>;
+};
+
+const SettingsButton: React.FC = () => {
+  const settingsRef = React.useRef<HTMLDivElement>(null);
+  const [settingsOpen, setSettingsOpen] = React.useState(false);
+  const [theme, setTheme] = useThemeSetting();
+
+  return <>
+    <div
+      role='button'
+      ref={settingsRef}
+      style={{ cursor: 'pointer' }}
+      className='subnav-item'
+      title='Settings'
+      onClick={e => {
+        setSettingsOpen(!settingsOpen);
+        e.preventDefault();
+      }}
+      onMouseDown={preventDefault}>
+      {icons.settings()}
+    </div>
+
+    <Dialog
+      open={settingsOpen}
+      minWidth={150}
+      verticalOffset={4}
+      requestClose={() => setSettingsOpen(false)}
+      anchor={settingsRef}
+      dataTestId='settings-dialog'
+    >
+      <label className='header-setting-theme'>
+        Theme:
+        <select value={theme} onChange={e => setTheme(e.target.value as Theme)}>
+          {kThemeOptions.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      </label>
+    </Dialog>
+  </>;
+};
+
+const preventDefault = (e: any) => {
+  e.stopPropagation();
+  e.preventDefault();
 };

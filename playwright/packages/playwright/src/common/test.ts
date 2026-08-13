@@ -16,7 +16,6 @@
 
 import { rootTestType } from './testType';
 import { computeTestCaseOutcome } from '../isomorphic/teleReceiver';
-
 import type { FixturesWithLocation, FullProjectInternal } from './config';
 import type { FixturePool } from './fixtures';
 import type { TestTypeImpl } from './testType';
@@ -96,6 +95,14 @@ export class Suite extends Base {
     this._entries.unshift(suite);
   }
 
+  _detach(child: Suite | TestCase) {
+    const idx = this._entries.indexOf(child);
+    if (idx !== -1)
+      this._entries.splice(idx, 1);
+    if (this._entries.length === 0)
+      this.parent?._detach(this);
+  }
+
   allTests(): TestCase[] {
     const result: TestCase[] = [];
     const visit = (suite: Suite) => {
@@ -138,6 +145,16 @@ export class Suite extends Base {
     if (this.parent)
       this.parent._collectGrepTitlePath(path);
     if (this.title || this._type !== 'describe')
+      path.push(this.title);
+    path.push(...this._tags);
+  }
+
+  _collectTagTitlePath(path: string[]) {
+    this.parent?._collectTagTitlePath(path);
+    // Only collect titles from describe blocks for tag extraction.
+    // Skip root/project/file titles to avoid parsing file names as tags.
+    // Note that file suite may have explicit global tags as well.
+    if (this._type === 'describe')
       path.push(this.title);
     path.push(...this._tags);
   }
@@ -242,6 +259,7 @@ export class Suite extends Base {
   project(): FullProject | undefined {
     return this._fullProject?.project || this.parent?.project();
   }
+
 }
 
 export class TestCase extends Base implements reporterTypes.TestCase {
@@ -265,6 +283,7 @@ export class TestCase extends Base implements reporterTypes.TestCase {
   _projectId = '';
   // Explicitly declared tags that are not a part of the title.
   _tags: string[] = [];
+  _planAnnotations: TestAnnotation[] = [];
 
   constructor(title: string, fn: Function, testType: TestTypeImpl, location: Location) {
     super(title);
@@ -289,7 +308,23 @@ export class TestCase extends Base implements reporterTypes.TestCase {
   }
 
   get tags(): string[] {
-    return this._grepTitle().match(/@[\S]+/g) || [];
+    const path: string[] = [];
+    this.parent._collectTagTitlePath(path);
+    path.push(this.title);
+    const titleTags = path.join(' ').match(/@[\S]+/g) || [];
+    return [
+      ...titleTags,
+      ...this._tags,
+    ];
+  }
+
+  _applyPlanAnnotation(annotation: TestAnnotation): void {
+    this.annotations.push(annotation);
+    this._planAnnotations.push(annotation);
+    if (annotation.type === 'skip' || annotation.type === 'fixme')
+      this.expectedStatus = 'skipped';
+    else if (annotation.type === 'fail' && this.expectedStatus !== 'skipped')
+      this.expectedStatus = 'failed';
   }
 
   _serialize(): any {
@@ -354,10 +389,15 @@ export class TestCase extends Base implements reporterTypes.TestCase {
     return result;
   }
 
-  _grepTitle() {
+  _grepBaseTitlePath(): string[] {
     const path: string[] = [];
     this.parent._collectGrepTitlePath(path);
     path.push(this.title);
+    return path;
+  }
+
+  _grepTitleWithTags(): string {
+    const path = this._grepBaseTitlePath();
     path.push(...this._tags);
     return path.join(' ');
   }

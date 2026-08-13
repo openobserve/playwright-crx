@@ -9,7 +9,7 @@
 import fs from 'fs';
 import path from 'path';
 
-/* eslint-disable curly, indent */
+/* eslint-disable curly */
 
 interface ProfileOptions {
   preferences: Record<string, unknown>;
@@ -125,6 +125,8 @@ function defaultProfilePreferences(
     'datareporting.healthreport.service.enabled': false,
     'datareporting.healthreport.service.firstRun': false,
     'datareporting.healthreport.uploadEnabled': false,
+    'datareporting.usage.uploadEnabled': false,
+    'telemetry.fog.test.localhost_port': -1,
 
     // Do not show datareporting policy notifications which can interfere with tests
     'datareporting.policy.dataSubmissionEnabled': false,
@@ -265,6 +267,9 @@ function defaultProfilePreferences(
 
     // Prevent starting into safe mode after application crashes
     'toolkit.startup.max_resumed_crashes': -1,
+
+    // Enable TestUtils
+    'dom.testing.testutils.enabled': true,
   };
 
   return Object.assign(defaultPrefs, extraPrefs);
@@ -291,14 +296,14 @@ async function writePreferences(options: ProfileOptions): Promise<void> {
     fs.promises.writeFile(path.join(options.path, 'user.js'), lines.join('\n')),
     // Create a backup of the preferences file if it already exitsts.
     fs.promises.access(prefsPath, fs.constants.F_OK).then(
-      async () => {
-        await fs.promises.copyFile(
-          prefsPath,
-          path.join(options.path, 'prefs.js.playwright')
-        );
-      },
-      // Swallow only if file does not exist
-      () => {}
+        async () => {
+          await fs.promises.copyFile(
+              prefsPath,
+              path.join(options.path, 'prefs.js.playwright')
+          );
+        },
+        // Swallow only if file does not exist
+        () => {}
     ),
   ]);
   for (const command of result) {

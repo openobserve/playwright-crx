@@ -21,7 +21,9 @@ export * from '../../playwright/packages/playwright-core/types/types';
 export type CrxFs = IFs;
 
 export type CrxBrowserContextOptions = {
-  colorScheme?: 'dark' | 'light' | 'no-preference';
+  // 'no-override' is upstream's fourth value. It was missing here, which made a parsed
+  // test carrying it unassignable to the type meant to describe it.
+  colorScheme?: 'dark' | 'light' | 'no-preference' | 'no-override';
   locale?: string;
   timezoneId?: string;
   geolocation?: {
@@ -34,6 +36,33 @@ export type CrxBrowserContextOptions = {
   };
   permissions?: string[];
   serviceWorkers?: 'allow' | 'block'; 
+};
+
+/**
+ * The context options a *parsed test* can carry.
+ *
+ * A superset of CrxBrowserContextOptions, and deliberately a separate type: `crx.start()`
+ * takes what an embedder may ask for, while `list()` reports what was found in code. A
+ * parsed test can name a storage state or a HAR to route from — `recordHar` is declared
+ * here rather than picked from upstream because 1.54 removed it from the protocol's
+ * BrowserNewContextOptions while the parser still recognises `routeFromHAR(...)`.
+ *
+ * They were previously conflated, so `list()` returned storageState and recordHar through
+ * a type that said neither existed.
+ */
+export type CrxTestContextOptions = CrxBrowserContextOptions & {
+  storageState?: string;
+  recordHar?: {
+    path: string;
+    content?: 'embed' | 'attach' | 'omit';
+    mode?: 'full' | 'minimal';
+    urlGlob?: string;
+  };
+};
+
+export type CrxTestOptions = {
+  deviceName?: string;
+  contextOptions?: CrxTestContextOptions;
 };
 
 export interface Crx {
@@ -517,10 +546,7 @@ export interface CrxRecorder {
 
   list(code: string): Promise<{
     title: string,
-    options?: {
-      deviceName?: string;
-      contextOptions?: CrxBrowserContextOptions;
-    };
+    options?: CrxTestOptions;
     location?: {
       file: string,
       line?: number,
@@ -536,3 +562,277 @@ export interface CrxRecorder {
 
   stop(): Promise<void>;
 }
+
+// ─── Synthetics recorder surface ────────────────────────────────────────────
+//
+// These are exported by src/index.ts at runtime and, until Phase 4, had no
+// declarations at all — so the synthetics-recorder extension imported ten symbols
+// that TypeScript believed did not exist, and its build said nothing because it never
+// ran tsc. It does now.
+//
+// The shapes here are curated rather than emitted: the implementations reach into
+// playwright-core's server internals (Recorder, BrowserContext, SdkObject) and those
+// paths have no business in a published surface. What crosses the boundary as *data* —
+// everything O2 stores or reads — is declared exactly, and checked against the
+// implementation by src/types/conformance.ts so it cannot drift again. What crosses only
+// as an opaque handle is declared opaque on purpose.
+
+import type { ActionInContext } from '@isomorphic/codegen/actions';
+import type { CallLog, ElementInfo, Mode, Source } from '@recorder/recorderTypes';
+
+// ── Opaque handles ──
+// Supplied by the recorder-app factory and passed straight back to the app's
+// constructor. Deliberately not structural: an embedder should be able to carry one
+// across, and nothing else.
+
+/** The server-side Crx object. */
+export interface CrxServer {}
+/** The server-side Recorder driving a session. */
+export interface RecorderServer {}
+/** The server-side BrowserContext a session is recording. */
+export interface BrowserContextServer {}
+
+// ── Locators ──
+
+export type LocatorKind = 'test_attribute' | 'role' | 'text' | 'css' | 'xpath';
+
+/** How one part of a combined locator attaches to the part before it. */
+export type CompositeRelation = 'and' | 'has' | 'has_not' | 'descendant';
+
+export type CompositePart = {
+  value: string;
+  /** Absent on the first (base) part. */
+  relation?: CompositeRelation;
+};
+
+export type LocatorCandidate = {
+  kind: LocatorKind;
+  value: string;
+  /**
+   * Where it came from. The recorder only ever writes `recorded`; the editor writes the
+   * other two. It is the heal-suppression signal — healing may replace a recorded value
+   * in place and must not touch anything else.
+   */
+  origin?: 'recorded' | 'authored' | 'composite';
+  /** What a combined locator was built from. Editor-written, never recorded. */
+  from?: CompositePart[];
+};
+
+export type StepLocator = {
+  candidates: LocatorCandidate[];
+  /**
+   * A human has reordered, added, deleted or combined. The recorder never sets it; a
+   * fresh recording is by definition not author-ordered.
+   */
+  author_ordered?: boolean;
+};
+
+// ── Steps ──
+
+export type BrowserStepAction = 'navigate' | 'openPage' | 'click' | 'hover' | 'type' | 'press' | 'select' | 'check' | 'uncheck' | 'setInputFiles' | 'waitFor' | 'assert' | 'screenshot';
+
+/**
+ * The stored spellings that only ever arrive, never leave. A journey saved and reloaded
+ * comes back in the version-2 vocabulary, where `fill` names `type` and `upload` names
+ * `setInputFiles`.
+ */
+export type StoredStepAction = 'fill' | 'upload';
+
+/** The v2 assertion vocabulary, mirrored from the server-side closed set. */
+export type AssertionKind = 'element_visible' | 'element_not_visible' | 'element_text' | 'url_matches' | 'page_title' | 'element_attribute';
+
+export interface StepAssertion {
+  kind: AssertionKind;
+  expected?: string;
+  attribute?: string;
+}
+
+export type SettleResponsePattern = {
+  url_pattern: string;
+  /** Always false from the recorder — a recording cannot observe that a call is required. */
+  required: boolean;
+  method?: string;
+};
+
+/**
+ * What the page demonstrably did after this step's action.
+ *
+ * Recorded as evidence, not as a contract: a signal that stops arriving annotates the
+ * step rather than failing the run, which is what lets a recorded journey outlive the
+ * endpoint names it was recorded against.
+ */
+export interface StepSettle {
+  navigation?: { url_pattern: string };
+  responses?: SettleResponsePattern[];
+  /** How long settling took while recording. Reporting only — never a timeout. */
+  observed_duration_ms?: number;
+}
+
+export interface BrowserStep {
+  id: string;
+  action: BrowserStepAction | StoredStepAction;
+  /**
+   * Every way the recorder could find this element. This IS the step's identity: the
+   * bare `selector`/`selector_type` pair beside it was the version-1 channel and went
+   * with version 1.
+   */
+  locator?: StepLocator;
+  settle?: StepSettle;
+  assertion?: StepAssertion;
+  /**
+   * Author-set flow control. Never emitted by the recorder — they come back from the
+   * step editor on replay, and the player reports that it cannot honour them rather
+   * than diverging silently.
+   */
+  optional?: boolean;
+  always_run?: boolean;
+  name: string;
+  /**
+   * Absent by design. The recorder must never stamp a timeout — a recorded value encodes
+   * the recording session's timing, not the application's contract. The runner owns
+   * defaults per action category; an author may still set one in the step editor.
+   */
+  timeout_ms?: number;
+  url?: string;
+  value?: string;
+  key?: string;
+  options?: string[];
+  text?: string;
+  checked?: boolean;
+  snapshot?: string;
+  files?: string[];
+  modifiers?: number;
+  button?: 'left' | 'middle' | 'right';
+  /** How many clicks the recorded interaction was. Absent means one. */
+  clickCount?: number;
+  position?: { x: number, y: number };
+  startTime: number;
+  endTime?: number;
+  pageAlias: string;
+  framePath: string[];
+  description?: string;
+}
+
+// ── Replay fidelity ──
+
+export type FidelityLevel = 'exact' | 'approximate' | 'not_simulated';
+
+export type StepFidelity = {
+  /** Aligned with the player's `actionIndex`. */
+  stepIndex: number;
+  stepId: string;
+  level: FidelityLevel;
+  notes: string[];
+};
+
+/** Fidelity for a whole journey, one entry per step, in replay order. */
+export function describeReplayFidelity(steps: BrowserStep[]): StepFidelity[];
+/** One step's fidelity, so a single step can be reasoned about without a journey. */
+export function describeStepFidelity(step: BrowserStep, stepIndex: number): StepFidelity;
+/** Only the steps with something to say — what a UI actually renders. */
+export function replayFidelityWarnings(steps: BrowserStep[]): StepFidelity[];
+
+// ── Replay progress and errors ──
+
+export type StructuredError = {
+  message: string;
+  name?: string;
+  stack?: string;
+  /** The action that failed, e.g. "click", "fill", "navigate". */
+  actionName?: string;
+  /** The selector targeted by the failing action, if applicable. */
+  selector?: string;
+};
+
+export type StepStartedData = {
+  actionIndex: number;
+};
+
+export type StepResultData = {
+  actionIndex: number;
+  passed: boolean;
+  duration_ms: number;
+  /** Raw error message, kept for backward compatibility. Prefer `structuredError`. */
+  error?: string;
+  /** Detailed, machine-readable error breakdown. */
+  structuredError?: StructuredError;
+};
+
+/** What the recorder pushes to its host. Discriminated on `method`. */
+export type SyntheticsForwardMessage = ({ type: 'recorder' } & (
+  { method: 'resetCallLogs' } |
+  { method: 'updateCallLogs', callLogs: CallLog[] } |
+  { method: 'setCallLogs', callLogs: CallLog[] } |
+  { method: 'setPaused', paused: boolean } |
+  { method: 'setMode', mode: Mode } |
+  { method: 'setSources', sources: Source[] } |
+  { method: 'setActions', actions: ActionInContext[], sources: Source[] } |
+  { method: 'elementPicked', elementInfo: ElementInfo, userGesture?: boolean }
+) & {
+  browserSteps?: BrowserStep[];
+  generatedCode?: string;
+  generatedLanguage?: string;
+}) | {
+  type: 'recorder';
+  method: 'stepReplayStarted';
+  stepStarted: StepStartedData;
+} | {
+  type: 'recorder';
+  method: 'stepReplayResult';
+  stepResult: StepResultData;
+};
+
+export type SyntheticsForwardCallback = (msg: SyntheticsForwardMessage) => void;
+
+// ── The recorder app ──
+
+export type RecorderAppFactoryOverride = (crx: CrxServer, recorder: RecorderServer, context: BrowserContextServer) => SyntheticsRecorderApp | Promise<SyntheticsRecorderApp>;
+
+/**
+ * An `IRecorderApp` that drives no Playwright editor UI, maps captured actions to
+ * `BrowserStep[]`, and forwards them to a host over a callback.
+ */
+export class SyntheticsRecorderApp {
+  constructor(crx: CrxServer, recorder: RecorderServer, forwardCallback: SyntheticsForwardCallback, context?: BrowserContextServer);
+  on(event: 'show' | 'hide', listener: () => void): this;
+  on(event: 'modeChanged', listener: (params: { mode: Mode }) => void): this;
+  off(event: string, listener: (...args: any[]) => void): this;
+  open(options?: { mode?: Mode, language?: string, testIdAttributeName?: string }): Promise<void>;
+  close(): Promise<void>;
+  setMode(mode: Mode): Promise<void>;
+  setPaused(paused: boolean): Promise<void>;
+  /**
+   * Drop everything captured so far and treat what follows as a fresh recording.
+   *
+   * Used by restore-then-record: the prefix steps are replayed to reach a starting state,
+   * and only what the author does after that should be recorded.
+   */
+  resetCapture(): void;
+  setSources(sources: Source[]): Promise<void>;
+  setActions(actions: ActionInContext[], sources: Source[]): Promise<void>;
+  elementPicked(elementInfo: ElementInfo, userGesture?: boolean): Promise<void>;
+  resetCallLogs(): Promise<void>;
+  updateCallLogs(callLogs: CallLog[]): Promise<void>;
+}
+
+/**
+ * The server-side Crx class, exported as a value so an embedder can install a recorder-app
+ * factory. Note that the *type* `Crx` above is the client-side API of the `crx` export —
+ * a pre-existing collision in this package's surface, where one name means two things.
+ */
+export const Crx: {
+  recorderAppFactoryOverride: RecorderAppFactoryOverride | null;
+};
+
+// ── Mapping ──
+
+export function mapActionToBrowserStep(actionInContext: ActionInContext, actionIndex: number, responses?: SettleResponsePattern[], aliasFor?: (pageGuid: string) => string): BrowserStep;
+export function mapActionsToBrowserSteps(actions: ActionInContext[], responsesFor?: (action: ActionInContext) => SettleResponsePattern[] | undefined): BrowserStep[];
+export function mapBrowserStepToAction(step: BrowserStep): ActionInContext;
+export function mapBrowserStepsToActions(steps: BrowserStep[]): ActionInContext[];
+
+/**
+ * Override the attribute treated as the test id when ranking locator candidates.
+ * Recording and replay use whatever the host configures per request.
+ */
+export function setLocatorTestIdAttribute(attributeName: string): void;

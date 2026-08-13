@@ -16,19 +16,7 @@
 
 import type { Locator } from '@playwright/test';
 import { test as it, expect } from './pageTest';
-
-function unshift(snapshot: string): string {
-  const lines = snapshot.split('\n');
-  let whitespacePrefixLength = 100;
-  for (const line of lines) {
-    if (!line.trim())
-      continue;
-    const match = line.match(/^(\s*)/);
-    if (match && match[1].length < whitespacePrefixLength)
-      whitespacePrefixLength = match[1].length;
-  }
-  return lines.filter(t => t.trim()).map(line => line.substring(whitespacePrefixLength)).join('\n');
-}
+import { unshift } from '../config/utils';
 
 async function checkAndMatchSnapshot(locator: Locator, snapshot: string) {
   expect.soft(await locator.ariaSnapshot()).toBe(unshift(snapshot));
@@ -657,4 +645,152 @@ it('should not report textarea textContent', async ({ page }) => {
   await checkAndMatchSnapshot(page.locator('body'), `
     - textbox: After
   `);
+});
+
+it('should not show visible children of hidden elements', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36296' }  }, async ({ page }) => {
+  await page.setContent(`
+    <div style="visibility: hidden;">
+      <div style="visibility: visible;">
+        <button>Button</button>
+      </div>
+    </div>
+  `);
+
+  expect(await page.locator('body').ariaSnapshot()).toBe('');
+});
+
+it('should not show unhidden children of aria-hidden elements', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36296' }  }, async ({ page }) => {
+  await page.setContent(`
+    <div aria-hidden="true">
+      <div aria-hidden="false">
+        <button>Button</button>
+      </div>
+    </div>
+  `);
+
+  expect(await page.locator('body').ariaSnapshot()).toBe('');
+});
+
+it('should snapshot placeholder when different from the name', async ({ page }) => {
+  await page.setContent(`
+    <input placeholder="Placeholder">
+  `);
+  expect(await page.locator('body').ariaSnapshot()).toContainYaml(`
+    - textbox "Placeholder"
+  `);
+
+  await page.setContent(`
+    <input placeholder="Placeholder" aria-label="Label">
+  `);
+  expect(await page.locator('body').ariaSnapshot()).toContainYaml(`
+    - textbox "Label":
+      - /placeholder: Placeholder
+  `);
+});
+
+it('match values both against regex and string', async ({ page }) => {
+  await page.setContent(`<a href="/auth?r=/">Log in</a>`);
+  await checkAndMatchSnapshot(page.locator('body'), `
+    - link "Log in":
+      - /url: /auth?r=/
+  `);
+});
+
+it('auto-waits the locator and does not include iframes', async ({ page }) => {
+  await page.setContent(`
+    <div>Hello</div>
+  `);
+
+  const snapshotPromise = page.locator('#target').ariaSnapshot();
+  await page.waitForTimeout(2000);
+  await page.setContent(`
+    <div id=target>
+      Hello
+      <iframe srcdoc="<ul><li>Item 1</li><li>Item 2</li></ul>"></iframe>
+    </div>
+  `);
+  expect(await snapshotPromise).toContainYaml(`
+    - text: Hello
+  `);
+});
+
+it('should limit depth', async ({ page }) => {
+  await page.setContent(`
+    <ul id=target>
+      <li>item2</li>
+      <li>
+        <ul>
+          <li>item3</li>
+        </ul>
+      </li>
+    </ul>
+  `);
+
+  const snapshot = await page.locator('#target').ariaSnapshot({ depth: 1 });
+  expect(snapshot).toContainYaml(`
+    - list:
+      - listitem: item2
+      - listitem
+  `);
+});
+
+it('should snapshot a locator inside an iframe', async ({ page }) => {
+  await page.setContent(`
+    <h1>Main Page</h1>
+    <iframe srcdoc="<ul><li>Item 1</li><li>Item 2</li></ul>"></iframe>
+  `);
+
+  const list = page.frames()[1].locator('ul');
+  const snapshot = await list.ariaSnapshot();
+  expect(snapshot).toContainYaml(`
+    - list:
+      - listitem: Item 1
+      - listitem: Item 2
+  `);
+});
+
+it('should include frames on frameset pages', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41784' } }, async ({ page, server }) => {
+  server.setRoute('/frameset.html', (req, res) => {
+    res.setHeader('Content-Type', 'text/html');
+    res.end(`<frameset cols="50%,50%"><frame src="/frames/frame.html"><frame src="/frames/frame.html"></frameset>`);
+  });
+  await page.goto(server.PREFIX + '/frameset.html');
+  // Like iframes, frames are listed in the snapshot, but their content is not included.
+  expect(await page.ariaSnapshot({ timeout: 3000 })).toBe(unshift(`
+    - iframe
+    - iframe
+  `));
+});
+
+it('should snapshot a locator inside a frameset frame', async ({ page, server }) => {
+  await page.goto(server.PREFIX + '/frames/frameset.html');
+  await checkAndMatchSnapshot(page.frameLocator('frame').first().locator('body'), `
+    - text: Hi, I'm frame
+  `);
+});
+
+it('should snapshot with box from page', async ({ page }) => {
+  await page.setContent(`
+    <button style="position:absolute;left:100px;top:50px;width:80px;height:40px;margin:0;padding:0;border:0;">click</button>
+  `);
+
+  const snapshot = await page.ariaSnapshot({ boxes: true });
+  expect(snapshot).toBe(`- button "click" [box=100,50,80,40]`);
+});
+
+it('should snapshot with box from locator', async ({ page }) => {
+  await page.setContent(`
+    <div style="position:absolute;left:10px;top:20px;width:200px;height:100px;">
+      <button style="position:absolute;left:5px;top:5px;width:60px;height:30px;margin:0;padding:0;border:0;">ok</button>
+    </div>
+  `);
+
+  const snapshot = await page.locator('div').ariaSnapshot({ boxes: true });
+  expect(snapshot).toBe(`- button "ok" [box=15,25,60,30]`);
+});
+
+it('should not include box when option is omitted', async ({ page }) => {
+  await page.setContent(`<button>click</button>`);
+  const snapshot = await page.ariaSnapshot();
+  expect(snapshot).not.toMatch(/\[box=/);
 });

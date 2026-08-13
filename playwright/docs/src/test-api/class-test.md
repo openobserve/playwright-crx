@@ -1044,6 +1044,33 @@ An object containing fixtures and/or options. Learn more about [fixtures format]
 
 
 
+## method: Test.abort
+* since: v1.60
+
+Aborts the currently running test by throwing an error. The test is immediately marked as failed and execution stops. This is useful from inside a fixture or a route handler when you have detected an unrecoverable misuse and want to fail the test right away.
+
+**Usage**
+
+```js
+import { test, expect } from '@playwright/test';
+
+test('does not publish to shared page', async ({ page }) => {
+  await page.route('**/publish', route => {
+    test.abort('Tests must not publish to the shared page. Use the `clone` option.');
+    return route.abort();
+  });
+  // ...
+});
+```
+
+### param: Test.abort.message
+* since: v1.60
+- `message` ?<[string]>
+
+Optional message describing the reason for the abort. It will be included in the failure error.
+
+
+
 ## method: Test.fail
 * since: v1.10
 
@@ -1289,13 +1316,13 @@ Test body that takes one or two arguments: an object with fixtures and optional 
 * since: v1.10
 - `condition` ?<[boolean]>
 
-Test is marked as "should fail" when the condition is `true`.
+Test is marked as "fixme" when the condition is `true`.
 
 ### param: Test.fixme.callback
 * since: v1.10
 - `callback` ?<[function]\([Fixtures]\):[boolean]>
 
-A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as "should fail" when the return value is `true`.
+A function that returns whether to mark as "fixme", based on test fixtures. Test or tests are marked as "fixme" when the return value is `true`.
 
 ### param: Test.fixme.description
 * since: v1.10
@@ -1425,7 +1452,7 @@ Timeout in milliseconds.
 
 Skip a test. Playwright will not run the test past the `test.skip()` call.
 
-Skipped tests are not supposed to be ever run. If you intent to fix the test, use [`method: Test.fixme`] instead.
+Skipped tests are not supposed to be ever run. If you intend to fix the test, use [`method: Test.fixme`] instead.
 
 To declare a skipped test:
 * `test.skip(title, body)`
@@ -1474,7 +1501,7 @@ test('Safari-only test 2', async ({ page }) => {
 });
 ```
 
-You can also call `test.skip()` without arguments inside the test body to always mark the test as failed. We recommend using `test.skip(title, body)` instead.
+You can also call `test.skip()` without arguments inside the test body to always skip the test. However, we recommend using `test.skip(title, body)` instead.
 
 ```js
 import { test, expect } from '@playwright/test';
@@ -1511,13 +1538,13 @@ Test body that takes one or two arguments: an object with fixtures and optional 
 * since: v1.10
 - `condition` ?<[boolean]>
 
-Test is marked as "should fail" when the condition is `true`.
+Test is marked as "skipped" when the condition is `true`.
 
 ### param: Test.skip.callback
 * since: v1.10
 - `callback` ?<[function]\([Fixtures]\):[boolean]>
 
-A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as "should fail" when the return value is `true`.
+A function that returns whether to mark as "skipped", based on test fixtures. Test or tests are marked as "skipped" when the return value is `true`.
 
 ### param: Test.skip.description
 * since: v1.10
@@ -1652,7 +1679,7 @@ function step(target: Function, context: ClassMethodDecoratorContext) {
     const name = this.constructor.name + '.' + (context.name as string);
     return test.step(name, async () => {
       return await target.call(this, ...args);
-    });
+    }, { box: true });
   };
 }
 

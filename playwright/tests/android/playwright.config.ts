@@ -15,7 +15,7 @@
  */
 
 import { config as loadEnv } from 'dotenv';
-loadEnv({ path: path.join(__dirname, '..', '..', '.env') });
+loadEnv({ path: path.join(__dirname, '..', '..', '.env'), quiet: true });
 process.env.PWTEST_UNDER_TEST = '1';
 
 import type { Config, PlaywrightTestOptions, PlaywrightWorkerOptions } from '@playwright/test';
@@ -29,6 +29,9 @@ const testDir = path.join(__dirname, '..');
 const config: Config<ServerWorkerOptions & PlaywrightWorkerOptions & PlaywrightTestOptions> = {
   testDir,
   outputDir,
+  expect: {
+    timeout: 10000,
+  },
   timeout: 120000,
   globalTimeout: 7200000,
   workers: 1,
@@ -37,6 +40,8 @@ const config: Config<ServerWorkerOptions & PlaywrightWorkerOptions & PlaywrightT
   reporter: process.env.CI ? [
     ['dot'],
     ['json', { outputFile: path.join(outputDir, 'report.json') }],
+    ['blob'],
+    ['../config/parquetReporter.ts'],
   ] : 'line',
   projects: [],
 };

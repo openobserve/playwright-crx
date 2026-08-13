@@ -46,7 +46,7 @@ test('should work after theme switch', async ({ runUITest, writeFiles }) => {
   await expect(page.getByTestId('output')).toContainText(`Hello world 1`);
 
   await page.getByText('Settings', { exact: true }).click();
-  await page.getByLabel('Dark mode').click();
+  await page.getByRole('combobox', { name: 'Theme' }).selectOption('Dark mode');
   await writeFiles({
     'a.test.ts': `
       import { test, expect } from '@playwright/test';
@@ -84,6 +84,7 @@ test('should show console messages for test', async ({ runUITest }, testInfo) =>
       test('print', async ({ page }) => {
         await page.evaluate(() => console.log('page message'));
         console.log('node message');
+        await page.waitForTimeout(500);
         await page.evaluate(() => console.error('page error'));
         console.error('node error');
         console.log('Colors: \x1b[31mRED\x1b[0m \x1b[32mGREEN\x1b[0m');
@@ -102,12 +103,12 @@ test('should show console messages for test', async ({ runUITest }, testInfo) =>
     'Colors: RED GREEN',
   ]);
 
-  await expect(page.locator('.console-tab .list-view-entry .codicon')).toHaveClass([
-    'codicon codicon-browser status-none',
-    'codicon codicon-file status-none',
-    'codicon codicon-browser status-error',
-    'codicon codicon-file status-error',
-    'codicon codicon-file status-none',
+  await expect(page.locator('.console-tab .console-source')).toHaveText([
+    'page',
+    'test',
+    'page',
+    'test',
+    'test',
   ]);
 
   await expect.soft(page.getByText('RED', { exact: true })).toHaveCSS('color', 'rgb(205, 49, 49)');
@@ -118,12 +119,13 @@ test('should collapse repeated console messages for test', async ({ runUITest })
   const { page } = await runUITest({
     'a.spec.ts': `
       import { test, expect } from '@playwright/test';
-      test('print', async ({ page }) => {
+      test('print test', async ({ page }) => {
         await page.evaluate(() => {
           console.log('page message')
           for (let i = 0; i < 10; ++i)
             console.log('page message')
         });
+        await page.waitForTimeout(3000);
         for (let i = 0; i < 10; ++i)
           console.log('node message')
         await page.evaluate(async () => {
@@ -140,18 +142,18 @@ test('should collapse repeated console messages for test', async ({ runUITest })
       });
     `,
   });
-  await page.getByTitle('Run all').click();
-  await page.getByRole('tab', { name: 'Console' }).click();
-  await page.getByText('print').click();
+  await page.getByRole('treeitem', { name: 'print test' }).dblclick();
+  await expect(page.getByTestId('workbench-run-status')).toContainText('Passed');
 
+  await page.getByRole('tab', { name: 'Console' }).click();
   await expect(page.getByRole('tabpanel', { name: 'Console' })).toMatchAriaSnapshot(`
     - tabpanel "Console":
-      - list:
-        - listitem: /page message/
-        - listitem: /10 page message/
-        - listitem: /10 node message/
-        - listitem: /10 page message/
-        - listitem: /10 page message/
+      - listbox:
+        - option /page message/
+        - option /10 page message/
+        - option /10 node message/
+        - option /10 page message/
+        - option /10 page message/
   `);
 });
 
@@ -187,25 +189,27 @@ test('should format console messages in page', async ({ runUITest }, testInfo) =
   ]);
 
   await expect(page.locator('.console-tab')).toMatchAriaSnapshot(`
-    - list:
-      - listitem: "/<anonymous>:1 Object {a: 1}/"
-      - listitem: "/<anonymous>:4 Date/"
-      - listitem: "/<anonymous>:5 Regex \/a\//"
-      - listitem: "/<anonymous>:6 Number 0 one 2/"
-      - listitem: "/<anonymous>:7 Download the React DevTools for a better development experience: https:\/\/fb\.me\/react-devtools/"
-      - listitem: "/<anonymous>:8 Array of values/"
-      - listitem: "/Failed to load resource: net::ERR_CONNECTION_REFUSED/"
+    - listbox:
+      - option /<anonymous>:1 Object/
+      - option /<anonymous>:4 Date/
+      - option /<anonymous>:5 Regex/
+      - option /<anonymous>:6 Number 0 one 2/
+      - option /<anonymous>:7 Download the React DevTools/
+      - option /<anonymous>:8 Array of values/
+      - option /Failed to load resource/
   `);
 
   const label = page.getByText('React DevTools');
   await expect(label).toHaveCSS('color', 'rgb(255, 0, 0)');
   await expect(label).toHaveCSS('font-weight', '700');
   // blue should not be used, should inherit color red.
-  await expect(label).toHaveCSS('outline', 'rgb(255, 0, 0) none 0px');
+  await expect(label).toHaveCSS('outline-color', 'rgb(255, 0, 0)');
 
   const link = page.getByText('https://fb.me/react-devtools');
   await expect(link).toHaveCSS('color', 'rgb(0, 0, 255)');
-  await expect(link).toHaveCSS('text-decoration', 'none solid rgb(0, 0, 255)');
+  await expect(link).toHaveCSS('text-decoration-color', 'rgb(0, 0, 255)');
+  await expect(link).toHaveCSS('text-decoration-style', 'solid');
+  await expect(link).toHaveCSS('text-decoration-line', 'none');
 });
 
 test('should stream console messages live', async ({ runUITest }) => {
@@ -232,7 +236,7 @@ test('should stream console messages live', async ({ runUITest }) => {
     'I was logged',
     'I was clicked',
   ]);
-  await page.getByTitle('Stop').click();
+  await page.getByTestId('stop-button').click();
 });
 
 test('should print beforeAll console messages once', async ({ runUITest }, testInfo) => {
@@ -250,7 +254,7 @@ test('should print beforeAll console messages once', async ({ runUITest }, testI
   await page.getByTitle('Run all').click();
   await page.getByText('Console').click();
   await page.getByText('print').click();
-  await expect(page.getByTestId('status-line')).toHaveText('1/1 passed (100%)');
+  await expect(page.getByTestId('status-line')).toHaveText('1/1 (100%) — 1 passed');
   await expect(page.locator('.console-tab .console-line-message')).toHaveText([
     'before all log',
     'test log',

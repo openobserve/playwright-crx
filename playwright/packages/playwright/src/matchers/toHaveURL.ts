@@ -14,44 +14,24 @@
  * limitations under the License.
  */
 
-import { urlMatches } from 'playwright-core/lib/utils';
-import { colors } from 'playwright-core/lib/utils';
+import { assertionAbortedMessage } from '@isomorphic/abortSignal';
+import { urlMatches } from '@isomorphic/urlMatch';
 
-import { printReceivedStringContainExpectedResult } from './expect';
-import {  matcherHint } from './matcherHint';
-import { EXPECTED_COLOR, printReceived } from '../common/expectBundle';
+import { formatMatcherMessage, printReceivedStringContainExpectedResult } from './matcherHint';
 
 import type { MatcherResult } from './matcherHint';
-import type { ExpectMatcherState } from '../../types/test';
 import type { Page } from 'playwright-core';
+import type { ExpectMatcherStateInternal } from './matchers';
 
 export async function toHaveURLWithPredicate(
-  this: ExpectMatcherState,
+  this: ExpectMatcherStateInternal,
   page: Page,
   expected: (url: URL) => boolean,
-  options?: { ignoreCase?: boolean; timeout?: number },
+  options?: { ignoreCase?: boolean; timeout?: number, signal?: AbortSignal },
 ): Promise<MatcherResult<string | RegExp, string>> {
   const matcherName = 'toHaveURL';
-  const expression = 'page';
-  const matcherOptions = {
-    isNot: this.isNot,
-    promise: this.promise,
-  };
-
-  if (typeof expected !== 'function') {
-    throw new Error(
-        [
-          // Always display `expected` in expectation place
-          matcherHint(this, undefined, matcherName, expression, undefined, matcherOptions),
-          `${colors.bold('Matcher error')}: ${EXPECTED_COLOR('expected')} value must be a string, regular expression, or predicate`,
-          this.utils.printWithType('Expected', expected, this.utils.printExpected,),
-        ].join('\n\n'),
-    );
-  }
-
   const timeout = options?.timeout ?? this.timeout;
   const baseURL: string | undefined = (page.context() as any)._options.baseURL;
-  let conditionSucceeded = false;
   let lastCheckedURLString: string | undefined = undefined;
   try {
     await page.mainFrame().waitForURL(
@@ -73,63 +53,69 @@ export async function toHaveURLWithPredicate(
             !this.isNot === urlMatches(baseURL, lastCheckedURLString, expected)
           );
         },
-        { timeout },
+        { timeout, signal: options?.signal },
     );
 
-    conditionSucceeded = true;
-  } catch (e) {
-    conditionSucceeded = false;
-  }
-
-  if (conditionSucceeded)
     return { name: matcherName, pass: !this.isNot, message: () => '' };
-
-  return {
-    name: matcherName,
-    pass: this.isNot,
-    message: () =>
-      toHaveURLMessage(
-          this,
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      return {
+        name: matcherName,
+        pass: this.isNot,
+        message: () => formatMatcherMessage(this.utils, {
+          isNot: this.isNot,
+          promise: this.promise,
           matcherName,
-          expression,
-          expected,
-          lastCheckedURLString,
-          this.isNot,
-          true,
+          expectation: 'expected',
           timeout,
-      ),
-    actual: lastCheckedURLString,
-    timeout,
-  };
+          printedExpected: `Expected: predicate to ${!this.isNot ? 'succeed' : 'fail'}`,
+          errorMessage: 'Error: ' + assertionAbortedMessage(e.cause),
+        }),
+        actual: lastCheckedURLString,
+        timeout,
+      };
+    }
+
+    return {
+      name: matcherName,
+      pass: this.isNot,
+      message: () =>
+        toHaveURLMessage(
+            this,
+            matcherName,
+            expected,
+            lastCheckedURLString,
+            this.isNot,
+            true,
+            timeout,
+        ),
+      actual: lastCheckedURLString,
+      timeout,
+    };
+  }
 }
 
 function toHaveURLMessage(
-  state: ExpectMatcherState,
+  state: ExpectMatcherStateInternal,
   matcherName: string,
-  expression: string,
   expected: Function,
   received: string | undefined,
   pass: boolean,
-  didTimeout: boolean,
+  timedOut: boolean,
   timeout: number,
 ): string {
-  const matcherOptions = {
-    isNot: state.isNot,
-    promise: state.promise,
-  };
   const receivedString = received || '';
-  const messagePrefix = matcherHint(state, undefined, matcherName, expression, undefined, matcherOptions, didTimeout ? timeout : undefined);
 
   let printedReceived: string | undefined;
   let printedExpected: string | undefined;
   let printedDiff: string | undefined;
   if (typeof expected === 'function') {
-    printedExpected = `Expected predicate to ${!state.isNot ? 'succeed' : 'fail'}`;
-    printedReceived = `Received string: ${printReceived(receivedString)}`;
+    printedExpected = `Expected: predicate to ${!state.isNot ? 'succeed' : 'fail'}`;
+    printedReceived = `Received: ${state.utils.printReceived(receivedString)}`;
   } else {
     if (pass) {
       printedExpected = `Expected pattern: not ${state.utils.printExpected(expected)}`;
-      const formattedReceived = printReceivedStringContainExpectedResult(receivedString, null);
+      const formattedReceived = printReceivedStringContainExpectedResult(state.utils, receivedString, null);
       printedReceived = `Received string: ${formattedReceived}`;
     } else {
       const labelExpected = `Expected ${typeof expected === 'string' ? 'string' : 'pattern'}`;
@@ -137,6 +123,15 @@ function toHaveURLMessage(
     }
   }
 
-  const resultDetails = printedDiff ? printedDiff : printedExpected + '\n' + printedReceived;
-  return messagePrefix + resultDetails;
+  return formatMatcherMessage(state.utils, {
+    isNot: state.isNot,
+    promise: state.promise,
+    matcherName,
+    expectation: 'expected',
+    timeout,
+    timedOut,
+    printedExpected,
+    printedReceived,
+    printedDiff,
+  });
 }

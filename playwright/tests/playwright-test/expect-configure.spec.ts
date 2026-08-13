@@ -48,7 +48,8 @@ test('should configure message', async ({ runInlineTest }) => {
   expect(result.exitCode).toBe(1);
   expect(result.passed).toBe(0);
   expect(result.output).toContain('Error: x-foo must be visible');
-  expect(result.output).toContain(`Timed out 1ms waiting for expect(locator).toBeVisible()`);
+  expect(result.output).toContain('expect(locator).toBeVisible() failed');
+  expect(result.output).toContain('Timeout: 1ms');
   expect(result.output).toContain('Call log:');
 });
 
@@ -66,7 +67,8 @@ test('should prefer local message', async ({ runInlineTest }) => {
   expect(result.passed).toBe(0);
 
   expect(result.output).toContain('Error: overridden');
-  expect(result.output).toContain(`Timed out 1ms waiting for expect(locator).toBeVisible()`);
+  expect(result.output).toContain(`expect(locator).toBeVisible() failed`);
+  expect(result.output).toContain('Timeout: 1ms');
   expect(result.output).toContain('Call log:');
 });
 
@@ -145,6 +147,37 @@ test('should configure soft after poll', async ({ runInlineTest }) => {
       test('should pass', async () => {
         await expect.poll(() => true).toBe(true);
         expect.soft(1).toBe(1);
+      });
+    `
+  });
+  expect(result.exitCode).toBe(0);
+});
+
+test('should support expect.soft.poll', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      test('should fail softly', async () => {
+        let probes = 0;
+        const startTime = Date.now();
+        await expect.soft.poll(() => ++probes, { timeout: 1000, intervals: [0, 10000] }).toBe(3);
+        expect(probes).toBe(2);
+        expect(Date.now() - startTime).toBeLessThan(5000);
+        console.log('%% reached-end');
+      });
+    `
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.outputLines).toEqual(['reached-end']);
+});
+
+test('should support expect.soft.poll in passing test', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      test('should pass', async () => {
+        let probes = 0;
+        await expect.soft.poll(() => ++probes).toBe(3);
       });
     `
   });

@@ -15,10 +15,20 @@
     "useUnknownInCatchVariables": false,
     "baseUrl": ".",
     "paths": {
-      "@isomorphic/*": ["../../playwright/packages/playwright-core/src/utils/isomorphic/*"],
+      // 1.60 moved isomorphic and utils out of playwright-core into top-level packages.
+      "@isomorphic/*": ["../../playwright/packages/isomorphic/*"],
+      "@utils/*": ["../../playwright/packages/utils/*"],
       "@protocol/*": ["../../playwright/packages/protocol/src/*"],
       "@web/*": ["../../playwright/packages/web/src/*"],
-      "@recorder/*": ["../../playwright/packages/recorder/src/*"]
+      "@recorder/*": ["../../playwright/packages/recorder/src/*"],
+      "react": ["../../node_modules/react"],
+      // The wildcard matters as much as the bare name: jsx: "react-jsx" imports
+      // react/jsx-runtime, which an exact "react" mapping does not match, so the
+      // JSX namespace kept coming from the other copy.
+      "react/*": ["../../node_modules/react/*"],
+      "react-dom": ["../../node_modules/react-dom"],
+      "react-dom/*": ["../../node_modules/react-dom/*"],
+      "@types/react": ["../../node_modules/@types/react"]
     }
   },
   "include": ["src"]

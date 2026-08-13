@@ -17,12 +17,10 @@
 import { EventEmitter } from 'events';
 import net from 'net';
 
-import { assert } from '../../utils/isomorphic/assert';
-import { createGuid } from '../utils/crypto';
-import { debug } from '../../utilsBundle';
-
+import debug from 'debug';
+import { assert } from '@isomorphic/assert';
 import type { Backend, DeviceBackend, SocketBackend } from './android';
-import type * as channels from '@protocol/channels';
+import type * as channels from '../channels';
 
 
 export class AdbBackend implements Backend {
@@ -117,7 +115,6 @@ function encodeMessage(message: string): Buffer {
 }
 
 class BufferedSocketWrapper extends EventEmitter implements SocketBackend {
-  readonly guid = createGuid();
   private _socket: net.Socket;
   private _buffer = Buffer.from([]);
   private _isSocket = false;

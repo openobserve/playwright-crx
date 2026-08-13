@@ -19,7 +19,7 @@ import type { ChildProcess } from 'child_process';
 import { execSync, spawn } from 'child_process';
 import net from 'net';
 import fs from 'fs';
-import { stripAnsi } from './utils';
+import { inheritAndCleanEnv, stripAnsi } from './utils';
 
 type TestChildParams = {
   command: string[],
@@ -75,7 +75,7 @@ function readAllProcessesMacOS(): { pid: number, ppid: number, pgrp: number }[] 
   return result;
 }
 
-function buildProcessTreePosix(pid: number): ProcessData {
+function buildProcessTreePosix(pid: number): ProcessData | undefined {
   // Certain Linux distributions might not have `ps` installed.
   const allProcesses = process.platform === 'darwin' ? readAllProcessesMacOS() : readAllProcessesLinux();
   const pidToProcess = new Map<number, ProcessData>();
@@ -89,7 +89,7 @@ function buildProcessTreePosix(pid: number): ProcessData {
     if (parent && child)
       parent.children.add(child);
   }
-  return pidToProcess.get(pid)!;
+  return pidToProcess.get(pid);
 }
 
 export class TestChildProcess {
@@ -107,11 +107,11 @@ export class TestChildProcess {
 
   constructor(params: TestChildParams) {
     this.params = params;
-    this.process = spawn(params.command[0], params.command.slice(1), {
-      env: {
-        ...process.env,
-        ...params.env,
-      },
+    // See https://nodejs.org/api/deprecations.html#DEP0190
+    const command = params.shell ? params.command.join(' ') : params.command[0];
+    const args = params.shell ? [] : params.command.slice(1);
+    this.process = spawn(command, args, {
+      env: inheritAndCleanEnv(params.env),
       cwd: params.cwd,
       shell: params.shell,
       // On non-windows platforms, `detached: true` makes child process a leader of a new
@@ -164,50 +164,15 @@ export class TestChildProcess {
   private _killProcessTree(signal: 'SIGINT' | 'SIGKILL') {
     if (!this.process.pid || !this.process.kill(0))
       return;
-
-    // On Windows, we always call `taskkill` no matter signal.
-    if (process.platform === 'win32') {
-      try {
-        execSync(`taskkill /pid ${this.process.pid} /T /F /FI "MEMUSAGE gt 0"`, { stdio: 'ignore' });
-      } catch (e) {
-        // the process might have already stopped
-      }
-      return;
-    }
-
-    // In case of POSIX and `SIGINT` signal, send it to the main process group only.
-    if (signal === 'SIGINT') {
-      try {
-        process.kill(-this.process.pid, 'SIGINT');
-      } catch (e) {
-        // the process might have already stopped
-      }
-      return;
-    }
-
-    // In case of POSIX and `SIGKILL` signal, we should send it to all descendant process groups.
-    const rootProcess = buildProcessTreePosix(this.process.pid);
-    const descendantProcessGroups = (function flatten(processData: ProcessData, result: Set<number> = new Set()) {
-      // Process can nullify its own process group with `setpgid`. Use its PID instead.
-      result.add(processData.pgrp || processData.pid);
-      processData.children.forEach(child => flatten(child, result));
-      return result;
-    })(rootProcess);
-    for (const pgrp of descendantProcessGroups) {
-      try {
-        process.kill(-pgrp, 'SIGKILL');
-      } catch (e) {
-        // the process might have already stopped
-      }
-    }
+    killProcessGroup(this.process.pid, signal);
   }
 
   async cleanExit() {
     const r = await this.exited;
     if (r.exitCode)
-      throw new Error(`Process failed with exit code ${r.exitCode}`);
+      throw new Error(`Process failed with exit code ${r.exitCode}. Output:\n${this.output}`);
     if (r.signal)
-      throw new Error(`Process received signal: ${r.signal}`);
+      throw new Error(`Process received signal: ${r.signal}. Output:\n${this.output}`);
   }
 
   async waitForOutput(substring: string, count = 1) {
@@ -224,9 +189,51 @@ export class TestChildProcess {
   }
 }
 
+export function killProcessGroup(pid: number, signal: 'SIGINT' | 'SIGKILL' = 'SIGKILL') {
+  // On Windows, we always call `taskkill` no matter signal.
+  if (process.platform === 'win32') {
+    try {
+      execSync(`taskkill /pid ${pid} /T /F /FI "MEMUSAGE gt 0"`, { stdio: 'ignore' });
+    } catch (e) {
+      // the process might have already stopped
+    }
+    return;
+  }
+
+  // In case of POSIX and `SIGINT` signal, send it to the main process group only.
+  if (signal === 'SIGINT') {
+    try {
+      process.kill(-pid, 'SIGINT');
+    } catch (e) {
+      // the process might have already stopped
+    }
+    return;
+  }
+
+  // In case of POSIX and `SIGKILL` signal, we should send it to all descendant process groups.
+  const rootProcess = buildProcessTreePosix(pid);
+  if (!rootProcess)
+    return;
+
+  const descendantProcessGroups = (function flatten(processData: ProcessData, result: Set<number> = new Set()) {
+    // Process can nullify its own process group with `setpgid`. Use its PID instead.
+    result.add(processData.pgrp || processData.pid);
+    processData.children.forEach(child => flatten(child, result));
+    return result;
+  })(rootProcess);
+  for (const pgrp of descendantProcessGroups) {
+    try {
+      process.kill(-pgrp, 'SIGKILL');
+    } catch (e) {
+      // the process might have already stopped
+    }
+  }
+}
+
 export type CommonFixtures = {
   childProcess: (params: TestChildParams) => TestChildProcess;
   waitForPort: (port: number) => Promise<void>;
+  findFreePort: () => Promise<number>;
 };
 
 export type CommonWorkerFixtures = {
@@ -279,6 +286,20 @@ export const commonFixtures: Fixtures<CommonFixtures, CommonWorkerFixtures> = {
       }
     });
     token.canceled = true;
+  },
+
+  findFreePort: async ({}, use) => {
+    await use(async () => {
+      return new Promise((resolve, reject) => {
+        const server = net.createServer();
+        server.listen(0, '127.0.0.1', () => {
+          const { port } = server.address() as net.AddressInfo;
+          server.close(() => resolve(port));
+        });
+        server.on('error', reject);
+
+      });
+    });
   },
 };
 

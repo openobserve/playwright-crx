@@ -37,6 +37,7 @@ test('should have correct tags', async ({ runInlineTest }) => {
     'playwright.config.ts': `
       module.exports = {
         reporter: './reporter',
+        tag: '@global',
       };
     `,
     'stdio.spec.js': `
@@ -46,6 +47,8 @@ test('should have correct tags', async ({ runInlineTest }) => {
       test('foo-tag @inline', { tag: '@foo' }, () => {
       });
       test('foo-bar-tags', { tag: ['@foo', '@bar'] }, () => {
+      });
+      test('foo-bar-tags with @inline', { tag: ['@foo', '@bar', '@this is a long tag', '@another', '@long one    again'] }, () => {
       });
       test.skip('skip-foo-tag', { tag: '@foo' }, () => {
       });
@@ -74,18 +77,20 @@ test('should have correct tags', async ({ runInlineTest }) => {
   });
   expect(result.exitCode).toBe(0);
   expect(result.outputLines).toEqual([
-    `title=no-tags, tags=`,
-    `title=foo-tag @inline, tags=@inline,@foo`,
-    `title=foo-bar-tags, tags=@foo,@bar`,
-    `title=skip-foo-tag, tags=@foo`,
-    `title=fixme-bar-tag, tags=@bar`,
-    `title=fail-foo-bar-tags, tags=@foo,@bar`,
-    `title=foo-suite, tags=@inline,@foo`,
-    `title=foo-bar-suite, tags=@inline,@foo,@bar`,
-    `title=skip-foo-suite, tags=@foo`,
-    `title=fixme-bar-suite, tags=@bar`,
+    `title=no-tags, tags=@global`,
+    `title=foo-tag @inline, tags=@global,@inline,@foo`,
+    `title=foo-bar-tags, tags=@global,@foo,@bar`,
+    `title=foo-bar-tags with @inline, tags=@global,@inline,@foo,@bar,@this is a long tag,@another,@long one    again`,
+    `title=skip-foo-tag, tags=@global,@foo`,
+    `title=fixme-bar-tag, tags=@global,@bar`,
+    `title=fail-foo-bar-tags, tags=@global,@foo,@bar`,
+    `title=foo-suite, tags=@global,@inline,@foo`,
+    `title=foo-bar-suite, tags=@global,@inline,@foo,@bar`,
+    `title=skip-foo-suite, tags=@global,@foo`,
+    `title=fixme-bar-suite, tags=@global,@bar`,
   ]);
 });
+
 
 test('config.grep should work', async ({ runInlineTest }) => {
   const result = await runInlineTest({
@@ -144,7 +149,7 @@ test('should enforce @ symbol', async ({ runInlineTest }) => {
     `
   });
   expect(result.exitCode).toBe(1);
-  expect(result.output).toContain(`Error: Tag must start with "@" symbol, got "foo" instead.`);
+  expect(result.output).toContain(`Error: Tag must start with '@'`);
 });
 
 test('should be included in testInfo', async ({ runInlineTest }, testInfo) => {
@@ -162,16 +167,64 @@ test('should be included in testInfo', async ({ runInlineTest }, testInfo) => {
   expect(result.exitCode).toBe(0);
 });
 
-test('should be included in testInfo if coming from describe', async ({ runInlineTest }, testInfo) => {
+test('should be included in testInfo if coming from describe or global tag', async ({ runInlineTest }, testInfo) => {
   const result = await runInlineTest({
+    'playwright.config.ts': `
+      module.exports = { tag: ['@global1', '@global2'] };
+    `,
     'a.test.ts': `
     import { test, expect } from '@playwright/test';
     test.describe('describe with tag', { tag: '@tag2' }, async ()=>{
       test('test with tag', async ({}, testInfo) => {
-        expect(testInfo.tags).toStrictEqual(["@tag2"]);
+        expect(testInfo.tags).toStrictEqual(["@global1", "@global2", "@tag2"]);
       });
     });
     `,
   });
   expect(result.exitCode).toBe(0);
+});
+
+test('should not parse file names as tags', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'reporter.ts': `
+      export default class Reporter {
+        onBegin(config, suite) {
+          const visit = suite => {
+            for (const test of suite.tests || [])
+              console.log('\\n%%title=' + test.title + ', tags=' + test.tags.join(','));
+            for (const child of suite.suites || [])
+              visit(child);
+          };
+          visit(suite);
+        }
+        onError(error) {
+          console.log(error);
+        }
+      }
+    `,
+    'playwright.config.ts': `
+      module.exports = {
+        reporter: './reporter',
+      };
+    `,
+    '@sample.test.ts': `
+      import { test, expect } from '@playwright/test';
+      test('test in file', () => {
+      });
+      test('test with tag @inline', { tag: '@foo' }, () => {
+      });
+    `,
+    'dir/@nested/regular.test.ts': `
+      import { test, expect } from '@playwright/test';
+      test('test in nested dir', () => {
+      });
+    `,
+  });
+  expect(result.exitCode).toBe(0);
+  // File names should NOT be parsed as tags, only inline tags in describe/test titles
+  expect(result.outputLines).toEqual([
+    `title=test in file, tags=`,
+    `title=test with tag @inline, tags=@inline,@foo`,
+    `title=test in nested dir, tags=`,
+  ]);
 });

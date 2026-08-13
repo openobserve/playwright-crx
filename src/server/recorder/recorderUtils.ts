@@ -14,12 +14,35 @@
  * limitations under the License.
  */
 
-import type * as recorderActions from '@recorder/actions';
-import type * as channels from '@protocol/channels';
-import { toKeyboardModifiers } from 'playwright-core/lib/server/codegen/language';
-import { buildFullSelector } from 'playwright-core/lib/server/recorder/recorderUtils';
+import type * as recorderActions from '@isomorphic/codegen/actions';
+import type * as channels from 'playwright-core/lib/server/channels';
+import { toKeyboardModifiers } from '@isomorphic/codegen/language';
+import type { Language } from '@isomorphic/codegen/types';
 
-const kDefaultTimeout = 5_000;
+// 1.62's per-side channels dropped `timeout` from the server param shapes — it travels
+// on the Progress now — so these call-log params no longer carry one.
+
+// Playwright 1.54 replaced `Recorder.setOutput(codegenId, file)` with
+// `Recorder.setLanguage(language)`, which takes the *highlighter* language rather
+// than a codegen id. The recorder uses it to render locators (`asLocator`), so a
+// wrong value silently produces locators in the wrong dialect.
+const kLanguageByCodegenId: Record<string, Language> = {
+  'playwright-test': 'javascript',
+  'javascript': 'javascript',
+  'python': 'python',
+  'python-async': 'python',
+  'python-pytest': 'python',
+  'java': 'java',
+  'java-junit': 'java',
+  'csharp': 'csharp',
+  'csharp-mstest': 'csharp',
+  'csharp-nunit': 'csharp',
+  'jsonl': 'jsonl',
+};
+
+export function toLanguage(codegenId: string | undefined): Language {
+  return (codegenId && kLanguageByCodegenId[codegenId]) || 'javascript';
+}
 
 export function traceParamsForAction(actionInContext: recorderActions.ActionInContext): { method: string, apiName: string, params: any } {
   const { action } = actionInContext;
@@ -37,7 +60,8 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
       return { method: 'close', params: {}, apiName: 'page.close' };
     }
   }
-  const selector = buildFullSelector(actionInContext.frame.framePath, action.selector);
+  // 1.62: action.selector already carries the frame path.
+  const selector = action.selector;
   switch (action.name) {
 
     case 'click': {
@@ -50,6 +74,19 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
         position: action.position,
       };
       return { method: 'click', apiName: 'locator.click', params };
+    }
+    // 1.56 added `hover` to the recorder's action model (reachable from the new
+    // right-click action picker). The player still declines to replay it — see
+    // UNSUPPORTED_REPLAY_ACTIONS — but this function must still describe it: it feeds the
+    // call log for every action in a journey, and a missing case returned undefined,
+    // which the caller spreads.
+    case 'hover': {
+      const params: channels.FrameHoverParams = {
+        selector,
+        strict: true,
+        position: action.position,
+      };
+      return { method: 'hover', apiName: 'locator.hover', params };
     }
     case 'press': {
       const params: channels.FramePressParams = {
@@ -102,7 +139,6 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
         selector: action.selector,
         expression: 'to.be.checked',
         isNot: !action.checked,
-        timeout: kDefaultTimeout,
       };
       return { method: 'expect', apiName: 'expect.toBeChecked', params };
     }
@@ -112,7 +148,6 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
         expression: 'to.have.text',
         expectedText: [],
         isNot: false,
-        timeout: kDefaultTimeout,
       };
       return { method: 'expect', apiName: 'expect.toContainText', params };
     }
@@ -122,7 +157,6 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
         expression: 'to.have.value',
         expectedValue: undefined,
         isNot: false,
-        timeout: kDefaultTimeout,
       };
       return { method: 'expect', apiName: 'expect.toHaveValue', params };
     }
@@ -131,7 +165,6 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
         selector,
         expression: 'to.be.visible',
         isNot: false,
-        timeout: kDefaultTimeout,
       };
       return { method: 'expect', apiName: 'expect.toBeVisible', params };
     }
@@ -140,7 +173,6 @@ export function traceParamsForAction(actionInContext: recorderActions.ActionInCo
         selector,
         expression: 'to.match.aria',
         isNot: false,
-        timeout: kDefaultTimeout,
       };
       return { method: 'expect', apiName: 'expect.toMatchAriaSnapshot', params };
     }

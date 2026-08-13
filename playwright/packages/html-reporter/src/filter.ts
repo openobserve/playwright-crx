@@ -29,7 +29,10 @@ export class Filter {
   annotations: FilterToken[] = [];
 
   empty(): boolean {
-    return this.project.length + this.status.length + this.text.length === 0;
+    return (
+      this.project.length + this.status.length + this.text.length +
+      this.labels.length + this.annotations.length
+    ) === 0;
   }
 
   static parse(expression: string): Filter {
@@ -201,17 +204,25 @@ function cacheSearchValues(test: TestCaseSummary & { [searchValuesSymbol]?: Sear
     line: String(test.location.line),
     column: String(test.location.column),
     labels: test.tags.map(tag => tag.toLowerCase()),
-    annotations: test.annotations.map(a => a.type.toLowerCase() + '=' + a.description?.toLocaleLowerCase())
+    annotations: test.annotations.map(a => a.type.toLowerCase() + '=' + (a.description ?? '').toLowerCase())
   };
   test[searchValuesSymbol] = searchValues;
   return searchValues;
 }
 
-export function filterWithToken(tokens: string[], token: string, append: boolean): string {
+// Extract quoted groups of search params, or tokens separated by whitespace
+const SEARCH_PARAM_GROUP_REGEX = /("[^"]*"|"[^"]*$|\S+)/g;
+
+export function filterWithQuery(searchParams: URLSearchParams, token: string, append: boolean): string {
+  const result = new URLSearchParams(searchParams);
+  const existingQuery = searchParams.get('q') ?? '';
+  const tokens = [...existingQuery.matchAll(SEARCH_PARAM_GROUP_REGEX)].map(m => {
+    const rawValue = m[0];
+    return rawValue.startsWith('"') && rawValue.endsWith('"') && rawValue.length > 1 ? rawValue.slice(1, rawValue.length - 1) : rawValue;
+  });
   if (append) {
-    if (!tokens.includes(token))
-      return '#?q=' + [...tokens, token].join(' ').trim();
-    return '#?q=' + tokens.filter(t => t !== token).join(' ').trim();
+    result.set('q', joinTokens(!tokens.includes(token) ? [...tokens, token] : tokens.filter(t => t !== token)));
+    return '#?' + result;
   }
 
   // if metaKey or ctrlKey is not pressed, replace existing token with new token
@@ -225,5 +236,11 @@ export function filterWithToken(tokens: string[], token: string, append: boolean
 
   const newTokens = tokens.filter(t => !t.startsWith(prefix));
   newTokens.push(token);
-  return '#?q=' + newTokens.join(' ').trim();
+
+  result.set('q', joinTokens(newTokens));
+  return '#?' + result;
+}
+
+function joinTokens(tokens: string[]): string {
+  return tokens.map(token => /\s/.test(token) ? `"${token}"` : token).join(' ').trim();
 }

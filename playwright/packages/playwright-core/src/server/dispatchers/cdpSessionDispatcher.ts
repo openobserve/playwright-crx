@@ -1,7 +1,7 @@
 /**
  * Copyright (c) Microsoft Corporation.
  *
- * Licensed under the Apache License, Version 2.0 (the 'License");
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -19,8 +19,8 @@ import { CDPSession } from '../chromium/crConnection';
 
 import type { BrowserContextDispatcher } from './browserContextDispatcher';
 import type { BrowserDispatcher } from './browserDispatcher';
-import type { CallMetadata } from '../instrumentation';
-import type * as channels from '@protocol/channels';
+import type * as channels from '../channels';
+import type { Progress } from '../progress';
 
 export class CDPSessionDispatcher extends Dispatcher<CDPSession, channels.CDPSessionChannel, BrowserDispatcher | BrowserContextDispatcher> implements channels.CDPSessionChannel {
   _type_CDPSession = true;
@@ -28,15 +28,17 @@ export class CDPSessionDispatcher extends Dispatcher<CDPSession, channels.CDPSes
   constructor(scope: BrowserDispatcher | BrowserContextDispatcher, cdpSession: CDPSession) {
     super(scope, cdpSession, 'CDPSession', {});
     this.addObjectListener(CDPSession.Events.Event, ({ method, params }) => this._dispatchEvent('event', { method, params }));
-    this.addObjectListener(CDPSession.Events.Closed, () => this._dispose());
+    this.addObjectListener(CDPSession.Events.Closed, () => {
+      this._dispatchEvent('close');
+      this._dispose();
+    });
   }
 
-  async send(params: channels.CDPSessionSendParams): Promise<channels.CDPSessionSendResult> {
-    return { result: await this._object.send(params.method as any, params.params) };
+  async send(params: channels.CDPSessionSendParams, progress: Progress): Promise<channels.CDPSessionSendResult> {
+    return { result: await this._object.send(progress, params.method as any, params.params) };
   }
 
-  async detach(_: any, metadata: CallMetadata): Promise<void> {
-    metadata.potentiallyClosesScope = true;
-    await this._object.detach();
+  async detach(_: any, progress: Progress): Promise<void> {
+    await this._object.detach(progress);
   }
 }

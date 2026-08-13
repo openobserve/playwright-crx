@@ -14,54 +14,42 @@
  * limitations under the License.
  */
 
-// some types are commented out because they are not used in the extension
-import {
-  Accessibility,
-  Browser,
-  BrowserContext,
-  BrowserType,
-  Clock,
-  ConsoleMessage,
-  Coverage,
-  Dialog,
-  Download,
-  // Electron,
-  // ElectronApplication,
-  Locator,
-  FrameLocator,
-  ElementHandle,
-  FileChooser,
-  TimeoutError,
-  Frame,
-  Keyboard,
-  Mouse,
-  Touchscreen,
-  JSHandle,
-  Route,
-  WebSocket,
-  WebSocketRoute,
-  // APIRequest,
-  // APIRequestContext,
-  // APIResponse,
-  Page,
-  Selectors,
-  Tracing,
-  Video,
-  Worker,
-  CDPSession,
-  Playwright,
-  WebError,
-} from 'playwright-core/lib/client/api';
+// 1.61 deleted client/api.ts — it was a barrel that existed only for doc tooling
+// (playwright#40777), so these now come from the modules that define them.
+import { Browser } from 'playwright-core/lib/client/browser';
+import { BrowserContext } from 'playwright-core/lib/client/browserContext';
+import { BrowserType } from 'playwright-core/lib/client/browserType';
+import { Clock } from 'playwright-core/lib/client/clock';
+import { ConsoleMessage } from 'playwright-core/lib/client/consoleMessage';
+import { Coverage } from 'playwright-core/lib/client/coverage';
+import { Dialog } from 'playwright-core/lib/client/dialog';
+import { Download } from 'playwright-core/lib/client/download';
+import { FrameLocator, Locator } from 'playwright-core/lib/client/locator';
+import { ElementHandle } from 'playwright-core/lib/client/elementHandle';
+import { FileChooser } from 'playwright-core/lib/client/fileChooser';
+import { TimeoutError } from 'playwright-core/lib/client/errors';
+import { Frame } from 'playwright-core/lib/client/frame';
+import { Keyboard, Mouse, Touchscreen } from 'playwright-core/lib/client/input';
+import { JSHandle } from 'playwright-core/lib/client/jsHandle';
+import { Route, WebSocket, WebSocketRoute } from 'playwright-core/lib/client/network';
+import { Page } from 'playwright-core/lib/client/page';
+import { Selectors } from 'playwright-core/lib/client/selectors';
+import { Tracing } from 'playwright-core/lib/client/tracing';
+import { Video } from 'playwright-core/lib/client/video';
+import { Worker } from 'playwright-core/lib/client/worker';
+import { CDPSession } from 'playwright-core/lib/client/cdpSession';
+import { Playwright } from 'playwright-core/lib/client/playwright';
+import { WebError } from 'playwright-core/lib/client/webError';
 
 import {
   Crx,
   CrxApplication,
   CrxRecorder,
 } from './crx';
-import { currentZone } from 'playwright-core/lib/utils';
+import { currentZone } from '@utils/zones';
 
 type ApiTypeMap = {
-  'accessibility': Accessibility,
+  // 'accessibility' left with page.accessibility, removed upstream in 1.57.
   // 'android': Android,
   // 'androidDevice': AndroidDevice,
   // 'androidWebView': AndroidWebView,
@@ -113,13 +101,12 @@ type KeysOfAsyncMethods<T> = {
 }[Extract<keyof T, string>];
 
 const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsyncMethods<ApiTypeMap[ApiK]>]: boolean }] } = {
-  accessibility: [Accessibility.prototype, { snapshot: true }],
   // android: [Android.prototype],
   // androidDevice: [AndroidDevice.prototype],
   // androidWebView: [AndroidWebView.prototype],
   // androidInput: [AndroidInput.prototype],
   // androidSocket: [AndroidSocket.prototype],
-  browser: [Browser.prototype, { newContext: true, newPage: true, newBrowserCDPSession: true, startTracing: true, stopTracing: true, close: true }],
+  browser: [Browser.prototype, { newContext: true, newPage: true, newBrowserCDPSession: true, startTracing: true, stopTracing: true, close: true, bind: true, unbind: true }],
   browserContext: [BrowserContext.prototype, {
     newPage: true,
     cookies: true,
@@ -142,6 +129,7 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
     waitForEvent: true,
     storageState: true,
     newCDPSession: true,
+    setStorageState: true,
     close: true
   }],
   browserType: [BrowserType.prototype, { launch: true, launchServer: true, launchPersistentContext: true, connect: true, connectOverCDP: true }],
@@ -198,6 +186,12 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
     allInnerTexts: true,
     allTextContents: true,
     waitFor: true,
+    normalize: true,
+    // added to Locator in 1.60
+    drop: true,
+    hideHighlight: true,
+    // added to Locator in 1.62
+    waitForFunction: true,
   }],
   frameLocator: [FrameLocator.prototype, {}],
   elementHandle: [ElementHandle.prototype, {
@@ -248,7 +242,10 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
     waitForSelector: true,
   }],
   fileChooser: [FileChooser.prototype, { setFiles: true }],
-  timeoutError: [TimeoutError.prototype, {}],
+  // 1.61 gave PlaywrightError a `details?: any` field. KeysOfAsyncMethods sweeps any
+  // `any`-typed key in, since `any` is assignable to a promise-returning function —
+  // so it has to be listed, but as data it must not be wrapped. `false` says both.
+  timeoutError: [TimeoutError.prototype, { details: false }],
   frame: [Frame.prototype, {
     goto: true,
     waitForNavigation: true,
@@ -377,11 +374,30 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
     waitForFunction: true,
     pause: true,
     pdf: true,
+    // Added to Page in 1.56. Wrapped like every other async Page API so their api-name
+    // attribution stays inside the crx zone; the type here is exhaustive, so a new method
+    // that is not listed fails the build rather than silently escaping it. (1.58's
+    // page.agent() was gone again by 1.59 — the same exhaustiveness caught its removal.)
+    requests: true,
+    consoleMessages: true,
+    pageErrors: true,
+    // 1.59: aria snapshotting on the page, the pick-locator pair the recorder now
+    // drives through the client API, and the console/error clears that go with
+    // consoleMessages/pageErrors above.
+    ariaSnapshot: true,
+    pickLocator: true,
+    cancelPickLocator: true,
+    clearConsoleMessages: true,
+    clearPageErrors: true,
+    // added to Page in 1.60
+    hideHighlight: true,
   }],
   selectors: [Selectors.prototype, { register: true }],
-  tracing: [Tracing.prototype, { group: true, groupEnd: true, start: true, startChunk: true, stop: true, stopChunk: true }],
+  // startHar/stopHar added to Tracing in 1.60
+  tracing: [Tracing.prototype, { group: true, groupEnd: true, start: true, startChunk: true, stop: true, stopChunk: true, startHar: true, stopHar: true }],
   video: [Video.prototype, { delete: true, path: true, saveAs: true }],
-  worker: [Worker.prototype, { evaluate: true, evaluateHandle: true }],
+  // waitForEvent added to Worker in 1.57.
+  worker: [Worker.prototype, { evaluate: true, evaluateHandle: true, waitForEvent: true }],
   session: [CDPSession.prototype, { send: true, detach: true }],
   playwright: [Playwright.prototype, { devices: false }],
   webError: [WebError.prototype, {}],
@@ -389,7 +405,13 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
   // from crx
   crx: [Crx.prototype, { start: true, get: true }],
   crxApplication: [CrxApplication.prototype, { attach: true, attachAll: true, close: true, detach: true, detachAll: true, newPage: true }],
-  crxRecorder: [CrxRecorder.prototype, { hide: true, list: true, load: true, run: true, setMode: true, show: true }],
+  // `stop` and `runActions` are crx's own additions for the synthetics host, and were
+  // never added here — the exhaustiveness check that would have said so only ever ran by
+  // hand, so nothing reported it. Wrapped like `run`, which is the same kind of call: the
+  // zone is what makes one host request a single API call rather than a loose series of
+  // nested ones. `runActions` is O2's replay entry point, so it is the last one that
+  // should have been left out.
+  crxRecorder: [CrxRecorder.prototype, { hide: true, list: true, load: true, run: true, runActions: true, setMode: true, show: true, stop: true }],
 };
 
 const kCrxZoneWrapped = Symbol('crxZone');

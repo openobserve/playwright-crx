@@ -14,14 +14,12 @@
  * limitations under the License.
  */
 
-import type { TestServer } from 'tests/config/testserver';
+import type { TestServer } from '../../config/testserver';
 import type { Recorder } from './inspectorTest';
 import { test, expect } from './inspectorTest';
 import type { Page } from '@playwright/test';
 
 test.describe('cli codegen', () => {
-  test.skip(({ mode }) => mode !== 'default');
-
   test('should click locator.first', async ({ openRecorder }) => {
     const { page, recorder } = await openRecorder();
 
@@ -63,8 +61,7 @@ await page.GetByRole(AriaRole.Button, new() { Name = "Submit" }).First.ClickAsyn
       locator: { body: 'button', kind: 'role', options: { exact: false, attrs: [], name: 'Submit' }, next: { body: '', kind: 'first', options: {} } },
       modifiers: 0,
       signals: [],
-      framePath: [],
-      pageAlias: 'page',
+      pageGuid: expect.any(String),
     });
 
     expect(message.text()).toBe('click1');
@@ -132,14 +129,19 @@ await page.Locator("#frame1").ContentFrame.GetByText("Hello1").ClickAsync();`);
     const clickAction = sources.get('JSON')!.actions.map(l => JSON.parse(l)).find(a => a.name === 'click');
     expect.soft(clickAction).toEqual({
       name: 'click',
-      selector: 'internal:text="Hello1"i',
+      selector: '#frame1 >> internal:control=enter-frame >> internal:text="Hello1"i',
       button: 'left',
       clickCount: 1,
-      locator: { body: 'Hello1', kind: 'text', options: { exact: false } },
+      locator: {
+        body: '#frame1', kind: 'default', options: {},
+        next: {
+          body: '', kind: 'frame', options: {},
+          next: { body: 'Hello1', kind: 'text', options: { exact: false } },
+        },
+      },
       modifiers: 0,
       signals: [],
-      framePath: ['#frame1'],
-      pageAlias: 'page',
+      pageGuid: expect.any(String),
     });
   });
 
@@ -170,14 +172,25 @@ await page.Locator("#frame1").ContentFrame.Locator("iframe").ContentFrame.GetByT
     const clickAction = sources.get('JSON')!.actions.map(l => JSON.parse(l)).find(a => a.name === 'click');
     expect.soft(clickAction).toEqual({
       name: 'click',
-      selector: 'internal:text="Hello2"i',
+      selector: '#frame1 >> internal:control=enter-frame >> iframe >> internal:control=enter-frame >> internal:text="Hello2"i',
       button: 'left',
       clickCount: 1,
-      locator: { body: 'Hello2', kind: 'text', options: { exact: false } },
+      locator: {
+        body: '#frame1', kind: 'default', options: {},
+        next: {
+          body: '', kind: 'frame', options: {},
+          next: {
+            body: 'iframe', kind: 'default', options: {},
+            next: {
+              body: '', kind: 'frame', options: {},
+              next: { body: 'Hello2', kind: 'text', options: { exact: false } },
+            },
+          },
+        },
+      },
       modifiers: 0,
       signals: [],
-      framePath: ['#frame1', 'iframe'],
-      pageAlias: 'page',
+      pageGuid: expect.any(String),
     });
   });
 
@@ -208,14 +221,34 @@ await page.Locator("#frame1").ContentFrame.Locator("iframe").ContentFrame.Locato
     const clickAction = sources.get('JSON')!.actions.map(l => JSON.parse(l)).find(a => a.name === 'click');
     expect.soft(clickAction).toEqual({
       name: 'click',
-      selector: 'internal:text="HelloNameAnonymous"i',
+      selector: '#frame1 >> internal:control=enter-frame >> iframe >> internal:control=enter-frame >> iframe >> nth=2 >> internal:control=enter-frame >> internal:text="HelloNameAnonymous"i',
       button: 'left',
       clickCount: 1,
-      locator: { body: 'HelloNameAnonymous', kind: 'text', options: { exact: false } },
+      locator: {
+        body: '#frame1', kind: 'default', options: {},
+        next: {
+          body: '', kind: 'frame', options: {},
+          next: {
+            body: 'iframe', kind: 'default', options: {},
+            next: {
+              body: '', kind: 'frame', options: {},
+              next: {
+                body: 'iframe', kind: 'default', options: {},
+                next: {
+                  body: '2', kind: 'nth', options: {},
+                  next: {
+                    body: '', kind: 'frame', options: {},
+                    next: { body: 'HelloNameAnonymous', kind: 'text', options: { exact: false } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
       modifiers: 0,
       signals: [],
-      framePath: ['#frame1', 'iframe', 'iframe >> nth=2'],
-      pageAlias: 'page',
+      pageGuid: expect.any(String),
     });
   });
 
@@ -657,14 +690,15 @@ await page.GetByRole(AriaRole.Textbox, new() { Name = \"Coun\\\"try\" }).ClickAs
     expect(message.text()).toBe('clicked');
     expect(await page.evaluate('log')).toEqual([
       'pointermove', 'mousemove',
-      'pointermove', 'mousemove',
+      'pointermove',
+      'mousemove',
       'pointerdown', 'mousedown',
       'pointerup', 'mouseup',
       'click',
     ]);
   });
 
-  test('should consume contextmenu events, despite a custom context menu', async ({ openRecorder, browserName, platform }) => {
+  test('should consume contextmenu events, despite a custom context menu', async ({ openRecorder, browserName, isWindows }) => {
     const { page, recorder } = await openRecorder();
 
     await recorder.setContentAndWait(`
@@ -682,11 +716,11 @@ await page.GetByRole(AriaRole.Textbox, new() { Name = \"Coun\\\"try\" }).ClickAs
           // show custom context menu
           const menu = document.getElementById("menu");
           menu.style.display = "block";
-          menu.style.left = \`\${e.pageX}px\`;
-          menu.style.top = \`\${e.pageY}px\`;
+          menu.style.left = e.pageX + "px";
+          menu.style.top = e.pageY + "px";
         });
         const log = [];
-        for (const eventName of ['mousedown', 'mousemove', 'mouseup', 'pointerdown', 'pointermove', 'pointerup', 'click', 'contextmenu']) {
+        for (const eventName of ['auxclick', 'click', 'contextmenu']) {
           button.addEventListener(eventName, e => log.push('button: ' + e.type));
           menu.addEventListener(eventName, e => log.push('menu: ' + e.type));
         }
@@ -694,44 +728,60 @@ await page.GetByRole(AriaRole.Textbox, new() { Name = \"Coun\\\"try\" }).ClickAs
     `);
 
     await recorder.hoverOverElement('button');
-    expect(await page.evaluate('log')).toEqual(['button: pointermove', 'button: mousemove']);
+    expect(await page.evaluate('log')).toEqual([]);
+
+    const action = async () => {
+      await recorder.trustedClick({ button: 'right' });
+      await recorder.page.getByRole('listitem', { name: 'Right click' }).click();
+    };
 
     const [message] = await Promise.all([
       page.waitForEvent('console', msg => msg.type() !== 'error'),
       recorder.waitForOutput('JavaScript', `button: 'right'`),
-      recorder.trustedClick({ button: 'right' }),
+      action(),
     ]);
     expect(message.text()).toBe('right-clicked');
-    if (browserName === 'chromium' && platform === 'win32') {
-      expect(await page.evaluate('log')).toEqual([
-        // hover
-        'button: pointermove',
-        'button: mousemove',
-        // trusted right click
-        'button: pointermove',
-        'button: mousemove',
-        'button: pointerdown',
-        'button: mousedown',
-        'button: pointerup',
-        'button: mouseup',
-        'button: contextmenu',
-      ]);
-    } else {
-      expect(await page.evaluate('log')).toEqual([
-        // hover
-        'button: pointermove',
-        'button: mousemove',
-        // trusted right click
-        'button: pointerup',
-        'button: pointermove',
-        'button: mousemove',
-        'button: pointerdown',
-        'button: mousedown',
-        'button: contextmenu',
-        'menu: pointerup',
-        'menu: mouseup',
-      ]);
-    }
+    expect(await page.evaluate('log')).toEqual((isWindows && browserName === 'chromium') ? ['button: auxclick', 'button: contextmenu'] : ['button: contextmenu']);
+  });
+
+  test('should generate hover action', async ({ openRecorder }) => {
+    const { recorder } = await openRecorder();
+
+    await recorder.setContentAndWait(`<div data-testid=testid>Hover me</div>`);
+    await recorder.hoverOverElement('div');
+
+    const action = async () => {
+      await recorder.trustedClick({ button: 'right' });
+      await expect(recorder.page.getByRole('list', { name: 'Choose action' })).toMatchAriaSnapshot(`
+        - list "Choose action":
+          - listitem "Click"
+          - listitem "Right click"
+          - listitem "Double click"
+          - listitem "Hover"
+          - listitem "Pick locator"
+      `);
+      await recorder.page.getByRole('listitem', { name: 'Hover' }).click();
+    };
+
+    const [sources] = await Promise.all([
+      recorder.waitForOutput('JavaScript', `hover`),
+      action(),
+    ]);
+
+    expect.soft(sources.get('JavaScript')!.text).toContain(`
+  await page.getByTestId('testid').hover();`);
+
+    expect.soft(sources.get('Python')!.text).toContain(`
+    page.get_by_test_id("testid").hover()`);
+
+    expect.soft(sources.get('Python Async')!.text).toContain(`
+    await page.get_by_test_id("testid").hover()`);
+
+    expect.soft(sources.get('Java')!.text).toContain(`
+      page.getByTestId("testid").hover()`);
+
+    expect.soft(sources.get('C#')!.text).toContain(`
+await page.GetByTestId("testid").HoverAsync();`);
   });
 
   test('should assert value', async ({ openRecorder }) => {
@@ -782,7 +832,7 @@ await page.GetByRole(AriaRole.Textbox, new() { Name = \"Coun\\\"try\" }).ClickAs
   });
 
   test('should assert value on disabled input', async ({ openRecorder, browserName }) => {
-    test.fixme(browserName === 'firefox', 'pointerup event is not dispatched on a disabled input');
+    test.skip(browserName === 'firefox', 'pointerup event is not dispatched on a disabled input');
 
     const { recorder } = await openRecorder();
 
@@ -873,6 +923,169 @@ await page.GetByRole(AriaRole.Textbox, new() { Name = \"Coun\\\"try\" }).ClickAs
     const glassPane = frameHello1.locator('x-pw-glass');
     await expect(glassPane.locator('> x-pw-dialog .accept > x-div').evaluate(elem => getComputedStyle(elem).clipPath)).resolves.toBe('url("#icon-check")');
     await expect(glassPane.locator('> svg > defs > clipPath#icon-check')).toBeAttached();
+  });
+
+  test('should keep dialog open when clicking inside', async ({ openRecorder }) => {
+    const { page } = await openRecorder();
+    await page.setContent('<div>hello</div>');
+
+    const assertTextButton = page.getByTitle('Assert text');
+    const helloContent = page.getByText('hello');
+
+    await assertTextButton.click();
+    await helloContent.click();
+
+    const dialog = page.locator('x-pw-dialog');
+    await expect(dialog).toBeVisible();
+
+    await page.locator('x-pw-dialog x-pw-tools-list').click();
+    await expect(dialog).toBeVisible();
+
+    await page.locator('x-pw-dialog textarea').click();
+    await expect(dialog).toBeVisible();
+
+    await page.locator('x-pw-dialog .accept').click();
+    await expect(dialog).toBeHidden();
+
+    await assertTextButton.click();
+    await helloContent.click();
+    await expect(dialog).toBeVisible();
+    // Like the user clicking outside the dialog
+    await page.locator('x-pw-glass').click();
+    await expect(dialog).toBeHidden();
+  });
+
+  test('should record when top layer popover is open', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/39095' } }, async ({ openRecorder }) => {
+    const { page, recorder } = await openRecorder();
+
+    await recorder.setContentAndWait(`
+      <div
+        popover="manual"
+        id="mypopover"
+        style="inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 20px;"
+      >
+        <button>Close</button>
+      </div>
+      <button popovertarget="mypopover">Show Popover</button>
+    `);
+
+    await page.getByRole('button', { name: 'Show Popover' }).click();
+    await expect(page.getByRole('button', { name: 'Close' })).toBeVisible();
+
+    await page.getByTitle('Assert text').click();
+  });
+
+  test('should record when top layer popover inside shadow DOM is open', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/39095' } }, async ({ openRecorder }) => {
+    const { page, recorder } = await openRecorder();
+
+    await recorder.setContentAndWait(`
+      <my-component></my-component>
+      <script>
+        class MyComponent extends HTMLElement {
+          constructor() {
+            super();
+            const shadow = this.attachShadow({ mode: 'open' });
+            shadow.innerHTML = \`
+              <div
+                popover="manual"
+                id="mypopover"
+                style="inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 20px;"
+              >
+                <button>Close</button>
+              </div>
+              <button popovertarget="mypopover">Show Popover</button>
+            \`;
+          }
+        }
+        customElements.define('my-component', MyComponent);
+      </script>
+    `);
+
+    await page.getByRole('button', { name: 'Show Popover' }).click();
+    await expect(page.getByRole('button', { name: 'Close' })).toBeVisible();
+
+    await page.getByTitle('Assert text').click();
+  });
+
+  test('should record when manual popover with fullscreen backdrop is open', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/39095' } }, async ({ openRecorder }) => {
+    const { page, recorder } = await openRecorder();
+
+    // Mirrors the dialog pattern from Angular Material: https://material.angular.dev/components/dialog/examples
+    // A manual popover with a fullscreen backdrop and a dialog content area.
+    // Difference: the dialog is not centered, because Playwright recorder has trouble clicking on backdrops with centered occlusion.
+    await recorder.setContentAndWait(`
+      <style>
+        .cdk-overlay-backdrop {
+          position: fixed;
+          top: 0;
+          bottom: 0;
+          left: 0;
+          right: 0;
+          pointer-events: auto;
+          background: rgba(0, 0, 0, 0.32);
+          opacity: 1;
+        }
+        .dialog-content {
+          position: fixed;
+          bottom: 20px;
+          right: 20px;
+          background: white;
+          padding: 20px;
+          z-index: 1001;
+        }
+      </style>
+      <div
+        popover="manual"
+        id="mypopover"
+      >
+        <div class="cdk-overlay-backdrop" id="backdrop"></div>
+        <div class="dialog-content">
+          <button id="closeBtn">Close Dialog</button>
+        </div>
+      </div>
+      <button id="openBtn">Open Dialog</button>
+      <script>
+        document.getElementById('openBtn').onclick = () => {
+          document.getElementById('mypopover').showPopover();
+        };
+        document.getElementById('backdrop').onclick = () => {
+          document.getElementById('mypopover').hidePopover();
+        };
+        document.getElementById('closeBtn').onclick = () => {
+          document.getElementById('mypopover').hidePopover();
+        };
+      </script>
+    `);
+
+    await page.getByRole('button', { name: 'Open Dialog' }).click();
+    await expect(page.getByRole('button', { name: 'Close Dialog' })).toBeVisible();
+
+    await page.mouse.click(10, 10);
+    await expect(page.getByRole('button', { name: 'Close Dialog' })).toBeHidden();
+  });
+
+  test('should record when fullscreen element is open', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/39095' } }, async ({ openRecorder }) => {
+    const { page, recorder } = await openRecorder();
+
+    await recorder.setContentAndWait(`
+      <div id="fullscreen-container">
+        <button id="closeBtn">Close Fullscreen</button>
+      </div>
+      <button id="openBtn">Go Fullscreen</button>
+      <script>
+        document.getElementById('openBtn').onclick = () => {
+          document.getElementById('fullscreen-container').requestFullscreen();
+        };
+        document.getElementById('closeBtn').onclick = () => {
+          document.exitFullscreen();
+        };
+      </script>
+    `);
+
+    await page.getByRole('button', { name: 'Go Fullscreen' }).click();
+    await expect(page.getByRole('button', { name: 'Close Fullscreen' })).toBeVisible();
+
+    await page.getByTitle('Assert text').click();
   });
 });
 

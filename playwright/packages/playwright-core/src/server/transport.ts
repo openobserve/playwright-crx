@@ -15,11 +15,10 @@
  * limitations under the License.
  */
 
-import { DEFAULT_PLAYWRIGHT_TIMEOUT, makeWaitForNextTask } from '../utils';
-import { httpHappyEyeballsAgent, httpsHappyEyeballsAgent } from './utils/happyEyeballs';
-import { ws } from '../utilsBundle';
-
-import type { WebSocket } from '../utilsBundle';
+import ws from 'ws';
+import { httpHappyEyeballsAgent, httpsHappyEyeballsAgent } from '@utils/happyEyeballs';
+import { makeWaitForNextTask } from '@utils/task';
+import type { WebSocket } from 'ws';
 import type { Progress } from './progress';
 import type { HeadersArray } from './types';
 import type { ClientRequest, IncomingMessage } from 'http';
@@ -84,15 +83,10 @@ export class WebSocketTransport implements ConnectionTransport {
     const logUrl = stripQueryParams(url);
     progress?.log(`<ws connecting> ${logUrl}`);
     const transport = new WebSocketTransport(progress, url, logUrl, { ...options, followRedirects: !!options.followRedirects && hadRedirects });
-    let success = false;
-    progress?.cleanupWhenAborted(async () => {
-      if (!success)
-        await transport.closeAndWait().catch(e => null);
-    });
-    const result = await new Promise<{ transport?: WebSocketTransport, redirect?: IncomingMessage }>((fulfill, reject) => {
+    const resultPromise = new Promise<{ redirect?: IncomingMessage }>((fulfill, reject) => {
       transport._ws.on('open', async () => {
         progress?.log(`<ws connected> ${logUrl}`);
-        fulfill({ transport });
+        fulfill({});
       });
       transport._ws.on('error', event => {
         progress?.log(`<ws connect error> ${logUrl} ${event.message}`);
@@ -120,17 +114,20 @@ export class WebSocketTransport implements ConnectionTransport {
         });
       });
     });
-
-    if (result.redirect) {
-      // Strip authorization headers from the redirected request.
-      const newHeaders = Object.fromEntries(Object.entries(options.headers || {}).filter(([name]) => {
-        return !name.includes('access-key') && name.toLowerCase() !== 'authorization';
-      }));
-      return WebSocketTransport._connect(progress, result.redirect.headers.location!, { ...options, headers: newHeaders }, true /* hadRedirects */);
+    try {
+      const result = progress ? await progress.race(resultPromise) : await resultPromise;
+      if (result.redirect) {
+        // Strip authorization headers from the redirected request.
+        const newHeaders = Object.fromEntries(Object.entries(options.headers || {}).filter(([name]) => {
+          return !name.includes('access-key') && name.toLowerCase() !== 'authorization';
+        }));
+        return WebSocketTransport._connect(progress, result.redirect.headers.location!, { ...options, headers: newHeaders }, true /* hadRedirects */);
+      }
+      return transport;
+    } catch (error) {
+      await transport.closeAndWait();
+      throw error;
     }
-
-    success = true;
-    return transport;
   }
 
   constructor(progress: Progress|undefined, url: string, logUrl: string, options: WebSocketTransportOptions) {
@@ -138,8 +135,6 @@ export class WebSocketTransport implements ConnectionTransport {
     this._logUrl = logUrl;
     this._ws = new ws(url, [], {
       maxPayload: 256 * 1024 * 1024, // 256Mb,
-      // Prevent internal http client error when passing negative timeout.
-      handshakeTimeout: Math.max(progress?.timeUntilDeadline() ?? DEFAULT_PLAYWRIGHT_TIMEOUT, 1),
       headers: options.headers,
       followRedirects: options.followRedirects,
       agent: (/^(https|wss):\/\//.test(url)) ? httpsHappyEyeballsAgent : httpHappyEyeballsAgent,

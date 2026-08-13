@@ -209,6 +209,9 @@ When all steps combined have not finished during the specified [`option: timeout
 ### option: Frame.check.force = %%-input-force-%%
 * since: v1.8
 
+### option: Frame.check.scroll = %%-input-scroll-%%
+* since: v1.62
+
 ### option: Frame.check.noWaitAfter = %%-input-no-wait-after-removed-%%
 * since: v1.8
 
@@ -223,6 +226,8 @@ When all steps combined have not finished during the specified [`option: timeout
 
 ### option: Frame.check.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Frame.check.signal = %%-input-signal-%%
 
 ### option: Frame.check.trial = %%-input-trial-%%
 * since: v1.11
@@ -262,6 +267,9 @@ When all steps combined have not finished during the specified [`option: timeout
 ### option: Frame.click.force = %%-input-force-%%
 * since: v1.8
 
+### option: Frame.click.scroll = %%-input-scroll-%%
+* since: v1.62
+
 ### option: Frame.click.modifiers = %%-input-modifiers-%%
 * since: v1.8
 
@@ -279,6 +287,8 @@ When all steps combined have not finished during the specified [`option: timeout
 
 ### option: Frame.click.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Frame.click.signal = %%-input-signal-%%
 
 ### option: Frame.click.trial = %%-input-trial-with-modifiers-%%
 * since: v1.11
@@ -320,6 +330,9 @@ When all steps combined have not finished during the specified [`option: timeout
 ### option: Frame.dblclick.force = %%-input-force-%%
 * since: v1.8
 
+### option: Frame.dblclick.scroll = %%-input-scroll-%%
+* since: v1.62
+
 ### option: Frame.dblclick.delay = %%-input-down-up-delay-%%
 * since: v1.8
 
@@ -340,6 +353,8 @@ When all steps combined have not finished during the specified [`option: timeout
 
 ### option: Frame.dblclick.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Frame.dblclick.signal = %%-input-signal-%%
 
 ### option: Frame.dblclick.trial = %%-input-trial-with-modifiers-%%
 * since: v1.11
@@ -449,6 +464,8 @@ Optional event-specific initialization properties.
 ### option: Frame.dispatchEvent.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Frame.dispatchEvent.signal = %%-input-signal-%%
+
 ## async method: Frame.dragAndDrop
 * since: v1.13
 
@@ -460,6 +477,9 @@ Optional event-specific initialization properties.
 
 ### option: Frame.dragAndDrop.force = %%-input-force-%%
 * since: v1.13
+
+### option: Frame.dragAndDrop.scroll = %%-input-scroll-%%
+* since: v1.62
 
 ### option: Frame.dragAndDrop.noWaitAfter = %%-input-no-wait-after-removed-%%
 * since: v1.13
@@ -473,6 +493,8 @@ Optional event-specific initialization properties.
 ### option: Frame.dragAndDrop.timeout = %%-input-timeout-js-%%
 * since: v1.13
 
+### option: Frame.dragAndDrop.signal = %%-input-signal-%%
+
 ### option: Frame.dragAndDrop.trial = %%-input-trial-%%
 * since: v1.13
 
@@ -481,6 +503,9 @@ Optional event-specific initialization properties.
 
 ### option: Frame.dragAndDrop.targetPosition = %%-input-target-position-%%
 * since: v1.14
+
+### option: Frame.dragAndDrop.steps = %%-input-drag-steps-%%
+* since: v1.57
 
 ## async method: Frame.evalOnSelector
 * since: v1.9
@@ -677,7 +702,7 @@ Console.WriteLine(await frame.EvaluateAsync<int>("1 + 2")); // prints "3"
 [ElementHandle] instances can be passed as an argument to the [`method: Frame.evaluate`]:
 
 ```js
-const bodyHandle = await frame.evaluate('document.body');
+const bodyHandle = await frame.evaluateHandle('document.body');
 const html = await frame.evaluate(([body, suffix]) =>
   body.innerHTML + suffix, [bodyHandle, 'hello'],
 );
@@ -685,25 +710,25 @@ await bodyHandle.dispose();
 ```
 
 ```java
-ElementHandle bodyHandle = frame.evaluate("document.body");
+ElementHandle bodyHandle = frame.evaluateHandle("document.body");
 String html = (String) frame.evaluate("([body, suffix]) => body.innerHTML + suffix", Arrays.asList(bodyHandle, "hello"));
 bodyHandle.dispose();
 ```
 
 ```python async
-body_handle = await frame.evaluate("document.body")
+body_handle = await frame.evaluate_handle("document.body")
 html = await frame.evaluate("([body, suffix]) => body.innerHTML + suffix", [body_handle, "hello"])
 await body_handle.dispose()
 ```
 
 ```python sync
-body_handle = frame.evaluate("document.body")
+body_handle = frame.evaluate_handle("document.body")
 html = frame.evaluate("([body, suffix]) => body.innerHTML + suffix", [body_handle, "hello"])
 body_handle.dispose()
 ```
 
 ```csharp
-var bodyHandle = await frame.EvaluateAsync("document.body");
+var bodyHandle = await frame.EvaluateHandleAsync("document.body");
 var html = await frame.EvaluateAsync<string>("([body, suffix]) => body.innerHTML + suffix", new object [] { bodyHandle, "hello" });
 await bodyHandle.DisposeAsync();
 ```
@@ -719,6 +744,9 @@ await bodyHandle.DisposeAsync();
 - `arg` ?<[EvaluationArgument]>
 
 Optional argument to pass to [`param: expression`].
+
+### option: Frame.evaluate.exposeFunctions = %%-js-evaluate-expose-functions-%%
+* since: v1.62
 
 ## async method: Frame.evaluateHandle
 * since: v1.8
@@ -770,11 +798,11 @@ JSHandle aHandle = frame.evaluateHandle("document"); // Handle for the "document
 ```
 
 ```python async
-a_handle = await page.evaluate_handle("document") # handle for the "document"
+a_handle = await frame.evaluate_handle("document") # handle for the "document"
 ```
 
 ```python sync
-a_handle = page.evaluate_handle("document") # handle for the "document"
+a_handle = frame.evaluate_handle("document") # handle for the "document"
 ```
 
 ```csharp
@@ -800,15 +828,15 @@ resultHandle.dispose();
 ```
 
 ```python async
-a_handle = await page.evaluate_handle("document.body")
-result_handle = await page.evaluate_handle("body => body.innerHTML", a_handle)
+a_handle = await frame.evaluate_handle("document.body")
+result_handle = await frame.evaluate_handle("body => body.innerHTML", a_handle)
 print(await result_handle.json_value())
 await result_handle.dispose()
 ```
 
 ```python sync
-a_handle = page.evaluate_handle("document.body")
-result_handle = page.evaluate_handle("body => body.innerHTML", a_handle)
+a_handle = frame.evaluate_handle("document.body")
+result_handle = frame.evaluate_handle("body => body.innerHTML", a_handle)
 print(result_handle.json_value())
 result_handle.dispose()
 ```
@@ -831,6 +859,9 @@ await resultHandle.DisposeAsync();
 - `arg` ?<[EvaluationArgument]>
 
 Optional argument to pass to [`param: expression`].
+
+### option: Frame.evaluateHandle.exposeFunctions = %%-js-evaluate-expose-functions-%%
+* since: v1.62
 
 ## async method: Frame.fill
 * since: v1.8
@@ -866,6 +897,8 @@ Value to fill for the `<input>`, `<textarea>` or `[contenteditable]` element.
 ### option: Frame.fill.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Frame.fill.signal = %%-input-signal-%%
+
 ## async method: Frame.focus
 * since: v1.8
 * discouraged: Use locator-based [`method: Locator.focus`] instead. Read more about [locators](../locators.md).
@@ -884,6 +917,8 @@ This method fetches an element with [`param: selector`] and focuses it. If there
 
 ### option: Frame.focus.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Frame.focus.signal = %%-input-signal-%%
 
 ## async method: Frame.frameElement
 * since: v1.8
@@ -992,6 +1027,8 @@ Attribute name to get the value for.
 ### option: Frame.getAttribute.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Frame.getAttribute.signal = %%-input-signal-%%
+
 ## method: Frame.getByAltText
 * since: v1.27
 - returns: <[Locator]>
@@ -1035,6 +1072,8 @@ Attribute name to get the value for.
 * since: v1.27
 
 ### option: Frame.getByRole.exact = %%-locator-get-by-role-option-exact-%%
+
+### option: Frame.getByRole.description = %%-locator-get-by-role-option-description-%%
 
 ## method: Frame.getByTestId
 * since: v1.27
@@ -1110,6 +1149,8 @@ URL to navigate frame to. The url should include scheme, e.g. `https://`.
 ### option: Frame.goto.timeout = %%-navigation-timeout-js-%%
 * since: v1.8
 
+### option: Frame.goto.signal = %%-input-signal-%%
+
 ### option: Frame.goto.referer
 * since: v1.8
 - `referer` <[string]>
@@ -1144,6 +1185,9 @@ When all steps combined have not finished during the specified [`option: timeout
 ### option: Frame.hover.force = %%-input-force-%%
 * since: v1.8
 
+### option: Frame.hover.scroll = %%-input-scroll-%%
+* since: v1.62
+
 ### option: Frame.hover.strict = %%-input-strict-%%
 * since: v1.14
 
@@ -1152,6 +1196,8 @@ When all steps combined have not finished during the specified [`option: timeout
 
 ### option: Frame.hover.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Frame.hover.signal = %%-input-signal-%%
 
 ### option: Frame.hover.trial = %%-input-trial-with-modifiers-%%
 * since: v1.11
@@ -1178,6 +1224,8 @@ Returns `element.innerHTML`.
 ### option: Frame.innerHTML.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Frame.innerHTML.signal = %%-input-signal-%%
+
 ## async method: Frame.innerText
 * since: v1.8
 * discouraged: Use locator-based [`method: Locator.innerText`] instead. Read more about [locators](../locators.md).
@@ -1196,6 +1244,8 @@ Returns `element.innerText`.
 
 ### option: Frame.innerText.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Frame.innerText.signal = %%-input-signal-%%
 
 ## async method: Frame.inputValue
 * since: v1.13
@@ -1218,6 +1268,8 @@ Throws for non-input elements. However, if the element is inside the `<label>` e
 ### option: Frame.inputValue.timeout = %%-input-timeout-js-%%
 * since: v1.13
 
+### option: Frame.inputValue.signal = %%-input-signal-%%
+
 ## async method: Frame.isChecked
 * since: v1.8
 * discouraged: Use locator-based [`method: Locator.isChecked`] instead. Read more about [locators](../locators.md).
@@ -1236,6 +1288,8 @@ Returns whether the element is checked. Throws if the element is not a checkbox 
 
 ### option: Frame.isChecked.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Frame.isChecked.signal = %%-input-signal-%%
 
 ## method: Frame.isDetached
 * since: v1.8
@@ -1262,6 +1316,8 @@ Returns whether the element is disabled, the opposite of [enabled](../actionabil
 ### option: Frame.isDisabled.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Frame.isDisabled.signal = %%-input-signal-%%
+
 ## async method: Frame.isEditable
 * since: v1.8
 * discouraged: Use locator-based [`method: Locator.isEditable`] instead. Read more about [locators](../locators.md).
@@ -1281,6 +1337,8 @@ Returns whether the element is [editable](../actionability.md#editable).
 ### option: Frame.isEditable.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Frame.isEditable.signal = %%-input-signal-%%
+
 ## async method: Frame.isEnabled
 * since: v1.8
 - returns: <[boolean]>
@@ -1298,6 +1356,8 @@ Returns whether the element is [enabled](../actionability.md#enabled).
 
 ### option: Frame.isEnabled.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Frame.isEnabled.signal = %%-input-signal-%%
 
 ## async method: Frame.isHidden
 * since: v1.8
@@ -1429,6 +1489,8 @@ Time to wait between `keydown` and `keyup` in milliseconds. Defaults to 0.
 ### option: Frame.press.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Frame.press.signal = %%-input-signal-%%
+
 ## async method: Frame.querySelector
 * since: v1.9
 * discouraged: Use locator-based [`method: Frame.locator`] instead. Read more about [locators](../locators.md).
@@ -1555,6 +1617,8 @@ await frame.SelectOptionAsync("select#colors", new[] { "red", "green", "blue" })
 ### option: Frame.selectOption.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Frame.selectOption.signal = %%-input-signal-%%
+
 ### param: Frame.selectOption.element = %%-python-select-options-element-%%
 * since: v1.8
 
@@ -1594,6 +1658,9 @@ When all steps combined have not finished during the specified [`option: timeout
 ### option: Frame.setChecked.force = %%-input-force-%%
 * since: v1.15
 
+### option: Frame.setChecked.scroll = %%-input-scroll-%%
+* since: v1.62
+
 ### option: Frame.setChecked.noWaitAfter = %%-input-no-wait-after-removed-%%
 * since: v1.15
 
@@ -1608,6 +1675,8 @@ When all steps combined have not finished during the specified [`option: timeout
 
 ### option: Frame.setChecked.timeout = %%-input-timeout-js-%%
 * since: v1.15
+
+### option: Frame.setChecked.signal = %%-input-signal-%%
 
 ### option: Frame.setChecked.trial = %%-input-trial-%%
 * since: v1.15
@@ -1628,6 +1697,8 @@ HTML markup to assign to the page.
 
 ### option: Frame.setContent.timeout = %%-navigation-timeout-js-%%
 * since: v1.8
+
+### option: Frame.setContent.signal = %%-input-signal-%%
 
 ### option: Frame.setContent.waitUntil = %%-navigation-wait-until-%%
 * since: v1.8
@@ -1660,6 +1731,8 @@ This method expects [`param: selector`] to point to an
 ### option: Frame.setInputFiles.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Frame.setInputFiles.signal = %%-input-signal-%%
+
 ## async method: Frame.tap
 * since: v1.8
 * discouraged: Use locator-based [`method: Locator.tap`] instead. Read more about [locators](../locators.md).
@@ -1685,6 +1758,9 @@ When all steps combined have not finished during the specified [`option: timeout
 ### option: Frame.tap.force = %%-input-force-%%
 * since: v1.8
 
+### option: Frame.tap.scroll = %%-input-scroll-%%
+* since: v1.62
+
 ### option: Frame.tap.modifiers = %%-input-modifiers-%%
 * since: v1.8
 
@@ -1702,6 +1778,8 @@ When all steps combined have not finished during the specified [`option: timeout
 
 ### option: Frame.tap.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Frame.tap.signal = %%-input-signal-%%
 
 ### option: Frame.tap.trial = %%-input-trial-with-modifiers-%%
 * since: v1.11
@@ -1724,6 +1802,8 @@ Returns `element.textContent`.
 
 ### option: Frame.textContent.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Frame.textContent.signal = %%-input-signal-%%
 
 ## async method: Frame.title
 * since: v1.8
@@ -1769,6 +1849,8 @@ Time to wait between key presses in milliseconds. Defaults to 0.
 ### option: Frame.type.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Frame.type.signal = %%-input-signal-%%
+
 ## async method: Frame.uncheck
 * since: v1.8
 * discouraged: Use locator-based [`method: Locator.uncheck`] instead. Read more about [locators](../locators.md).
@@ -1793,6 +1875,9 @@ When all steps combined have not finished during the specified [`option: timeout
 ### option: Frame.uncheck.force = %%-input-force-%%
 * since: v1.8
 
+### option: Frame.uncheck.scroll = %%-input-scroll-%%
+* since: v1.62
+
 ### option: Frame.uncheck.noWaitAfter = %%-input-no-wait-after-removed-%%
 * since: v1.8
 
@@ -1807,6 +1892,8 @@ When all steps combined have not finished during the specified [`option: timeout
 
 ### option: Frame.uncheck.timeout = %%-input-timeout-js-%%
 * since: v1.8
+
+### option: Frame.uncheck.signal = %%-input-signal-%%
 
 ### option: Frame.uncheck.trial = %%-input-trial-%%
 * since: v1.11
@@ -1958,6 +2045,8 @@ Optional argument to pass to [`param: expression`].
 ### option: Frame.waitForFunction.timeout = %%-wait-for-function-timeout-js-%%
 * since: v1.8
 
+### option: Frame.waitForFunction.signal = %%-input-signal-%%
+
 ## async method: Frame.waitForLoadState
 * since: v1.8
 
@@ -2005,6 +2094,7 @@ await frame.WaitForLoadStateAsync(); // Defaults to LoadState.Load
 
 ### option: Frame.waitForLoadState.timeout = %%-navigation-timeout-js-%%
 * since: v1.8
+### option: Frame.waitForLoadState.signal = %%-wait-for-event-signal-%%
 
 ## async method: Frame.waitForNavigation
 * since: v1.8
@@ -2074,7 +2164,10 @@ a navigation.
 ### param: Frame.waitForNavigation.action = %%-csharp-wait-for-event-action-%%
 * since: v1.12
 
-### option: Frame.waitForNavigation.url = %%-wait-for-navigation-url-%%
+### option: Frame.waitForNavigation.url = %%-js-wait-for-navigation-url-%%
+* since: v1.8
+
+### option: Frame.waitForNavigation.url = %%-python-csharp-java-wait-for-navigation-url-%%
 * since: v1.8
 
 ### option: Frame.waitForNavigation.waitUntil = %%-navigation-wait-until-%%
@@ -2085,6 +2178,7 @@ a navigation.
 
 ### option: Frame.waitForNavigation.timeout = %%-navigation-timeout-js-%%
 * since: v1.8
+### option: Frame.waitForNavigation.signal = %%-wait-for-event-signal-%%
 
 ### param: Frame.waitForNavigation.callback = %%-java-wait-for-event-callback-%%
 * since: v1.9
@@ -2222,6 +2316,8 @@ class FrameExamples
 ### option: Frame.waitForSelector.timeout = %%-input-timeout-js-%%
 * since: v1.8
 
+### option: Frame.waitForSelector.signal = %%-input-signal-%%
+
 ## async method: Frame.waitForTimeout
 * since: v1.8
 * discouraged: Never wait for timeout in production. Tests that wait for time are
@@ -2270,7 +2366,10 @@ await frame.ClickAsync("a.delayed-navigation"); // clicking the link will indire
 await frame.WaitForURLAsync("**/target.html");
 ```
 
-### param: Frame.waitForURL.url = %%-wait-for-navigation-url-%%
+### param: Frame.waitForURL.url = %%-js-wait-for-navigation-url-%%
+* since: v1.11
+
+### param: Frame.waitForURL.url = %%-python-csharp-java-wait-for-navigation-url-%%
 * since: v1.11
 
 ### option: Frame.waitForURL.timeout = %%-navigation-timeout-%%
@@ -2278,6 +2377,7 @@ await frame.WaitForURLAsync("**/target.html");
 
 ### option: Frame.waitForURL.timeout = %%-navigation-timeout-js-%%
 * since: v1.11
+### option: Frame.waitForURL.signal = %%-wait-for-event-signal-%%
 
 ### option: Frame.waitForURL.waitUntil = %%-navigation-wait-until-%%
 * since: v1.11

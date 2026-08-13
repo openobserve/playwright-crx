@@ -480,7 +480,7 @@ var import_test = __toModule(require("@playwright/test"));
 onBegin: 1 tests total
 onTestBegin:  > a.spec.js > test; retry #0
 onStepEnd: [hook] Before Hooks
-onStepEnd: [expect] toBe
+onStepEnd: [expect] Expect "toBe"
   error: Error: expect(received).toBe(expected) // Object.is equality @ a.spec.js:5
   ======
     3 |           test('test', async () => {
@@ -547,6 +547,35 @@ onEnd
 onExit
 `);
     });
+
+    test('onError receives workerInfo for fixture teardown errors (#39063)', async ({ runInlineTest }) => {
+      const result = await runInlineTest({
+        'reporter.ts': `
+          class Reporter {
+            printsToStdio() { return true; }
+            onError(error, workerInfo) {
+              console.log('teardownError:'
+                + ' message=' + (error.message || '').split('\\n')[0]
+                + ' workerInfo=' + (workerInfo ? typeof workerInfo.workerIndex + '/' + typeof workerInfo.parallelIndex + '/' + workerInfo.project.name : 'undefined'));
+            }
+          }
+          module.exports = Reporter;
+        `,
+        'playwright.config.ts': `module.exports = { projects: [{ name: 'foo' }], reporter: './reporter.ts' };`,
+        'a.spec.ts': `
+          import { test as base } from '@playwright/test';
+          const test = base.extend<{}, { brokenWorker: void }>({
+            brokenWorker: [async ({}, use) => {
+              await use();
+              throw new Error('teardown failed');
+            }, { scope: 'worker' }],
+          });
+          test('uses worker fixture', async ({ brokenWorker }) => {});
+        `,
+      }, { reporter: '', workers: 1 });
+      expect(result.exitCode).toBe(1);
+      expect(result.output).toContain('teardownError: message=Error: teardown failed workerInfo=number/number/foo');
+    });
   });
 }
 
@@ -584,7 +613,9 @@ test('should report annotations from test declaration', async ({ runInlineTest }
           const visit = suite => {
             for (const test of suite.tests || []) {
               const annotations = test.annotations.map(a => {
-                return a.description ? a.type + '=' + a.description : a.type;
+                const description = a.description ? a.type + '=' + a.description : a.type;
+                const location = a.location ? '(' + a.location.line + ':' + a.location.column + ')' : '';
+                return description + location;
               });
               console.log('\\n%%title=' + test.title + ', annotations=' + annotations.join(','));
             }
@@ -609,7 +640,7 @@ test('should report annotations from test declaration', async ({ runInlineTest }
         expect(test.info().annotations).toEqual([]);
       });
       test('foo', { annotation: { type: 'foo' } }, () => {
-        expect(test.info().annotations).toEqual([{ type: 'foo' }]);
+        expect(test.info().annotations).toEqual([{ type: 'foo', location: { file: expect.any(String), line: 6, column: 11 } }]);
       });
       test('foo-bar', {
         annotation: [
@@ -618,8 +649,8 @@ test('should report annotations from test declaration', async ({ runInlineTest }
         ],
       }, () => {
         expect(test.info().annotations).toEqual([
-          { type: 'foo', description: 'desc' },
-          { type: 'bar' },
+          { type: 'foo', description: 'desc', location: { file: expect.any(String), line: 9, column: 11 } },
+          { type: 'bar', location: { file: expect.any(String), line: 9, column: 11 } },
         ]);
       });
       test.skip('skip-foo', { annotation: { type: 'foo' } }, () => {
@@ -636,11 +667,14 @@ test('should report annotations from test declaration', async ({ runInlineTest }
       });
       test.describe('suite', { annotation: { type: 'foo' } }, () => {
         test('foo-suite', () => {
-          expect(test.info().annotations).toEqual([{ type: 'foo' }]);
+          expect(test.info().annotations).toEqual([{ type: 'foo', location: { file: expect.any(String), line: 32, column: 12 } }]);
         });
         test.describe('inner', { annotation: { type: 'bar' } }, () => {
           test('foo-bar-suite', () => {
-            expect(test.info().annotations).toEqual([{ type: 'foo' }, { type: 'bar' }]);
+            expect(test.info().annotations).toEqual([
+              { type: 'foo', location: { file: expect.any(String), line: 32, column: 12 } },
+              { type: 'bar', location: { file: expect.any(String), line: 36, column: 14 } }
+            ]);
           });
         });
       });
@@ -657,16 +691,42 @@ test('should report annotations from test declaration', async ({ runInlineTest }
   expect(result.exitCode).toBe(0);
   expect(result.outputLines).toEqual([
     `title=none, annotations=`,
-    `title=foo, annotations=foo`,
-    `title=foo-bar, annotations=foo=desc,bar`,
-    `title=skip-foo, annotations=foo,skip`,
-    `title=fixme-bar, annotations=bar,fixme`,
-    `title=fail-foo-bar, annotations=foo,bar=desc,fail`,
-    `title=foo-suite, annotations=foo`,
-    `title=foo-bar-suite, annotations=foo,bar`,
-    `title=skip-foo-suite, annotations=foo,skip`,
-    `title=fixme-bar-suite, annotations=bar,fixme`,
+    `title=foo, annotations=foo(6:11)`,
+    `title=foo-bar, annotations=foo=desc(9:11),bar(9:11)`,
+    `title=skip-foo, annotations=foo(20:12),skip(20:12)`,
+    `title=fixme-bar, annotations=bar(22:12),fixme(22:12)`,
+    `title=fail-foo-bar, annotations=foo(24:12),bar=desc(24:12),fail(24:12)`,
+    `title=foo-suite, annotations=foo(32:12)`,
+    `title=foo-bar-suite, annotations=foo(32:12),bar(36:14)`,
+    `title=skip-foo-suite, annotations=foo(45:21),skip(45:21)`,
+    `title=fixme-bar-suite, annotations=bar(49:21),fixme(49:21)`,
   ]);
+});
+
+test('attachments.push should not be enumerable to allow toEqual comparisons', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.spec.js': `
+      import { test, expect } from '@playwright/test';
+      test('test.info().attachments.push should not be enumerable', async ({}) => {
+
+        const attachments = test.info().attachments;
+
+        const descriptor = Object.getOwnPropertyDescriptor(attachments, 'push');
+        expect(descriptor).toBeTruthy();
+        expect(descriptor.enumerable).toBe(false);
+
+        expect(Object.keys(attachments)).not.toContain('push');
+
+        await test.info().attach('file1', { body: 'content1', contentType: 'text/plain' });
+        await test.info().attach('file2', { body: 'content2', contentType: 'text/plain' });
+
+        const keys = Object.keys(attachments);
+        expect(keys.every(k => !isNaN(Number(k)))).toBe(true);
+      });
+    `,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.passed).toBe(1);
 });
 
 test('tests skipped in serial mode receive onTestBegin/onTestEnd', async ({ runInlineTest }) => {
@@ -796,7 +856,134 @@ test('attachments are reported in onStepEnd', { annotation: { type: 'issue', des
   expect(result.outputLines).toEqual([
     '[hook] Before Hooks: 0 attachments in result',
     '[test.step] step: 1 attachments in result',
-    '[test.attach] 4: 2 attachments in result',
+    '[test.attach] Attach "4": 2 attachments in result',
     '[hook] After Hooks: 2 attachments in result',
+  ]);
+});
+
+test('should have static annotations on result when all tests are skipped', async ({ runInlineTest }) => {
+  class TestReporter implements Reporter {
+    onTestEnd(test: TestCase, result: TestResult): void {
+      for (const annotation of result.annotations)
+        console.log(`%%annotation: ${annotation.type} ${annotation.description || ''}`);
+    }
+  }
+
+  const result = await runInlineTest({
+    'reporter.ts': `module.exports = ${TestReporter.toString()}`,
+    'playwright.config.ts': `module.exports = { reporter: './reporter' };`,
+    'a.spec.ts': `
+      import { test } from '@playwright/test';
+      test.skip('test', {
+        annotation: [{ type: 'foo', description: 'desc' }, { type: 'bar' }],
+      }, async () => {});
+    `,
+  }, { 'reporter': '', 'workers': 1 });
+
+  expect(result.outputLines).toEqual([
+    'annotation: foo desc',
+    'annotation: bar',
+    'annotation: skip',
+  ]);
+
+  const resultMany = await runInlineTest({
+    'reporter.ts': `module.exports = ${TestReporter.toString()}`,
+    'playwright.config.ts': `module.exports = { reporter: './reporter' };`,
+    'a.spec.ts': `
+      import { test } from '@playwright/test';
+      test.skip('test', {
+        annotation: [{ type: 'foo', description: 'desc' }, { type: 'bar' }],
+      }, async () => {});
+
+      test.skip('test2', {
+        annotation: [{ type: 'foobar', description: 'another' }],
+      }, async () => {});
+
+      test.skip('test3', {
+        annotation: [{ type: 'warning', description: 'one more' }],
+      }, async () => {});
+    `,
+  }, { 'reporter': '', 'workers': 1 });
+
+  expect(resultMany.outputLines).toEqual([
+    'annotation: foo desc',
+    'annotation: bar',
+    'annotation: skip',
+    'annotation: foobar another',
+    'annotation: skip',
+    'annotation: warning one more',
+    'annotation: skip',
+  ]);
+});
+
+test('AggregateError sub-errors are spread into testInfo.errors', async ({ runInlineTest }) => {
+  class TestReporter implements Reporter {
+    onTestEnd(test: TestCase, result: TestResult): void {
+      for (const error of result.errors)
+        console.log(`%%${error.message ?? error.value}`);
+      // For the boxed-step case, also surface a frame from the test file so
+      // we can assert that the boxed-stack rewrite only applies to the
+      // top-level error and not to its sub-errors.
+      if (test.title === 'boxed step') {
+        for (const error of result.errors) {
+          const frame = (error.stack ?? '').split('\n').find(l => l.includes('a.spec.ts:'));
+          console.log(`%%FRAME ${error.message}: ${frame?.trim()}`);
+        }
+      }
+    }
+  }
+
+  const result = await runInlineTest({
+    'reporter.ts': `module.exports = ${TestReporter.toString()}`,
+    'playwright.config.ts': `module.exports = { reporter: './reporter' };`,
+    'a.spec.ts': `
+      import { test } from '@playwright/test';
+      test('basic', () => {
+        throw new AggregateError([new Error('a'), new Error('b')], 'parent');
+      });
+      test('nested', () => {
+        throw new AggregateError([
+          new AggregateError([new Error('a'), new Error('b')], 'inner'),
+          new Error('c'),
+        ], 'outer');
+      });
+      test('non-error entries', () => {
+        const err: any = new Error('parent');
+        err.errors = ['oops', { foo: 1 }, new Error('real')];
+        throw err;
+      });
+      test('boxed step', async () => {
+        const subA = new Error('sub a');
+        const subB = new Error('sub b');
+        const helper = async () => {
+          await test.step('boxed', async () => {
+            throw new AggregateError([subA, subB], 'top');
+          }, { box: true });
+        };
+        await helper();
+      });
+    `,
+  }, { 'reporter': '', 'workers': 1 });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.outputLines).toEqual([
+    'AggregateError: parent',
+    'Error: a',
+    'Error: b',
+    'AggregateError: outer',
+    'AggregateError: inner',
+    'Error: a',
+    'Error: b',
+    'Error: c',
+    'Error: parent',
+    `'oops'`,
+    '{ foo: 1 }',
+    'Error: real',
+    'AggregateError: top',
+    'Error: sub a',
+    'Error: sub b',
+    expect.stringMatching(/^FRAME AggregateError: top: at .*a\.spec\.ts:25:/),
+    expect.stringMatching(/^FRAME Error: sub a: at .*a\.spec\.ts:18:/),
+    expect.stringMatching(/^FRAME Error: sub b: at .*a\.spec\.ts:19:/),
   ]);
 });

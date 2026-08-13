@@ -18,40 +18,55 @@
 import os from 'os';
 import path from 'path';
 
+import { ManualPromise } from '@isomorphic/manualPromise';
+import { wrapInASCIIBox } from '@utils/ascii';
 import { FFBrowser } from './ffBrowser';
 import { kBrowserCloseMessageId } from './ffConnection';
-import { wrapInASCIIBox } from '../utils/ascii';
 import { BrowserType, kNoXServerRunningError } from '../browserType';
-import { BrowserReadyState } from '../browserType';
 
-import type { BrowserOptions } from '../browser';
+import type { Browser, BrowserOptions } from '../browser';
 import type { SdkObject } from '../instrumentation';
-import type { Env } from '../utils/processLauncher';
-import type { ProtocolError } from '../protocolError';
 import type { ConnectionTransport } from '../transport';
 import type * as types from '../types';
+import type { RecentLogsCollector } from '@utils/debugLogger';
+import type { BrowserContext } from '../browserContext';
+import type * as channels from '../channels';
+import type { Progress } from '../progress';
 
 export class Firefox extends BrowserType {
-  constructor(parent: SdkObject) {
+  private _bidiFirefox: BrowserType;
+
+  constructor(parent: SdkObject, bidiFirefox: BrowserType) {
     super(parent, 'firefox');
+    this._bidiFirefox = bidiFirefox;
+  }
+
+  override launch(progress: Progress, options: types.LaunchOptions, protocolLogger?: types.ProtocolLogger): Promise<Browser> {
+    if (options.channel?.startsWith('moz-'))
+      return this._bidiFirefox.launch(progress, options, protocolLogger);
+    return super.launch(progress, options, protocolLogger);
+  }
+
+  override async launchPersistentContext(progress: Progress, userDataDir: string, options: channels.BrowserTypeLaunchPersistentContextOptions & { internalIgnoreHTTPSErrors?: boolean, socksProxyPort?: number }): Promise<BrowserContext> {
+    if (options.channel?.startsWith('moz-'))
+      return this._bidiFirefox.launchPersistentContext(progress, userDataDir, options);
+    return super.launchPersistentContext(progress, userDataDir, options);
   }
 
   override connectToTransport(transport: ConnectionTransport, options: BrowserOptions): Promise<FFBrowser> {
     return FFBrowser.connect(this.attribution.playwright, transport, options);
   }
 
-  override doRewriteStartupLog(error: ProtocolError): ProtocolError {
-    if (!error.logs)
-      return error;
+  override doRewriteStartupLog(logs: string): string {
     // https://github.com/microsoft/playwright/issues/6500
-    if (error.logs.includes(`as root in a regular user's session is not supported.`))
-      error.logs = '\n' + wrapInASCIIBox(`Firefox is unable to launch if the $HOME folder isn't owned by the current user.\nWorkaround: Set the HOME=/root environment variable${process.env.GITHUB_ACTION ? ' in your GitHub Actions workflow file' : ''} when running Playwright.`, 1);
-    if (error.logs.includes('no DISPLAY environment variable specified'))
-      error.logs = '\n' + wrapInASCIIBox(kNoXServerRunningError, 1);
-    return error;
+    if (logs.includes(`as root in a regular user's session is not supported.`))
+      logs = '\n' + wrapInASCIIBox(`Firefox is unable to launch if the $HOME folder isn't owned by the current user.\nWorkaround: Set the HOME=/root environment variable${process.env.GITHUB_ACTION ? ' in your GitHub Actions workflow file' : ''} when running Playwright.`, 1);
+    if (logs.includes('no DISPLAY environment variable specified'))
+      logs = '\n' + wrapInASCIIBox(kNoXServerRunningError, 1);
+    return logs;
   }
 
-  override amendEnvironment(env: Env, userDataDir: string, executable: string, browserArguments: string[]): Env {
+  override amendEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     if (!path.isAbsolute(os.homedir()))
       throw new Error(`Cannot launch Firefox with relative home directory. Did you set ${os.platform() === 'win32' ? 'USERPROFILE' : 'HOME'} to a relative path?`);
     if (os.platform() === 'linux') {
@@ -64,11 +79,12 @@ export class Firefox extends BrowserType {
   }
 
   override attemptToGracefullyCloseBrowser(transport: ConnectionTransport): void {
+    // Note that it's fine to reuse the transport, since our connection ignores kBrowserCloseMessageId.
     const message = { method: 'Browser.close', params: {}, id: kBrowserCloseMessageId };
     transport.send(message);
   }
 
-  override defaultArgs(options: types.LaunchOptions, isPersistent: boolean, userDataDir: string): string[] {
+  override async defaultArgs(options: types.LaunchOptions, isPersistent: boolean, userDataDir: string) {
     const { args = [], headless } = options;
     const userDataDirArg = args.find(arg => arg.startsWith('-profile') || arg.startsWith('--profile'));
     if (userDataDirArg)
@@ -92,14 +108,12 @@ export class Firefox extends BrowserType {
     return firefoxArguments;
   }
 
-  override readyState(options: types.LaunchOptions): BrowserReadyState | undefined {
-    return new JugglerReadyState();
-  }
-}
-
-class JugglerReadyState extends BrowserReadyState {
-  override onBrowserOutput(message: string): void {
-    if (message.includes('Juggler listening to the pipe'))
-      this._wsEndpoint.resolve(undefined);
+  override waitForReadyState(options: types.LaunchOptions, browserLogsCollector: RecentLogsCollector): Promise<{ wsEndpoint?: string }> {
+    const result = new ManualPromise<{ wsEndpoint?: string }>();
+    browserLogsCollector.onMessage(message => {
+      if (message.includes('Juggler listening to the pipe'))
+        result.resolve({});
+    });
+    return result;
   }
 }

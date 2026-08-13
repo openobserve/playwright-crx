@@ -22,9 +22,14 @@ import { PortTransport } from './portTransport';
 import { resolveHook, setSingleTSConfig, setTransformConfig, shouldTransform, transformHook } from './transform';
 import { fileIsModule } from '../util';
 
+// Before each import of the ESM module, a preflight request with the .esm.preflight extension is issued.
+// When handled, it is resolved similarly to the reqular import, but loading it yields empty content.
+const esmPreflightExtension = '.esm.preflight';
+
 // Node < 18.6: defaultResolve takes 3 arguments.
 // Node >= 18.6: nextResolve from the chain takes 2 arguments.
-async function resolve(specifier: string, context: { parentURL?: string }, defaultResolve: Function) {
+async function resolve(originalSpecifier: string, context: { parentURL?: string }, defaultResolve: Function) {
+  let specifier = originalSpecifier.replace(esmPreflightExtension, '');
   if (context.parentURL && context.parentURL.startsWith('file://')) {
     const filename = url.fileURLToPath(context.parentURL);
     const resolved = resolveHook(filename, specifier);
@@ -37,6 +42,8 @@ async function resolve(specifier: string, context: { parentURL?: string }, defau
   if (result?.url && result.url.startsWith('file://'))
     currentFileDepsCollector()?.add(url.fileURLToPath(result.url));
 
+  if (originalSpecifier.endsWith(esmPreflightExtension))
+    result.url = result.url + esmPreflightExtension;
   return result;
 }
 
@@ -64,47 +71,46 @@ async function load(moduleUrl: string, context: { format?: string }, defaultLoad
     return defaultLoad(moduleUrl, context, defaultLoad);
 
   const filename = url.fileURLToPath(moduleUrl);
+  const isPreflight = moduleUrl.endsWith(esmPreflightExtension);
+
   // Bail for node_modules.
   if (!shouldTransform(filename))
     return defaultLoad(moduleUrl, context, defaultLoad);
 
-  const code = fs.readFileSync(filename, 'utf-8');
-  const transformed = transformHook(code, filename, moduleUrl);
+  const originalModuleUrl = isPreflight ? moduleUrl.slice(0, -esmPreflightExtension.length) : moduleUrl;
+  const originalFilename = isPreflight ? url.fileURLToPath(originalModuleUrl) : filename;
 
-  // Flush the source maps to the main thread, so that errors during import() are source-mapped.
-  if (transformed.serializedCache) {
-    if (legacyWaitForSourceMaps)
-      await transport?.send('pushToCompilationCache', { cache: transformed.serializedCache });
-    else
-      transport?.post('pushToCompilationCache', { cache: transformed.serializedCache });
-  }
+  const code = fs.readFileSync(originalFilename, 'utf-8');
+  const transformed = transformHook(code, originalFilename, originalModuleUrl);
+
+  // Flush the source maps to the main thread, so that errors after import() are source-mapped.
+  if (transformed.serializedCache)
+    transport?.post('pushToCompilationCache', { cache: transformed.serializedCache });
 
   // Output format is required, so we determine it manually when unknown.
   // shortCircuit is required by Node >= 18.6 to designate no more loaders should be called.
   return {
-    format: kSupportedFormats.get(context.format) || (fileIsModule(filename) ? 'module' : 'commonjs'),
-    source: transformed.code,
+    format: kSupportedFormats.get(context.format) || (fileIsModule(originalFilename) ? 'module' : 'commonjs'),
+    source: isPreflight ? `void 0;` : transformed.code,
     shortCircuit: true,
   };
 }
 
 let transport: PortTransport | undefined;
-let legacyWaitForSourceMaps = false;
 
 function initialize(data: { port: MessagePort }) {
   transport = createTransport(data?.port);
-  legacyWaitForSourceMaps = !!process.env.PLAYWRIGHT_WAIT_FOR_SOURCE_MAPS;
 }
 
 function createTransport(port: MessagePort) {
   return new PortTransport(port, async (method, params) => {
     if (method === 'setSingleTSConfig') {
-      setSingleTSConfig(params.tsconfig);
+      await setSingleTSConfig(params.tsconfig);
       return;
     }
 
     if (method === 'setTransformConfig') {
-      setTransformConfig(params.config);
+      await setTransformConfig(params.config);
       return;
     }
 

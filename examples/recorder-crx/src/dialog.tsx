@@ -17,9 +17,9 @@ import React from 'react';
 import './dialog.css';
 
 export const Dialog: React.FC<React.PropsWithChildren<{
-    isOpen: boolean,
-    onClose: () => any,
-    title: string,
+  isOpen: boolean,
+  onClose: () => any,
+  title: string,
 }>> = ({ isOpen, onClose, title, children }) => {
   if (!isOpen)
     return null;

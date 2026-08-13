@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 
+import { kTargetClosedErrorMessage } from '../config/errors';
 import { expect, playwrightTest } from '../config/browserTest';
-import type { Browser, BrowserServer, ConnectOptions, Page } from 'playwright-core';
+import { ensureSomeFrames } from '../config/utils';
+import type { Browser, BrowserContext, BrowserServer, ConnectOptions, Page } from 'playwright-core';
 
 type ExtraFixtures = {
   remoteServer: BrowserServer;
@@ -29,12 +31,13 @@ const test = playwrightTest.extend<ExtraFixtures>({
     await server.close();
   },
   connect: async ({ browserType }, use) => {
-    let browser: Browser | undefined;
+    const browsers: Browser[] = [];
     await use(async (wsEndpoint, options = {}) => {
-      browser = await browserType.connect(wsEndpoint, options);
+      const browser = await browserType.connect(wsEndpoint, options);
+      browsers.push(browser);
       return browser;
     });
-    await browser?.close();
+    await Promise.all(browsers.map(b => b.close()));
   },
   twoPages: async ({ remoteServer, connect }, use) => {
     const browserA = await connect(remoteServer.wsEndpoint());
@@ -89,6 +92,19 @@ test('should connect two clients', async ({ connect, remoteServer, server }) => 
 
   await expect(pageB1).toHaveURL(server.EMPTY_PAGE);
   await expect(pageB2).toHaveURL(server.PREFIX + '/frames/frame.html');
+});
+
+test('should fire context event on remote newContext', async ({ connect, remoteServer }) => {
+  const browserA = await connect(remoteServer.wsEndpoint());
+  const events: BrowserContext[] = [];
+  browserA.on('context', ctx => events.push(ctx));
+
+  const browserB = await connect(remoteServer.wsEndpoint());
+  const contextB = await browserB.newContext();
+
+  await expect.poll(() => events).toHaveLength(1);
+  expect(browserA.contexts()).toEqual([events[0]]);
+  expect(events[0]).not.toBe(contextB);
 });
 
 test('should have separate default timeouts', async ({ twoPages }) => {
@@ -257,6 +273,27 @@ test('should remove exposed bindings upon disconnect', async ({ twoPages }) => {
   expect(await pageB.evaluate(() => (window as any).pageBindingB())).toBe('pageBindingBResult');
 });
 
+test('should unroute websockets', async ({ twoPages, server }) => {
+  const { pageA, pageB } = twoPages;
+
+  await pageA.goto(server.EMPTY_PAGE);
+  await pageA.routeWebSocket(/.*/, () => {});
+  await pageA.routeWebSocket(/.*/, () => {});
+  await pageA.routeWebSocket(/.*/, () => {});
+
+  const error = await pageB.routeWebSocket(/.*/, () => {}).catch(e => e);
+  expect(error.message).toContain('Another client is already routing WebSockets');
+
+  await disconnect(pageA);
+
+  let resolve;
+  const promise = new Promise(f => resolve = f);
+  await pageB.routeWebSocket(/.*/, resolve);
+  await pageB.goto(server.EMPTY_PAGE);
+  await pageB.evaluate(host => (window as any).ws = new WebSocket('ws://' + host + '/ws'), server.HOST);
+  await promise;
+});
+
 test('should remove init scripts upon disconnect', async ({ twoPages, server }) => {
   const { pageA, pageB } = twoPages;
 
@@ -314,4 +351,71 @@ test('should remove locator handlers upon disconnect', async ({ twoPages, server
   expect(error.message).toContain('Timeout 3000ms exceeded');
   expect(error.message).toContain('intercepts pointer events');
   expect(error.message).not.toContain('locator handler');
+});
+
+test('should launch persistent', async ({ browserType }) => {
+  const browserServer = await browserType.launchServer({ _userDataDir: '', _sharedBrowser: true } as any);
+  const browser = await browserType.connect(browserServer.wsEndpoint());
+  expect(browser.contexts().length).toBe(1);
+  await browser.close();
+  await browserServer.close();
+});
+
+test('should avoid side effects upon disconnect', async ({ twoPages, server }) => {
+  const { pageA, pageB } = twoPages;
+
+  let counter = 0;
+  pageB.on('console', () => ++counter);
+
+  const promise = pageA.waitForFunction(() => {
+    window['counter'] = (window['counter'] || 0) + 1;
+    console.log(window['counter']);
+  }, {}, { polling: 1, timeout: 10000 }).catch(e => e);
+
+  await disconnect(pageA);
+  const error = await promise;
+  const savedCounter = counter;
+
+  await pageB.waitForTimeout(2000); // Give it some time to produce more logs.
+
+  expect(error.message).toContain(kTargetClosedErrorMessage);
+  expect(counter).toBe(savedCounter);
+});
+
+test('screencast should deliver cached last frame to a new client', async ({ twoPages, server, trace, video }) => {
+  test.skip(trace === 'on', 'trace=on has screencast active on the page already');
+  test.skip(video === 'on', 'video=on has screencast active on the page already');
+
+  const { pageA, pageB } = twoPages;
+  await pageA.goto(server.EMPTY_PAGE);
+  await pageA.evaluate(() => document.body.style.backgroundColor = 'red');
+
+  const framesA: Buffer[] = [];
+  await pageA.screencast.start({ onFrame: ({ data }) => framesA.push(data), size: { width: 320, height: 240 } });
+  await ensureSomeFrames(pageA);
+  expect(framesA.length).toBeGreaterThan(0);
+  const lastFrameA = framesA[framesA.length - 1];
+
+  const framesB: Buffer[] = [];
+  await pageB.screencast.start({ onFrame: ({ data }) => framesB.push(data) });
+  // Second client should receive the cached last frame without waiting for a browser repaint.
+  await expect.poll(() => framesB.length, { timeout: 5000 }).toBeGreaterThan(0);
+  expect(framesB[0].equals(lastFrameA)).toBe(true);
+
+  await pageA.screencast.stop();
+  await pageB.screencast.stop();
+});
+
+test('should stop tracing upon disconnect', async ({ twoPages, trace }) => {
+  test.skip(trace === 'on');
+
+  const { pageA, pageB } = twoPages;
+
+  await pageA.context().tracing.start();
+  const error = await pageB.context().tracing.start().catch(e => e);
+  expect(error.message).toContain('Tracing has been already started');
+
+  await disconnect(pageA);
+
+  await pageB.context().tracing.start();
 });

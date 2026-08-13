@@ -217,6 +217,15 @@ test('should support disabled', async ({ page }) => {
     <fieldset disabled>
       <button>Yay</button>
     </fieldset>
+    <select>
+      <optgroup disabled>
+        <option>one</option>
+      </optgroup>
+      <optgroup>
+        <option>two</option>
+      </optgroup>
+      <option disabled>three</option>
+    </select>
   `);
   expect(await page.locator(`role=button[disabled]`).evaluateAll(els => els.map(e => e.outerHTML))).toEqual([
     `<button disabled="">Bye</button>`,
@@ -240,6 +249,18 @@ test('should support disabled', async ({ page }) => {
   expect(await page.getByRole('button', { disabled: false }).evaluateAll(els => els.map(e => e.outerHTML))).toEqual([
     `<button>Hi</button>`,
     `<button aria-disabled="false">Oh</button>`,
+  ]);
+  expect(await page.getByRole('option', { disabled: true }).evaluateAll(els => els.map(e => e.outerHTML))).toEqual([
+    `<option>one</option>`,
+    `<option disabled="">three</option>`,
+  ]);
+  expect(await page.getByRole('option', { disabled: false }).evaluateAll(els => els.map(e => e.outerHTML))).toEqual([
+    `<option>two</option>`,
+  ]);
+  expect(await page.getByRole('option').evaluateAll(els => els.map(e => e.outerHTML))).toEqual([
+    `<option>one</option>`,
+    `<option>two</option>`,
+    `<option disabled="">three</option>`,
   ]);
 });
 
@@ -476,12 +497,21 @@ test('should support name', async ({ page }) => {
   ]);
 });
 
+test('should support option name with html whitespace', async ({ page }) => {
+  await page.setContent(`
+    <select>
+      <option value="html">&nbsp;HTML</option>
+    </select>
+  `);
+  await expect(page.getByRole('option', { name: 'HTML' })).toHaveCount(1);
+});
+
 test('errors', async ({ page }) => {
   const e0 = await page.$('role=[bar]').catch(e => e);
   expect(e0.message).toContain(`Role must not be empty`);
 
   const e1 = await page.$('role=foo[sElected]').catch(e => e);
-  expect(e1.message).toContain(`Unknown attribute "sElected", must be one of "checked", "disabled", "expanded", "include-hidden", "level", "name", "pressed", "selected"`);
+  expect(e1.message).toContain(`Unknown attribute "sElected", must be one of "checked", "description", "disabled", "expanded", "include-hidden", "level", "name", "pressed", "selected"`);
 
   const e2 = await page.$('role=foo[bar . qux=true]').catch(e => e);
   expect(e2.message).toContain(`Unknown attribute "bar.qux"`);

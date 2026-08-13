@@ -21,6 +21,24 @@ import type { AssertAction } from '../../playwright/packages/recorder/src/action
 
 export { expect } from './crxTest';
 
+/**
+ * The recorder's Record button — the single most clicked control in this suite.
+ *
+ * Addressed in one place because its identity keeps moving with the vendored UI: through
+ * 1.54 the title was `Record`; 1.55 added a settings row titled "Automatically generate
+ * assertions while recording", which `getByTitle('Record')` matched too (substring, case
+ * insensitive); 1.56 renamed the button's own title to `Start Recording`/`Stop Recording`,
+ * toggling with state, so an exact `Record` matched nothing at all and every test that
+ * touches recording timed out at once.
+ *
+ * The anchored regex survives both: it cannot match the settings row, and it does not care
+ * which half of the toggle is showing. Whether it is *on* is still read from the `toggled`
+ * class rather than from the title, so a further rename does not silently invert the check.
+ */
+export function recordButton(recorderPage: Page): Locator {
+  return recorderPage.getByTitle(/^(Start|Stop) Recording$/);
+}
+
 declare function attach(tab: chrome.tabs.Tab): Promise<void>;
 declare function _setUnderTest(): void;
 
@@ -106,10 +124,10 @@ export const test = crxTest.extend<{
             try {
               await locator.waitFor({ state: 'attached', timeout: 100 });
             } catch (e) {
-              if (await recorderPage.getByTitle('Record').evaluate(e => e.classList.contains('toggled'))) {
-                await recorderPage.getByTitle('Record').click();
+              if (await recordButton(recorderPage).evaluate(e => e.classList.contains('toggled'))) {
+                await recordButton(recorderPage).click();
                 await page.reload();
-                await recorderPage.getByTitle('Record').click();
+                await recordButton(recorderPage).click();
               } else {
                 await page.reload();
               }
@@ -155,10 +173,19 @@ export const test = crxTest.extend<{
                   await locator.click();
                   break;
                 case 'assertSnapshot':
-                  // ensure snapshot is toggled (for some reason, it may take more than one click)
-                  const assertBtn = recorderPage.getByTitle('Assert snapshot');
-                  while (await assertBtn.evaluate(e => !e.classList.contains('toggled')))
-                    await assertBtn.click();
+                  // Click exactly once, then wait for the *page overlay* to enter the mode.
+                  //
+                  // This used to be a `while (!toggled) click()` loop, on the theory that the
+                  // toggle "may take more than one click". It re-read the toolbar button
+                  // before React had re-rendered it, clicked again, and toggled the mode back
+                  // OFF — after which the click below was recorded as a plain click instead of
+                  // an assertion. Waiting on the toolbar button is also not enough on its own:
+                  // since 1.54 Recorder.setMode() emits ModeChanged (which toggles the button)
+                  // *before* it issues the async overlay refresh, so the page can still be in
+                  // recording mode when the button already looks right. The overlay is the
+                  // thing the next click is actually interpreted by, so wait on that.
+                  await recorderPage.getByTitle('Assert snapshot').click();
+                  await page.locator('x-pw-glass').locator('x-pw-tool-item.snapshot.toggled').waitFor({ timeout: 5000 });
                   await locator.click();
                   break;
               }

@@ -17,33 +17,67 @@
 import * as React from 'react';
 import './settingsView.css';
 
-export type Setting<T> = {
-  value: T;
-  set: (value: T) => void;
+export type Setting<Value extends string = string> = {
   name: string;
   title?: string;
-};
+  count?: number;
+} & ({
+  type: 'check',
+  value: boolean;
+  set: (value: boolean) => void;
+} | {
+  type: 'select',
+  options: Array<{ label: string, value: Value }>;
+  value: Value;
+  set: (value: Value) => void;
+});
 
-export const SettingsView: React.FunctionComponent<{
-  settings: Setting<boolean>[];
-}> = ({ settings }) => {
+export const SettingsView = <Value extends string>(
+  { settings }: { settings: Setting<Value>[] }
+) => {
   return (
     <div className='vbox settings-view'>
-      {settings.map(({ value, set, name, title }) => {
-        const labelId = `setting-${name}`;
+      {settings.map(setting => {
+        const labelId = `setting-${setting.name.replaceAll(/\s+/g, '-')}`;
 
         return (
-          <div key={name} className='setting' title={title}>
-            <input
-              type='checkbox'
-              id={labelId}
-              checked={value}
-              onChange={() => set(!value)}
-            />
-            <label htmlFor={labelId}>{name}</label>
+          <div key={setting.name} className={`setting setting-${setting.type}`} title={setting.title}>
+            {renderSetting(setting, labelId)}
           </div>
         );
       })}
     </div>
   );
+};
+
+const renderSetting = <Value extends string>(setting: Setting<Value>, labelId: string) => {
+  switch (setting.type) {
+    case 'check':
+      return (
+        <>
+          <input
+            type='checkbox'
+            id={labelId}
+            checked={setting.value}
+            onChange={() => setting.set(!setting.value)}
+          />
+          <label htmlFor={labelId}>{setting.name}{!!setting.count && <span className='setting-counter'>{setting.count}</span>}</label>
+        </>
+      );
+    case 'select':
+      return (
+        <>
+          <label htmlFor={labelId}>{setting.name}:{!!setting.count && <span className='setting-counter'>{setting.count}</span>}</label>
+          <select id={labelId} value={setting.value} onChange={e => setting.set(e.target.value as Value)}>
+            {setting.options.map(option => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </>
+      );
+    default:
+      return null;
+  }
 };

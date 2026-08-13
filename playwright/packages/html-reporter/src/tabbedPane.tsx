@@ -15,12 +15,13 @@
  */
 
 import { clsx } from '@web/uiUtils';
+import './colors.css';
 import './tabbedPane.css';
 import * as React from 'react';
 
 export interface TabbedPaneTab {
   id: string;
-  title: string | JSX.Element;
+  title: string | React.JSX.Element;
   count?: number;
   render: () => React.ReactElement;
 }
@@ -36,14 +37,14 @@ export const TabbedPane: React.FunctionComponent<{
       <div className='hbox' style={{ flex: 'none' }}>
         <div className='tabbed-pane-tab-strip' role='tablist'>{
           tabs.map(tab => (
-            <div className={clsx('tabbed-pane-tab-element', selectedTab === tab.id && 'selected')}
+            <button className={clsx('tabbed-pane-tab-element', selectedTab === tab.id && 'selected')}
               onClick={() => setSelectedTab(tab.id)}
               id={`${idPrefix}-${tab.id}`}
               key={tab.id}
               role='tab'
               aria-selected={selectedTab === tab.id}>
               <div className='tabbed-pane-tab-label'>{tab.title}</div>
-            </div>
+            </button>
           ))
         }</div>
       </div>

@@ -15,20 +15,25 @@
  */
 import net from 'net';
 import path from 'path';
+import { stripVTControlCharacters } from 'util';
 
-import { launchProcess, isURLAvailable, monotonicTime, raceAgainstDeadline } from 'playwright-core/lib/utils';
-import { colors } from 'playwright-core/lib/utils';
-import { debug } from 'playwright-core/lib/utilsBundle';
+import colors from 'colors/safe';
+import debug from 'debug';
+import { ManualPromise } from '@isomorphic/manualPromise';
+import { monotonicTime } from '@isomorphic/time';
+import { raceAgainstDeadline } from '@isomorphic/timeoutRunner';
+import { isURLAvailable } from '@utils/network';
+import { launchProcess } from '@utils/processLauncher';
 
 import type { TestRunnerPlugin } from '.';
 import type { FullConfig } from '../../types/testReporter';
-import type { FullConfigInternal } from '../common/config';
+import type { FullConfigInternal } from '../common';
 import type { ReporterV2 } from '../reporters/reporterV2';
-
 
 export type WebServerPluginOptions = {
   command: string;
   url?: string;
+  wait?: { stdout?: RegExp, stderr?: RegExp };
   ignoreHTTPSErrors?: boolean;
   timeout?: number;
   gracefulShutdown?: { signal: 'SIGINT' | 'SIGTERM', timeout?: number };
@@ -55,6 +60,8 @@ export class WebServerPlugin implements TestRunnerPlugin {
   private _options: WebServerPluginOptions;
   private _checkPortOnly: boolean;
   private _reporter?: ReporterV2;
+  private _waitForStdioPromise: ManualPromise | undefined;
+
   name = 'playwright:webserver';
 
   constructor(options: WebServerPluginOptions, checkPortOnly: boolean) {
@@ -64,7 +71,8 @@ export class WebServerPlugin implements TestRunnerPlugin {
 
   public async setup(config: FullConfig, configDir: string, reporter: ReporterV2) {
     this._reporter = reporter;
-    this._isAvailableCallback = this._options.url ? getIsAvailableFunction(this._options.url, this._checkPortOnly, !!this._options.ignoreHTTPSErrors, this._reporter.onStdErr?.bind(this._reporter)) : undefined;
+    if (this._options.url)
+      this._isAvailableCallback = getIsAvailableFunction(this._options.url, this._checkPortOnly, !!this._options.ignoreHTTPSErrors, this._reporter.onStdErr?.bind(this._reporter));
     this._options.cwd = this._options.cwd ? path.resolve(configDir, this._options.cwd) : configDir;
     try {
       await this._startProcess();
@@ -93,6 +101,9 @@ export class WebServerPlugin implements TestRunnerPlugin {
       const port = new URL(this._options.url!).port;
       throw new Error(`${this._options.url ?? `http://localhost${port ? ':' + port : ''}`} is already used, make sure that nothing is running on the port/url or set reuseExistingServer:true in config.webServer.`);
     }
+
+    if (!this._options.command)
+      throw new Error('config.webServer.command cannot be empty');
 
     debugWebServer(`Starting WebServer process ${this._options.command}...`);
     const { launchedProcess, gracefullyClose } = await launchProcess({
@@ -135,28 +146,63 @@ export class WebServerPlugin implements TestRunnerPlugin {
 
     debugWebServer(`Process started`);
 
-    launchedProcess.stderr!.on('data', data => {
-      if (debugWebServer.enabled || (this._options.stderr === 'pipe' || !this._options.stderr))
-        this._reporter!.onStdErr?.(prefixOutputLines(data.toString(), this._options.name));
-    });
+    if (this._options.wait?.stdout || this._options.wait?.stderr)
+      this._waitForStdioPromise = new ManualPromise();
+    const stdioWaitCollectors = {
+      stdout: this._options.wait?.stdout ? '' : undefined,
+      stderr: this._options.wait?.stderr ? '' : undefined,
+    };
+
     launchedProcess.stdout!.on('data', data => {
       if (debugWebServer.enabled || this._options.stdout === 'pipe')
         this._reporter!.onStdOut?.(prefixOutputLines(data.toString(), this._options.name));
     });
+
+    launchedProcess.stderr!.on('data', data => {
+      if (debugWebServer.enabled || (this._options.stderr === 'pipe' || !this._options.stderr))
+        this._reporter!.onStdErr?.(prefixOutputLines(data.toString(), this._options.name));
+    });
+
+    const resolveStdioPromise = () => {
+      stdioWaitCollectors.stdout = undefined;
+      stdioWaitCollectors.stderr = undefined;
+      this._waitForStdioPromise?.resolve();
+    };
+
+    for (const stdio of ['stdout', 'stderr'] as const) {
+      launchedProcess[stdio]!.on('data', data => {
+        if (!this._options.wait?.[stdio] || stdioWaitCollectors[stdio] === undefined)
+          return;
+        stdioWaitCollectors[stdio] += stripVTControlCharacters(data.toString());
+        this._options.wait[stdio].lastIndex = 0;
+        const result = this._options.wait[stdio].exec(stdioWaitCollectors[stdio]);
+        if (result) {
+          for (const [key, value] of Object.entries(result.groups || {}))
+            process.env[key.toUpperCase()] = value;
+          resolveStdioPromise();
+        }
+      });
+    }
   }
 
   private async _waitForProcess() {
-    if (!this._isAvailableCallback) {
+    if (!this._isAvailableCallback && !this._waitForStdioPromise) {
       this._processExitedPromise.catch(() => {});
       return;
     }
+
     debugWebServer(`Waiting for availability...`);
     const launchTimeout = this._options.timeout || 60 * 1000;
     const cancellationToken = { canceled: false };
-    const { timedOut } = (await Promise.race([
-      raceAgainstDeadline(() => waitFor(this._isAvailableCallback!, cancellationToken), monotonicTime() + launchTimeout),
-      this._processExitedPromise,
-    ]));
+    const deadline = monotonicTime() + launchTimeout;
+
+    const racingPromises = [this._processExitedPromise];
+    if (this._isAvailableCallback)
+      racingPromises.push(raceAgainstDeadline(() => waitFor(this._isAvailableCallback!, cancellationToken), deadline));
+    if (this._waitForStdioPromise)
+      racingPromises.push(raceAgainstDeadline(() => this._waitForStdioPromise!, deadline));
+
+    const { timedOut } = await Promise.race(racingPromises);
     cancellationToken.canceled = true;
     if (timedOut)
       throw new Error(`Timed out waiting ${launchTimeout}ms from config.webServer.`);
@@ -176,7 +222,17 @@ async function isPortUsed(port: number): Promise<boolean> {
           resolve(true);
         });
   });
-  return await innerIsPortUsed('127.0.0.1') || await innerIsPortUsed('::1');
+  return new Promise<boolean>(resolve => {
+    let pending = 2;
+    const onResult = (result: boolean) => {
+      if (result)
+        resolve(true);
+      else if (--pending === 0)
+        resolve(false);
+    };
+    void innerIsPortUsed('127.0.0.1').then(onResult);
+    void innerIsPortUsed('::1').then(onResult);
+  });
 }
 
 async function waitFor(waitFn: () => Promise<boolean>, cancellationToken: { canceled: boolean }) {

@@ -25,16 +25,17 @@ export type PageTestFixtures = {
 
 export type PageWorkerFixtures = {
   headless: boolean;
-  channel: string;
+  channel: string | undefined;
   screenshot: ScreenshotMode | { mode: ScreenshotMode } & Pick<PageScreenshotOptions, 'fullPage' | 'omitBackground'>;
   trace: 'off' | 'on' | 'retain-on-failure' | 'on-first-retry' | 'retain-on-first-failure' | 'on-all-retries' | /** deprecated */ 'retry-with-trace';
   video: VideoMode | { mode: VideoMode, size: ViewportSize };
-  browserName: 'chromium' | 'firefox' | 'webkit' | '_bidiFirefox' | '_bidiChromium';
+  browserName: 'chromium' | 'firefox' | 'webkit';
   browserVersion: string;
   browserMajorVersion: number;
   electronMajorVersion: number;
+  isBidi: boolean;
   isAndroid: boolean;
   isElectron: boolean;
-  isWebView2: boolean;
   isHeadlessShell: boolean;
+  isFrozenWebkit: boolean;
 };

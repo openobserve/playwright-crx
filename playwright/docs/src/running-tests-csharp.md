@@ -114,6 +114,7 @@ dotnet test --filter "Name~GetStartedLink"
     {label: 'MSTest', value: 'mstest'},
     {label: 'NUnit', value: 'nunit'},
     {label: 'xUnit', value: 'xunit'},
+    {label: 'xUnit v3', value: 'xunit-v3'},
   ]
 }>
 <TabItem value="nunit">
@@ -143,6 +144,19 @@ We recommend xUnit 2.8+ which uses the [`conservative` parallelism algorithm](ht
 :::
 
 </TabItem>
+<TabItem value="xunit-v3">
+
+```bash
+dotnet test -- xUnit.MaxParallelThreads=5
+```
+
+See [here](https://xunit.net/docs/running-tests-in-parallel.html) for more information to run tests in parallel with xUnit v3.
+
+:::note
+xUnit v3 uses the [`conservative` parallelism algorithm](https://xunit.net/docs/running-tests-in-parallel.html#algorithms) by default.
+:::
+
+</TabItem>
 </Tabs>
 
 ## Debugging Tests
@@ -163,7 +177,7 @@ $env:PWDEBUG=1
 dotnet test
 ```
 
-![debugging tests with playwright inspector](https://github.com/microsoft/playwright/assets/13063165/a1e758d3-d379-414f-be0b-7339f12bb635)
+<img src="https://github.com/microsoft/playwright/assets/13063165/a1e758d3-d379-414f-be0b-7339f12bb635" alt="debugging tests with playwright inspector" width="2700" height="1736" />
 
 Check out our [debugging guide](./debug.md) to learn more about the [Playwright Inspector](./debug.md#playwright-inspector) as well as debugging with [Browser Developer tools](./debug.md#browser-developer-tools).
 
@@ -173,4 +187,4 @@ Check out our [debugging guide](./debug.md) to learn more about the [Playwright 
 - [Generate tests with Codegen](./codegen-intro.md)
 - [See a trace of your tests](./trace-viewer-intro.md)
 - [Run tests on CI](./ci-intro.md)
-- [Learn more about the MSTest and NUnit base classes](./test-runners.md)
+- [Learn more about the MSTest, NUnit, xUnit and xUnit v3 base classes](./test-runners.md)

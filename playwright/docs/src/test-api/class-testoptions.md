@@ -480,6 +480,42 @@ export default defineConfig({
 });
 ```
 
+## property: TestOptions.reuseContext
+* since: v1.62
+* discouraged: This option trades test isolation for speed and is intended for component tests that drive a story gallery. Leave it unset for end-to-end tests - a fresh browser context per test is one of the core guarantees of Playwright Test.
+- type: <[boolean]>
+
+**Experimental.** When set to `true`, all tests in a worker process run in a single browser context that is reused between tests, instead of getting a brand new context per test. Defaults to `false`.
+
+Between tests, Playwright resets the state that component tests typically touch: it clears cookies, cache, local storage and IndexedDB of visited origins, unregisters service workers, closes extra pages, removes routes, bindings and init scripts, and re-applies the configured storage state, viewport and emulation options.
+
+This reset is best-effort, not a guarantee of isolation. State that is **not** reset includes:
+* Permissions granted with [`method: BrowserContext.grantPermissions`] during a test.
+* Runtime changes made through [`method: BrowserContext.setGeolocation`], [`method: BrowserContext.setOffline`] and [`method: BrowserContext.setExtraHTTPHeaders`].
+* Browsing history, `window.name` and any browser-process-wide state.
+
+Additional restrictions:
+* The option is ignored when [`property: TestOptions.video`] recording is enabled.
+* Only a few context options may differ between consecutive tests: `colorScheme`, `forcedColors`, `reducedMotion`, `contrast`, `screen`, `userAgent`, `viewport` and `testIdAttribute`. Changing any other option in [`method: Test.use`], for example `locale` or `storageState`, silently forces a fresh context and negates the speedup.
+* Do not combine with [`property: TestOptions.connectOptions`] pointing multiple workers at a shared browser - workers would compete for the single reusable context.
+* `recordHar` in [`property: TestOptions.contextOptions`] is not supported and produces no HAR file.
+
+**Usage**
+
+```js title="playwright.config.ts"
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  projects: [
+    {
+      name: 'components',
+      testDir: './tests/components',
+      use: { reuseContext: true },
+    },
+  ],
+});
+```
+
 ## property: TestOptions.screenshot
 * since: v1.10
 - type: <[Object]|[ScreenshotMode]<"off"|"on"|"only-on-failure"|"on-first-failure">>
@@ -540,7 +576,8 @@ test('not signed in test', async ({ page }) => {
 ## property: TestOptions.testIdAttribute
 * since: v1.27
 
-Custom attribute to be used in [`method: Page.getByTestId`]. `data-testid` is used by default.
+Custom attribute to be used in [`method: Page.getByTestId`]. `data-testid` is used by default. To match
+elements with any of several attributes, pass them as a comma-separated list.
 
 **Usage**
 
@@ -550,6 +587,18 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   use: {
     testIdAttribute: 'pw-test-id',
+  },
+});
+```
+
+Multiple attributes:
+
+```js title="playwright.config.ts"
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  use: {
+    testIdAttribute: 'data-pw,data-ti',
   },
 });
 ```
@@ -571,20 +620,23 @@ export default defineConfig({
 
 ## property: TestOptions.trace
 * since: v1.10
-- type: <[Object]|[TraceMode]<"off"|"on"|"retain-on-failure"|"on-first-retry"|"retain-on-first-failure">>
-  - `mode` <[TraceMode]<"off"|"on"|"retain-on-failure"|"on-first-retry"|"on-all-retries"|"retain-on-first-failure">> Trace recording mode.
+- type: <[Object]|[TraceMode]<"off"|"on"|"retain-on-failure"|"on-first-retry"|"retain-on-first-failure"|"retain-on-failure-and-retries">>
+  - `mode` <[TraceMode]<"off"|"on"|"retain-on-failure"|"on-first-retry"|"on-all-retries"|"retain-on-first-failure"|"retain-on-failure-and-retries">> Trace recording mode.
   - `attachments` ?<[boolean]> Whether to include test attachments. Defaults to true. Optional.
   - `screenshots` ?<[boolean]> Whether to capture screenshots during tracing. Screenshots are used to build a timeline preview. Defaults to true. Optional.
   - `snapshots` ?<[boolean]> Whether to capture DOM snapshot on every action. Defaults to true. Optional.
   - `sources` ?<[boolean]> Whether to include source files for trace actions. Defaults to true. Optional.
 
-Whether to record trace for each test. Defaults to `'off'`.
+Whether to record trace for each test. Defaults to `'off'`. The initial run of a test is the "first run"; subsequent runs caused by [retries](../test-retries.md) are "retries".
 * `'off'`: Do not record trace.
-* `'on'`: Record trace for each test.
-* `'on-first-retry'`: Record trace only when retrying a test for the first time.
-* `'on-all-retries'`: Record trace only when retrying a test.
-* `'retain-on-failure'`: Record trace for each test. When test run passes, remove the recorded trace.
-* `'retain-on-first-failure'`: Record trace for the first run of each test, but not for retries. When test run passes, remove the recorded trace.
+* `'on'`: Record and keep a trace for every run.
+* `'on-first-retry'`: Record and keep a trace only for the first retry of a test.
+* `'on-all-retries'`: Record and keep a trace for every retry.
+* `'retain-on-failure'`: Record a trace for every run, but keep it only for runs that failed. A failed run's trace is kept even when a later retry passes.
+* `'retain-on-first-failure'`: Record a trace only for the first run of a test (not for retries), and keep it only if that run failed.
+* `'retain-on-failure-and-retries'`: Record a trace for every run, and keep it for any run that failed or that is a retry.
+
+See [trace modes](../test-use-options.md#trace-modes) for a side-by-side comparison of what each mode records and keeps.
 
 For more control, pass an object that specifies `mode` and trace features to enable.
 
@@ -619,19 +671,36 @@ export default defineConfig({
 
 ## property: TestOptions.video
 * since: v1.10
-- type: <[Object]|[VideoMode]<"off"|"on"|"retain-on-failure"|"on-first-retry">>
-  - `mode` <[VideoMode]<"off"|"on"|"retain-on-failure"|"on-first-retry">> Video recording mode.
+- type: <[Object]|[VideoMode]<"off"|"on"|"retain-on-failure"|"on-first-retry"|"on-all-retries"|"retain-on-first-failure"|"retain-on-failure-and-retries">>
+  - `mode` <[VideoMode]<"off"|"on"|"retain-on-failure"|"on-first-retry"|"on-all-retries"|"retain-on-first-failure"|"retain-on-failure-and-retries">> Video recording mode.
   - `size` ?<[Object]> Size of the recorded video. Optional.
     - `width` <[int]>
     - `height` <[int]>
+  - `show` ?<[Object]> If specified, visually annotates the video with test information and action highlights.
+    - `actions` ?<[Object]> Controls visual annotations on interacted elements.
+      - `duration` ?<[float]> How long each annotation is displayed in milliseconds. Defaults to `500`.
+      - `position` ?<[AnnotatePosition]<"top-left"|"top"|"top-right"|"bottom-left"|"bottom"|"bottom-right">> Position of the action title overlay. Defaults to `"top-right"`.
+      - `fontSize` ?<[int]> Font size of the action title in pixels. Defaults to `24`.
+      - `cursor` ?<[ScreencastCursor]<"none"|"pointer">> Cursor decoration shown for pointer actions. `"pointer"` (the default) renders a mouse pointer that animates from the previous action point to the next one. `"none"` disables the cursor decoration.
+    - `test` ?<[Object]> Controls test information displayed as a status overlay in the video.
+      - `level` ?<[TestAnnotationLevel]<"file"|"test"|"step">> Level of the detail to include about the current test.
+      - `position` ?<[AnnotatePosition]<"top-left"|"top"|"top-right"|"bottom-left"|"bottom"|"bottom-right">> Position of the test information overlay. Defaults to `"top-left"`.
+      - `fontSize` ?<[int]> Font size of the test information in pixels. Defaults to `14`.
 
-Whether to record video for each test. Defaults to `'off'`.
+Whether to record video for each test. Defaults to `'off'`. The initial run of a test is the "first run"; subsequent runs caused by [retries](../test-retries.md) are "retries".
 * `'off'`: Do not record video.
-* `'on'`: Record video for each test.
-* `'retain-on-failure'`: Record video for each test, but remove all videos from successful test runs.
-* `'on-first-retry'`: Record video only when retrying a test for the first time.
+* `'on'`: Record and keep a video for every run.
+* `'on-first-retry'`: Record and keep a video only for the first retry of a test.
+* `'on-all-retries'`: Record and keep a video for every retry.
+* `'retain-on-failure'`: Record a video for every run, but keep it only for runs that failed. A failed run's video is kept even when a later retry passes.
+* `'retain-on-first-failure'`: Record a video only for the first run of a test (not for retries), and keep it only if that run failed.
+* `'retain-on-failure-and-retries'`: Record a video for every run, and keep it for any run that failed or that is a retry.
+
+See [video modes](../test-use-options.md#video-modes) for a side-by-side comparison of what each mode records and keeps.
 
 To control video size, pass an object with `mode` and `size` properties. If video size is not specified, it will be equal to [`property: TestOptions.viewport`] scaled down to fit into 800x800. If `viewport` is not configured explicitly the video size defaults to 800x450. Actual picture of each page will be scaled down if necessary to fit the specified size.
+
+To annotate actions in the video, pass `show` with `action` and/or `test` sub-options. The `action` option controls visual highlights on interacted elements with an optional `delay` in milliseconds (defaults to `500`). The `test` option controls which test information is displayed as a status overlay.
 
 **Usage**
 

@@ -1,7 +1,7 @@
 // @ts-check
 const path = require('path');
 const fs = require('fs');
-const StreamZip = require('node-stream-zip');
+const yauzl = require('yauzl');
 const vm = require('vm');
 const os = require('os');
 
@@ -20,7 +20,9 @@ async function generateChromiumProtocol(executablePath) {
   const browser = await playwright.launch({ executablePath, args: ['--remote-debugging-port=9339'] });
   const page = await browser.newPage();
   await page.goto(`http://localhost:9339/json/protocol`);
-  const json = JSON.parse(await page.evaluate(() => document.documentElement.innerText));
+  const text = await page.evaluate(() => document.documentElement.innerText);
+  // Replace broken comment in the protocol.
+  const json = JSON.parse(text.replace('*://*:*/*.css', '<example>'));
   await browser.close();
   await fs.promises.writeFile(outputPath, jsonToTS(json));
   console.log(`Wrote protocol.d.ts to ${path.relative(process.cwd(), outputPath)}`);
@@ -38,11 +40,11 @@ const conditionFilter = command => command.condition !== 'defined(WTF_PLATFORM_I
 function jsonToTS(json) {
   return `// This is generated from /utils/protocol-types-generator/index.js
 type binary = string;
-export module Protocol {${json.domains.map(domain => `${domain.description ? `
+export namespace Protocol {${json.domains.map(domain => `${domain.description ? `
   /**
    * ${domain.description}
    */` : ''}
-  export module ${domain.domain} {${(domain.types || []).map(type => `${type.description ? `
+  export namespace ${domain.domain} {${(domain.types || []).map(type => `${type.description ? `
     /**
      * ${type.description}
      */` : ''}${type.properties ? `
@@ -82,8 +84,11 @@ export module Protocol {${json.domains.map(domain => `${domain.description ? `
     }`).join('')}
   }
   `).join('')}
-  export interface Events {${json.domains.map(domain => (domain.events || []).map(event => `
+  export type Events = {${json.domains.map(domain => (domain.events || []).map(event => `
     "${domain.domain}.${event.name}": ${domain.domain}.${event.name}Payload;`).join('')).join('')}
+  }
+  export type EventMap = {${json.domains.map(domain => (domain.events || []).map(event => `
+    ["${domain.domain}.${event.name}"]: [${domain.domain}.${event.name}Payload];`).join('')).join('')}
   }
   export interface CommandParameters {${json.domains.map(domain => (domain.commands || []).filter(conditionFilter).map(command => `
     "${domain.domain}.${command.name}": ${domain.domain}.${command.name}Parameters;`).join('')).join('')}
@@ -123,15 +128,44 @@ function typeOfProperty(property, domain) {
   return property.type;
 }
 
+/**
+ * @param {string} zipPath
+ * @param {string} entryName
+ * @returns {Promise<Buffer>}
+ */
+function readFileFromZip(zipPath, entryName) {
+  return new Promise((resolve, reject) => {
+    yauzl.open(zipPath, { lazyEntries: true }, (err, zip) => {
+      if (err) return reject(err);
+      zip.on('entry', entry => {
+        if (entry.fileName !== entryName) {
+          zip.readEntry();
+          return;
+        }
+        zip.openReadStream(entry, (err, readStream) => {
+          if (err) return reject(err);
+          const buffers = [];
+          readStream.on('data', d => buffers.push(d));
+          readStream.on('end', () => {
+            zip.close();
+            resolve(Buffer.concat(buffers));
+          });
+          readStream.on('error', reject);
+        });
+      });
+      zip.on('end', () => reject(new Error(`${entryName} not found in ${zipPath}`)));
+      zip.on('error', reject);
+      zip.readEntry();
+    });
+  });
+}
+
 async function generateFirefoxProtocol(executablePath) {
   const outputPath = path.join(__dirname, '../../packages/playwright-core/src/server/firefox/protocol.d.ts');
   const omnija = os.platform() === 'darwin' ?
     path.join(executablePath, '../../Resources/omni.ja') :
     path.join(executablePath, '../omni.ja');
-  const zip = new StreamZip({file: omnija, storeEntries: true});
-  // @ts-ignore
-  await new Promise(x => zip.on('ready', x));
-  const data = zip.entryDataSync(zip.entry('chrome/juggler/content/protocol/Protocol.js'))
+  const data = await readFileFromZip(omnija, 'chrome/juggler/content/protocol/Protocol.js');
 
   const ctx = vm.createContext();
   const protocolJSCode = data.toString('utf8').replace('export const protocol', 'const protocol')
@@ -175,16 +209,16 @@ async function generateFirefoxProtocol(executablePath) {
 function firefoxJSONToTS(json) {
   const domains = Object.entries(json.domains);
   return `// This is generated from /utils/protocol-types-generator/index.js
-export module Protocol {
+export namespace Protocol {
 ${domains.map(([domainName, domain]) => `
-  export module ${domainName} {${Object.entries(domain.types).map(([typeName, type]) => `
+  export namespace ${domainName} {${Object.entries(domain.types).map(([typeName, type]) => `
     export type ${typeName} = ${firefoxTypeToString(type, '    ')};`).join('')}${(Object.entries(domain.events)).map(([eventName, event]) => `
     export type ${eventName}Payload = ${firefoxTypeToString(event)}`).join('')}${(Object.entries(domain.methods)).map(([commandName, command]) => `
     export type ${commandName}Parameters = ${firefoxTypeToString(command.params)};
     export type ${commandName}ReturnValue = ${firefoxTypeToString(command.returns)};`).join('')}
   }`).join('')}
-  export interface Events {${domains.map(([domainName, domain]) => Object.keys(domain.events).map(eventName => `
-    "${domainName}.${eventName}": ${domainName}.${eventName}Payload;`).join('')).join('')}
+  export type EventMap = {${domains.map(([domainName, domain]) => Object.keys(domain.events).map(eventName => `
+    ["${domainName}.${eventName}"]: [${domainName}.${eventName}Payload];`).join('')).join('')}
   }
   export interface CommandParameters {${domains.map(([domainName, domain]) => Object.keys(domain.methods).map(commandName => `
     "${domainName}.${commandName}": ${domainName}.${commandName}Parameters;`).join('')).join('')}
@@ -220,4 +254,4 @@ function firefoxTypeToString(type, indent='    ') {
   return type['$type'];
 }
 
-module.exports = { generateProtocol };
+module.exports = { generateProtocol, jsonToTS };

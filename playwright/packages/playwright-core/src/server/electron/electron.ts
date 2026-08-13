@@ -19,25 +19,25 @@ import os from 'os';
 import path from 'path';
 import * as readline from 'readline';
 
-import { ManualPromise } from '../../utils';
-import { wrapInASCIIBox } from '../utils/ascii';
-import { RecentLogsCollector } from '../utils/debugLogger';
-import { eventsHelper } from '../utils/eventsHelper';
-import { validateBrowserContextOptions } from '../browserContext';
+import { wrapInASCIIBox } from '@utils/ascii';
+import { RecentLogsCollector } from '@utils/debugLogger';
+import { eventsHelper } from '@utils/eventsHelper';
+import { envArrayToObject, launchProcess } from '@utils/processLauncher';
+import { ManualPromise } from '@isomorphic/manualPromise';
+import { libPath } from '../../package';
+import { BrowserContext, validateBrowserContextOptions } from '../browserContext';
 import { CRBrowser } from '../chromium/crBrowser';
 import { CRConnection } from '../chromium/crConnection';
 import { createHandle, CRExecutionContext } from '../chromium/crExecutionContext';
-import { toConsoleMessageLocation } from '../chromium/crProtocolHelper';
+import { stackTraceToLocation } from '../chromium/crProtocolHelper';
 import { ConsoleMessage } from '../console';
 import { helper } from '../helper';
-import { SdkObject, serverSideCallMetadata } from '../instrumentation';
+import { SdkObject } from '../instrumentation';
 import * as js from '../javascript';
-import { envArrayToObject, launchProcess } from '../utils/processLauncher';
-import { ProgressController } from '../progress';
 import { WebSocketTransport } from '../transport';
+import { nullProgress } from '../progress';
 
 import type { BrowserOptions, BrowserProcess } from '../browser';
-import type { BrowserContext } from '../browserContext';
 import type { CRBrowserContext } from '../chromium/crBrowser';
 import type { CRSession } from '../chromium/crConnection';
 import type { CRPage } from '../chromium/crPage';
@@ -46,7 +46,7 @@ import type { Page } from '../page';
 import type { Playwright } from '../playwright';
 import type { Progress } from '../progress';
 import type * as types from '../types';
-import type * as channels from '@protocol/channels';
+import type * as channels from '../channels';
 import type * as childProcess from 'child_process';
 import type { BrowserWindow } from 'electron';
 
@@ -85,9 +85,9 @@ export class ElectronApplication extends SdkObject {
       this._nodeElectronHandlePromise.resolve(new js.JSHandle(this._nodeExecutionContext!, 'object', 'ElectronModule', remoteObject.objectId!));
     });
     this._nodeSession.on('Runtime.consoleAPICalled', event => this._onConsoleAPI(event));
+    this._browserContext.on(BrowserContext.Events.Page, page => this._onPage(page));
     const appClosePromise = new Promise(f => this.once(ElectronApplication.Events.Close, f));
     this._browserContext.setCustomCloseHandler(async () => {
-      await this._browserContext.stopVideoRecording();
       const electronHandle = await this._nodeElectronHandlePromise;
       await electronHandle.evaluate(({ app }) => app.quit()).catch(() => {});
       this._nodeConnection.close();
@@ -115,7 +115,7 @@ export class ElectronApplication extends SdkObject {
     if (!this._nodeExecutionContext)
       return;
     const args = event.args.map(arg => createHandle(this._nodeExecutionContext!, arg));
-    const message = new ConsoleMessage(null, event.type, undefined, args, toConsoleMessageLocation(event.stackTrace));
+    const message = new ConsoleMessage(null, null, event.type, undefined, args, stackTraceToLocation(event.stackTrace), event.timestamp);
     this.emit(ElectronApplication.Events.Console, message);
   }
 
@@ -133,133 +133,157 @@ export class ElectronApplication extends SdkObject {
     return this._browserContext;
   }
 
-  async close() {
+  async close(progress: Progress) {
     // This will call BrowserContext.setCustomCloseHandler.
-    await this._browserContext.close({ reason: 'Application exited' });
+    await this._browserContext.close(progress, { reason: 'Application exited' });
   }
 
-  async browserWindow(page: Page): Promise<js.JSHandle<BrowserWindow>> {
+  private _onPage(page: Page) {
+    if (process.env.PLAYWRIGHT_ELECTRON_LEGACY_PAGE_CLOSE)
+      return;
+    // Target.closeTarget can hang on Electron when the close races a committing
+    // navigation. Close from the main process instead. We close the webContents
+    // rather than the BrowserWindow because BrowserWindow.close() always runs the
+    // beforeunload handler, while webContents.close() lets us opt in or out of it.
+    page.setCustomCloseHandler(async runBeforeUnload => {
+      const electronHandle = await this._nodeElectronHandlePromise;
+      const closed = await electronHandle.evaluate(({ webContents }, { targetId, runBeforeUnload }) => {
+        const wc = webContents.fromDevToolsTargetId(targetId);
+        if (!wc || wc.isDestroyed())
+          return false;
+        wc.close({ waitForBeforeUnload: runBeforeUnload });
+        return true;
+      }, { targetId: (page.delegate as CRPage)._targetId, runBeforeUnload }).catch(() => false);
+      // Fall back to the default close if the webContents could not be found.
+      if (!closed)
+        await page.delegate.closePage(runBeforeUnload);
+    });
+  }
+
+  async browserWindow(progress: Progress, page: Page): Promise<js.JSHandle<BrowserWindow>> {
     // Assume CRPage as Electron is always Chromium.
     const targetId = (page.delegate as CRPage)._targetId;
-    const electronHandle = await this._nodeElectronHandlePromise;
-    return await electronHandle.evaluateHandle(({ BrowserWindow, webContents }, targetId) => {
+    const electronHandle = await progress.race(this._nodeElectronHandlePromise);
+    return await progress.race(electronHandle.evaluateHandle(({ BrowserWindow, webContents }, targetId) => {
       const wc = webContents.fromDevToolsTargetId(targetId);
       return BrowserWindow.fromWebContents(wc!)!;
-    }, targetId);
+    }, targetId));
   }
 }
 
 export class Electron extends SdkObject {
   constructor(playwright: Playwright) {
     super(playwright, 'electron');
+    this.logName = 'browser';
   }
 
-  async launch(options: channels.ElectronLaunchParams): Promise<ElectronApplication> {
-    const {
-      args = [],
-    } = options;
-    const controller = new ProgressController(serverSideCallMetadata(), this);
-    controller.setLogName('browser');
-    return controller.run(async progress => {
-      let app: ElectronApplication | undefined = undefined;
-      // --remote-debugging-port=0 must be the last playwright's argument, loader.ts relies on it.
-      let electronArguments = ['--inspect=0', '--remote-debugging-port=0', ...args];
+  async launch(progress: Progress, options: Omit<channels.ElectronLaunchParams, 'timeout'>): Promise<ElectronApplication> {
+    let app: ElectronApplication | undefined = undefined;
+    // --remote-debugging-port=0 must be the last playwright's argument, loader.ts relies on it.
+    let electronArguments = ['--inspect=0', '--remote-debugging-port=0', ...(options.args || [])];
 
-      if (os.platform() === 'linux') {
-        const runningAsRoot = process.geteuid && process.geteuid() === 0;
-        if (runningAsRoot && electronArguments.indexOf('--no-sandbox') === -1)
-          electronArguments.unshift('--no-sandbox');
-      }
+    if (os.platform() === 'linux') {
+      if (!options.chromiumSandbox && electronArguments.indexOf('--no-sandbox') === -1)
+        electronArguments.unshift('--no-sandbox');
+    }
 
-      const artifactsDir = await fs.promises.mkdtemp(ARTIFACTS_FOLDER);
+    let artifactsDir: string;
+    const tempDirectories: string[] = [];
+    if (options.artifactsDir) {
+      artifactsDir = options.artifactsDir;
+    } else {
+      artifactsDir = await progress.race(fs.promises.mkdtemp(ARTIFACTS_FOLDER));
+      tempDirectories.push(artifactsDir);
+    }
+    const browserLogsCollector = new RecentLogsCollector();
+    const env = options.env ? envArrayToObject(options.env) : process.env;
 
-      const browserLogsCollector = new RecentLogsCollector();
-      const env = options.env ? envArrayToObject(options.env) : process.env;
-
-      let command: string;
-      if (options.executablePath) {
-        command = options.executablePath;
-      } else {
-        try {
-          // By default we fallback to the Electron App executable path.
-          // 'electron/index.js' resolves to the actual Electron App.
-          command = require('electron/index.js');
-        } catch (error: any) {
-          if ((error as NodeJS.ErrnoException)?.code === 'MODULE_NOT_FOUND') {
-            throw new Error('\n' + wrapInASCIIBox([
-              'Electron executablePath not found!',
-              'Please install it using `npm install -D electron` or set the executablePath to your Electron executable.',
-            ].join('\n'), 1));
-          }
-          throw error;
+    let command: string;
+    if (options.executablePath) {
+      command = options.executablePath;
+    } else {
+      try {
+        // By default we fallback to the Electron App executable path.
+        // 'electron/index.js' resolves to the actual Electron App.
+        command = require('electron/index.js');
+      } catch (error: any) {
+        if ((error as NodeJS.ErrnoException)?.code === 'MODULE_NOT_FOUND') {
+          throw new Error('\n' + wrapInASCIIBox([
+            'Electron executablePath not found!',
+            'Please install it using `npm install -D electron` or set the executablePath to your Electron executable.',
+          ].join('\n'), 1));
         }
-        // Only use our own loader for non-packaged apps.
-        // Packaged apps might have their own command line handling.
-        electronArguments.unshift('-r', require.resolve('./loader'));
+        throw error;
       }
-      let shell = false;
-      if (process.platform === 'win32') {
-        // On Windows in order to run .cmd files, shell: true is required.
-        // https://github.com/nodejs/node/issues/52554
-        shell = true;
-        // On Windows, we need to quote the executable path due to shell: true.
-        command = `"${command}"`;
-        // On Windows, we need to quote the arguments due to shell: true.
-        electronArguments = electronArguments.map(arg => `"${arg}"`);
-      }
+      // Only use our own loader for non-packaged apps.
+      // Packaged apps might have their own command line handling.
+      electronArguments.unshift('-r', libPath('server', 'electron', 'loader.js'));
+    }
+    let shell = false;
+    if (process.platform === 'win32') {
+      // On Windows in order to run .cmd files, shell: true is required.
+      // https://github.com/nodejs/node/issues/52554
+      shell = true;
+      // On Windows, we need to quote the executable path and arguments due to shell: true.
+      // We allso pass the arguments as a single string due to DEP0190,
+      // see https://github.com/microsoft/playwright/issues/38278.
+      command = [command, ...electronArguments].map(arg => `"${escapeDoubleQuotes(arg)}"`).join(' ');
+      electronArguments = [];
+    }
 
-      // When debugging Playwright test that runs Electron, NODE_OPTIONS
-      // will make the debugger attach to Electron's Node. But Playwright
-      // also needs to attach to drive the automation. Disable external debugging.
-      delete env.NODE_OPTIONS;
-      const { launchedProcess, gracefullyClose, kill } = await launchProcess({
-        command,
-        args: electronArguments,
-        env,
-        log: (message: string) => {
-          progress.log(message);
-          browserLogsCollector.log(message);
-        },
-        shell,
-        stdio: 'pipe',
-        cwd: options.cwd,
-        tempDirectories: [artifactsDir],
-        attemptToGracefullyClose: () => app!.close(),
-        handleSIGINT: true,
-        handleSIGTERM: true,
-        handleSIGHUP: true,
-        onExit: () => app?.emit(ElectronApplication.Events.Close),
-      });
+    // When debugging Playwright test that runs Electron, NODE_OPTIONS
+    // will make the debugger attach to Electron's Node. But Playwright
+    // also needs to attach to drive the automation. Disable external debugging.
+    delete env.NODE_OPTIONS;
+    const { launchedProcess, gracefullyClose, kill } = await progress.race(launchProcess({
+      command,
+      args: electronArguments,
+      env,
+      log: (message: string) => {
+        progress.log(message);
+        browserLogsCollector.log(message);
+      },
+      shell,
+      stdio: 'pipe',
+      cwd: options.cwd,
+      tempDirectories,
+      attemptToGracefullyClose: () => app!.close(nullProgress),
+      handleSIGINT: true,
+      handleSIGTERM: true,
+      handleSIGHUP: true,
+      onExit: () => app?.emit(ElectronApplication.Events.Close),
+    }));
 
-      // All waitForLines must be started immediately.
-      // Otherwise the lines might come before we are ready.
-      const waitForXserverError = new Promise(async (resolve, reject) => {
-        waitForLine(progress, launchedProcess, /Unable to open X display/).then(() => reject(new Error([
-          'Unable to open X display!',
-          `================================`,
-          'Most likely this is because there is no X server available.',
-          "Use 'xvfb-run' on Linux to launch your tests with an emulated display server.",
-          "For example: 'xvfb-run npm run test:e2e'",
-          `================================`,
-          progress.metadata.log
-        ].join('\n')))).catch(() => {});
-      });
-      const nodeMatchPromise = waitForLine(progress, launchedProcess, /^Debugger listening on (ws:\/\/.*)$/);
-      const chromeMatchPromise = waitForLine(progress, launchedProcess, /^DevTools listening on (ws:\/\/.*)$/);
-      const debuggerDisconnectPromise = waitForLine(progress, launchedProcess, /Waiting for the debugger to disconnect\.\.\./);
+    // All waitForLines must be started immediately.
+    // Otherwise the lines might come before we are ready.
+    const waitForXserverError = waitForLine(progress, launchedProcess, /Unable to open X display/).then(() => {
+      throw new Error([
+        'Unable to open X display!',
+        `================================`,
+        'Most likely this is because there is no X server available.',
+        "Use 'xvfb-run' on Linux to launch your tests with an emulated display server.",
+        "For example: 'xvfb-run npm run test:e2e'",
+        `================================`,
+        progress.metadata.log
+      ].join('\n'));
+    });
+    const nodeMatchPromise = waitForLine(progress, launchedProcess, /^Debugger listening on (ws:\/\/.*)$/);
+    const chromeMatchPromise = waitForLine(progress, launchedProcess, /^DevTools listening on (ws:\/\/.*)$/);
+    const debuggerDisconnectPromise = waitForLine(progress, launchedProcess, /Waiting for the debugger to disconnect\.\.\./);
 
+    try {
       const nodeMatch = await nodeMatchPromise;
       const nodeTransport = await WebSocketTransport.connect(progress, nodeMatch[1]);
-      const nodeConnection = new CRConnection(nodeTransport, helper.debugProtocolLogger(), browserLogsCollector);
-
+      const nodeConnection = new CRConnection(this, nodeTransport, helper.debugProtocolLogger(), browserLogsCollector);
       // Immediately release exiting process under debug.
       debuggerDisconnectPromise.then(() => {
         nodeTransport.close();
       }).catch(() => {});
-      const chromeMatch = await Promise.race([
+
+      const chromeMatch = await progress.race(Promise.race([
         chromeMatchPromise,
         waitForXserverError,
-      ]) as RegExpMatchArray;
+      ]));
       const chromeTransport = await WebSocketTransport.connect(progress, chromeMatch[1]);
       const browserProcess: BrowserProcess = {
         onclose: undefined,
@@ -273,7 +297,7 @@ export class Electron extends SdkObject {
       };
       const browserOptions: BrowserOptions = {
         name: 'electron',
-        isChromium: true,
+        browserType: 'chromium',
         headful: true,
         persistent: contextOptions,
         browserProcess,
@@ -282,41 +306,46 @@ export class Electron extends SdkObject {
         artifactsDir,
         downloadsPath: artifactsDir,
         tracesDir: options.tracesDir || artifactsDir,
-        originalLaunchOptions: { timeout: options.timeout },
+        originalLaunchOptions: {},
       };
       validateBrowserContextOptions(contextOptions, browserOptions);
-      const browser = await CRBrowser.connect(this.attribution.playwright, chromeTransport, browserOptions);
+      const browser = await progress.race(CRBrowser.connect(this.attribution.playwright, chromeTransport, browserOptions));
       app = new ElectronApplication(this, browser, nodeConnection, launchedProcess);
-      await app.initialize();
+      await progress.race(app.initialize());
       return app;
-    }, options.timeout);
+    } catch (error) {
+      await progress.race(kill());
+      throw error;
+    }
   }
 }
 
-function waitForLine(progress: Progress, process: childProcess.ChildProcess, regex: RegExp): Promise<RegExpMatchArray> {
-  return new Promise((resolve, reject) => {
-    const rl = readline.createInterface({ input: process.stderr! });
-    const failError = new Error('Process failed to launch!');
-    const listeners = [
-      eventsHelper.addEventListener(rl, 'line', onLine),
-      eventsHelper.addEventListener(rl, 'close', reject.bind(null, failError)),
-      eventsHelper.addEventListener(process, 'exit', reject.bind(null, failError)),
-      // It is Ok to remove error handler because we did not create process and there is another listener.
-      eventsHelper.addEventListener(process, 'error', reject.bind(null, failError))
-    ];
+async function waitForLine(progress: Progress, process: childProcess.ChildProcess, regex: RegExp) {
+  const promise = new ManualPromise<RegExpMatchArray>();
+  // eslint-disable-next-line no-restricted-properties
+  const rl = readline.createInterface({ input: process.stderr! });
+  const failError = new Error('Process failed to launch!');
+  const listeners = [
+    eventsHelper.addEventListener(rl, 'line', onLine),
+    eventsHelper.addEventListener(rl, 'close', () => promise.reject(failError)),
+    eventsHelper.addEventListener(process, 'exit', () => promise.reject(failError)),
+    // It is Ok to remove error handler because we did not create process and there is another listener.
+    eventsHelper.addEventListener(process, 'error', () => promise.reject(failError)),
+  ];
 
-    progress.cleanupWhenAborted(cleanup);
+  function onLine(line: string) {
+    const match = line.match(regex);
+    if (match)
+      promise.resolve(match);
+  }
 
-    function onLine(line: string) {
-      const match = line.match(regex);
-      if (!match)
-        return;
-      cleanup();
-      resolve(match);
-    }
+  try {
+    return await progress.race(promise);
+  } finally {
+    eventsHelper.removeEventListeners(listeners);
+  }
+}
 
-    function cleanup() {
-      eventsHelper.removeEventListeners(listeners);
-    }
-  });
+function escapeDoubleQuotes(str: string): string {
+  return str.replace(/"/g, '\\"');
 }

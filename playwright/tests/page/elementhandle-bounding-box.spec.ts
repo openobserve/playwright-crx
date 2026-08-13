@@ -30,8 +30,8 @@ it('should work', async ({ page, server, browserName, headless, isLinux }) => {
 it('should handle nested frames', async ({ page, server }) => {
   await page.setViewportSize({ width: 616, height: 500 });
   await page.goto(server.PREFIX + '/frames/nested-frames.html');
-  const nestedFrame = page.frames().find(frame => frame.name() === 'dos');
-  const elementHandle = await nestedFrame.$('div');
+  const nestedFrame = page.frameLocator('[name="2frames"]').frameLocator('[name=dos]');
+  const elementHandle = await nestedFrame.locator('div').elementHandle();
   const box = await elementHandle.boundingBox();
   expect(box).toEqual({ x: 24, y: 224, width: 268, height: 18 });
 });
@@ -82,6 +82,21 @@ it('should return null for invisible elements', async ({ page, server }) => {
   await page.setContent('<div style="display:none">hi</div>');
   const element = await page.$('div');
   expect(await element.boundingBox()).toBe(null);
+});
+
+it('should get bounding box of element inside a cross-origin iframe', async ({ page, server }) => {
+  await page.goto(server.EMPTY_PAGE);
+  await page.setContent(`
+    <div style="height:120px"></div>
+    <iframe style="border:0;margin-left:30px;width:300px;height:200px" src="${server.CROSS_PROCESS_PREFIX}/input/button.html"></iframe>
+  `);
+  const frame = page.frames()[1];
+  const button = await frame.waitForSelector('button');
+  const iframeBox = (await (await page.$('iframe')).boundingBox())!;
+  const inner = await button.evaluate(b => { const r = b.getBoundingClientRect(); return { x: r.left, y: r.top }; });
+  const box = (await button.boundingBox())!;
+  expect(Math.round(box.x)).toBe(Math.round(iframeBox.x + inner.x));
+  expect(Math.round(box.y)).toBe(Math.round(iframeBox.y + inner.y));
 });
 
 it('should force a layout', async ({ page, server }) => {

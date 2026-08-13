@@ -16,8 +16,8 @@
 
 import { test as it, expect } from './pageTest';
 
-it('should work @smoke', async function({ page, browserName }) {
-  it.skip(browserName === 'firefox');
+it('should work @smoke', async function({ page, browserName, isBidi }) {
+  it.skip(browserName === 'firefox' && !isBidi);
 
   await page.setContent(`<div id=d1 tabIndex=0></div>`);
   expect(await page.evaluate(() => document.activeElement.nodeName)).toBe('BODY');
@@ -109,7 +109,7 @@ it('should traverse only form elements', async function({ page, browserName, pla
 });
 
 it('clicking checkbox should activate it', async ({ page, browserName, headless, platform }) => {
-  it.fixme(browserName !== 'chromium');
+  it.skip(browserName === 'webkit', 'Safari does not focus on click');
 
   await page.setContent(`<input type=checkbox></input>`);
   await page.click('input');
@@ -119,10 +119,9 @@ it('clicking checkbox should activate it', async ({ page, browserName, headless,
 
 it('tab should cycle between single input and browser', {
   annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/32339' }
-}, async ({ page, browserName, headless, channel }) => {
-  const isHeadlessShell = channel === 'chromium-headless-shell' || (!channel && headless);
-  it.fixme(browserName === 'chromium' && !isHeadlessShell, 'Chromium keeps input focused.');
-  it.fixme(browserName !== 'chromium');
+}, async ({ page, browserName, isHeadlessShell }) => {
+  it.skip(browserName === 'chromium' && !isHeadlessShell, 'Chromium keeps input focused.');
+  it.fixme(browserName === 'firefox');
   await page.setContent(`<label for="input1">input1</label>
     <input id="input1">
     <script>
@@ -147,10 +146,9 @@ it('tab should cycle between single input and browser', {
 
 it('tab should cycle between document elements and browser', {
   annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/32339' }
-}, async ({ page, browserName, headless, channel }) => {
-  const isHeadlessShell = channel === 'chromium-headless-shell' || (!channel && headless);
-  it.fixme(browserName === 'chromium' && !isHeadlessShell, 'Chromium keeps last input focused.');
-  it.fixme(browserName !== 'chromium');
+}, async ({ page, browserName, isHeadlessShell }) => {
+  it.skip(browserName === 'chromium' && !isHeadlessShell, 'Chromium keeps last input focused.');
+  it.fixme(browserName === 'firefox');
   await page.setContent(`
     <input id="input1">
     <input id="input2">

@@ -16,7 +16,6 @@
  */
 
 import { contextTest as it, expect } from '../config/browserTest';
-import { hostPlatform } from '../../packages/playwright-core/src/server/utils/hostPlatform';
 
 function getPermission(page, name) {
   return page.evaluate(name => navigator.permissions.query({ name }).then(result => result.state), name);
@@ -30,9 +29,8 @@ it.describe('permissions', () => {
     expect(await getPermission(page, 'geolocation')).toBe('prompt');
   });
 
-  it('should deny permission when not listed', async ({ page, context, server, browserName, isMac, macVersion }) => {
-    it.skip(browserName === 'webkit' && isMac && macVersion === 13, 'WebKit on macOS 13 is frozen.');
-    it.skip(hostPlatform.startsWith('debian11'), 'WebKit on Debian 11 is frozen.');
+  it('should deny permission when not listed', async ({ page, context, server, browserName, isBidi, isFrozenWebkit }) => {
+    it.skip(isFrozenWebkit);
 
     await page.goto(server.EMPTY_PAGE);
     await context.grantPermissions([], { origin: server.EMPTY_PAGE });
@@ -42,16 +40,21 @@ it.describe('permissions', () => {
       // permission value, if the API has been accessed.
       await page.evaluate(() => navigator.geolocation.getCurrentPosition(() => { }));
       expect(await getPermission(page, 'geolocation')).toBe('denied');
+    } else if (isBidi) {
+      expect(await getPermission(page, 'geolocation')).toBe('prompt');
     } else {
       expect(await getPermission(page, 'geolocation')).toBe('denied');
     }
   });
 
-  it('should fail when bad permission is given', async ({ page, context, server }) => {
+  it('should fail when bad permission is given', async ({ page, context, server, isBidi }) => {
     await page.goto(server.EMPTY_PAGE);
     let error: Error;
     await context.grantPermissions(['foo'], { origin: server.EMPTY_PAGE }).catch(e => error = e);
-    expect(error.message).toContain('Unknown permission: foo');
+    if (isBidi)
+      expect(error.message).toContain('Protocol error (permissions.setPermission): invalid argument');
+    else
+      expect(error.message).toContain('Unknown permission: foo');
   });
 
   it('should grant geolocation permission when origin is listed', async ({ page, context, server }) => {
@@ -112,7 +115,7 @@ it.describe('permissions', () => {
     expect(await getPermission(page, 'geolocation')).toBe('prompt');
   });
 
-  it('should trigger permission onchange', async ({ page, context, server, browserName, browserMajorVersion }) => {
+  it('should trigger permission onchange', async ({ page, context, server, browserName, isBidi }) => {
     it.fail(browserName === 'webkit');
 
     await page.goto(server.EMPTY_PAGE);
@@ -125,18 +128,22 @@ it.describe('permissions', () => {
         };
       });
     });
-    expect(await page.evaluate(() => window['events'])).toEqual(['prompt']);
+    const expectedEvents = ['prompt'];
+    expect(await page.evaluate(() => window['events'])).toEqual(expectedEvents);
     await context.grantPermissions([], { origin: server.EMPTY_PAGE });
-    expect(await page.evaluate(() => window['events'])).toEqual(['prompt', 'denied']);
+    if (!isBidi)
+      expectedEvents.push('denied');
+    expect(await page.evaluate(() => window['events'])).toEqual(expectedEvents);
     await context.grantPermissions(['geolocation'], { origin: server.EMPTY_PAGE });
-    expect(await page.evaluate(() => window['events'])).toEqual(['prompt', 'denied', 'granted']);
+    expectedEvents.push('granted');
+    expect(await page.evaluate(() => window['events'])).toEqual(expectedEvents);
     await context.clearPermissions();
-    expect(await page.evaluate(() => window['events'])).toEqual(['prompt', 'denied', 'granted', 'prompt']);
+    expectedEvents.push('prompt');
+    expect(await page.evaluate(() => window['events'])).toEqual(expectedEvents);
   });
 
-  it('should isolate permissions between browser contexts', async ({ server, browser, browserName, isMac, macVersion }) => {
-    it.skip(browserName === 'webkit' && isMac && macVersion === 13, 'WebKit on macOS 13 is frozen.');
-    it.skip(hostPlatform.startsWith('debian11'), 'WebKit on Debian 11 is frozen.');
+  it('should isolate permissions between browser contexts', async ({ server, browser, browserName, isBidi, isFrozenWebkit }) => {
+    it.skip(isFrozenWebkit);
 
     const context = await browser.newContext();
     const page = await context.newPage();
@@ -155,6 +162,8 @@ it.describe('permissions', () => {
       // permission value, if the API has been accessed.
       await page.evaluate(() => navigator.geolocation.getCurrentPosition(() => { }));
       expect(await getPermission(page, 'geolocation')).toBe('denied');
+    } else if (isBidi) {
+      expect(await getPermission(page, 'geolocation')).toBe('prompt');
     } else {
       expect(await getPermission(page, 'geolocation')).toBe('denied');
     }
@@ -235,4 +244,154 @@ it('storage access', {
   const access = await frame.evaluate(() => document.requestStorageAccess().then(() => true, () => false));
   expect(access).toBe(true);
   expect(await frame.evaluate(() => document.hasStorageAccess())).toBe(true);
+});
+
+it.describe(() => {
+  // Secure context
+  it.use({ ignoreHTTPSErrors: true, });
+
+  it('should be able to use the local-fonts API', async ({ page, context, httpsServer, browserName, channel, headless }) => {
+    it.skip(browserName !== 'chromium', 'chromium-only api');
+    it.skip(!!channel && channel.startsWith('msedge'), 'always times out in edge');
+    it.fixme(!headless, 'times out in headed');
+    it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36113' });
+
+    await page.goto(httpsServer.EMPTY_PAGE);
+    expect(await getPermission(page, 'local-fonts')).toBe('prompt');
+    await context.grantPermissions(['local-fonts']);
+    expect(await getPermission(page, 'local-fonts')).toBe('granted');
+    expect(await page.evaluate(async () => (await (window as any).queryLocalFonts()).length > 0)).toBe(true);
+  });
+});
+
+it('local network request is allowed from public origin', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/37861' }
+}, async ({ page, context, server, browserName, channel, browserMajorVersion }) => {
+  it.skip(browserName === 'webkit');
+  it.skip(browserName === 'chromium' && browserMajorVersion < 145, 'local-network-access permission support has changed between versions');
+
+  if (browserName === 'chromium' || browserName === 'firefox')
+    await context.grantPermissions(['local-network-access']);
+  const serverRequests = [];
+  server.setRoute('/cors', (req, res) => {
+    serverRequests.push(`${req.method} ${req.url}`);
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+        'Access-Control-Allow-Headers': '*',
+      });
+      res.end();
+      return;
+    }
+    res.writeHead(200, { 'Content-type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+    res.end('Hello there!');
+  });
+  const clientRequests = [];
+  // Has to be a public origin.
+  await page.goto('https://demo.playwright.dev/todomvc/');
+  page.on('request', request => {
+    clientRequests.push(`${request.method()} ${request.url()}`);
+  });
+  const response = await page.evaluate(async url => {
+    const response = await fetch(url, {
+      method: 'POST',
+      body: '',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Custom-Header': 'test-value'
+      }
+    });
+    return await response.text();
+  }, server.CROSS_PROCESS_PREFIX + '/cors').catch(e => e.message);
+  expect(response).toBe('Hello there!');
+  expect(serverRequests).toEqual([
+    'OPTIONS /cors',
+    'POST /cors',
+  ]);
+  expect(clientRequests).toEqual([
+    `POST ${server.CROSS_PROCESS_PREFIX}/cors`,
+  ]);
+});
+
+it('can request screen-wake-lock', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/39115' }
+}, async ({ page, context }) => {
+  await context.grantPermissions(['screen-wake-lock']);
+  await page.route('**/*', route => route.fulfill({ status: 200, body: '<div>Hello there!</div>', contentType: 'text/html' }));
+  await page.goto('https://example.com');
+  await page.evaluate(() => navigator.wakeLock.request('screen'));
+});
+
+it.describe('camera and microphone', () => {
+  // WebKit exposes deterministic mock capture devices; capture is gated on the
+  // 'camera'/'microphone' permissions. Chromium needs --use-fake-device-for-media-stream
+  // and Firefox has no camera/microphone permission mapping, so scope to WebKit.
+  it.skip(({ browserName }) => browserName !== 'webkit', 'WebKit mock-capture-device based test');
+  // Native Windows WebKit is built without a media-capture backend, so getUserMedia is
+  // unavailable there; WSL runs the Linux build, which does have mock capture.
+  it.skip(({ isWindows, channel }) => isWindows && channel !== 'webkit-wsl', 'WebKit has no media capture on Windows');
+
+  async function getUserMedia(page, constraints) {
+    return await page.evaluate(async constraints => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        const tracks = stream.getTracks().map(track => ({ kind: track.kind, live: track.readyState === 'live' }));
+        stream.getTracks().forEach(track => track.stop());
+        tracks.sort((a, b) => a.kind.localeCompare(b.kind));
+        return { tracks };
+      } catch (error) {
+        return { error: error.name };
+      }
+    }, constraints);
+  }
+
+  it('should capture when camera and microphone are granted', {
+    annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/2973' }
+  }, async ({ page, context, server, isFrozenWebkit }) => {
+    it.skip(isFrozenWebkit, 'Mock capture device support requires a newer WebKit build');
+
+    await context.grantPermissions(['camera', 'microphone'], { origin: server.PREFIX });
+    await page.goto(server.EMPTY_PAGE);
+    expect(await getUserMedia(page, { video: true, audio: true })).toEqual({
+      tracks: [
+        { kind: 'audio', live: true },
+        { kind: 'video', live: true },
+      ],
+    });
+  });
+
+  it('should reject when no permission is granted', {
+    annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/2973' }
+  }, async ({ page, server, isFrozenWebkit }) => {
+    it.skip(isFrozenWebkit, 'Mock capture device support requires a newer WebKit build');
+
+    await page.goto(server.EMPTY_PAGE);
+    expect(await getUserMedia(page, { video: true, audio: true })).toEqual({ error: 'NotAllowedError' });
+  });
+
+  it('should gate audio and video independently', {
+    annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/2973' }
+  }, async ({ page, context, server, isFrozenWebkit }) => {
+    it.skip(isFrozenWebkit, 'Mock capture device support requires a newer WebKit build');
+
+    await context.grantPermissions(['camera'], { origin: server.PREFIX });
+    await page.goto(server.EMPTY_PAGE);
+    // Camera-only request is allowed.
+    expect(await getUserMedia(page, { video: true })).toEqual({ tracks: [{ kind: 'video', live: true }] });
+    // Microphone request is rejected because it was not granted.
+    expect(await getUserMedia(page, { audio: true })).toEqual({ error: 'NotAllowedError' });
+  });
+
+  it('should stop capturing after permissions are cleared', {
+    annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/2973' }
+  }, async ({ page, context, server, isFrozenWebkit }) => {
+    it.skip(isFrozenWebkit, 'Mock capture device support requires a newer WebKit build');
+
+    await context.grantPermissions(['camera'], { origin: server.PREFIX });
+    await page.goto(server.EMPTY_PAGE);
+    expect(await getUserMedia(page, { video: true })).toEqual({ tracks: [{ kind: 'video', live: true }] });
+    await context.clearPermissions();
+    expect(await getUserMedia(page, { video: true })).toEqual({ error: 'NotAllowedError' });
+  });
 });

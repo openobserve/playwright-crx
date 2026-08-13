@@ -259,6 +259,63 @@ for (const useIntermediateMergeReport of [false, true] as const) {
       expect(result.exitCode).toBe(1);
     });
 
+    test('print failures inline with option', async ({ runInlineTest }) => {
+      const result = await runInlineTest({
+        'playwright.config.ts': `
+          module.exports = {
+            reporter: [['list', { printFailuresInline: true }]],
+            workers: 1,
+          };
+        `,
+        'a.test.ts': `
+          import { test, expect } from '@playwright/test';
+          test('fails early', async ({}) => {
+            expect(1).toBe(2);
+          });
+          test('runs later', async ({}) => {
+          });
+        `,
+      });
+      const text = result.output;
+      const failureHeader = '1) a.test.ts:3:15 › fails early';
+      const laterTestStatus = `${POSITIVE_STATUS_MARK} 2 a.test.ts:6:15 › runs later`;
+      const failureIndex = text.indexOf(failureHeader);
+      const laterTestIndex = text.indexOf(laterTestStatus);
+      expect(failureIndex).toBeGreaterThan(-1);
+      expect(laterTestIndex).toBeGreaterThan(failureIndex);
+      expect(text.indexOf('Error: expect(received).toBe(expected)', failureIndex)).toBeGreaterThan(failureIndex);
+      expect(text.indexOf(failureHeader, failureIndex + 1)).toBe(-1);
+      expect(result.exitCode).toBe(1);
+    });
+
+    test('print failures inline for a non-retriable error', async ({ runInlineTest }) => {
+      // A missing snapshot fails the test but is not retried. The reporter must
+      // still print the failure inline, even though the retry budget is not exhausted.
+      const result = await runInlineTest({
+        'playwright.config.ts': `
+          module.exports = {
+            reporter: [['list', { printFailuresInline: true }]],
+            retries: 1,
+            workers: 1,
+          };
+        `,
+        'a.test.ts': `
+          import { test, expect } from '@playwright/test';
+          test('missing snapshot', async ({}) => {
+            expect('actual').toMatchSnapshot('foo.txt');
+          });
+        `,
+      });
+      const text = result.output;
+      const failureHeader = '1) a.test.ts:3:15 › missing snapshot';
+      const failureIndex = text.indexOf(failureHeader);
+      expect(failureIndex, 'failure should be printed inline').not.toBe(-1);
+      expect(text.indexOf(`A snapshot doesn't exist`, failureIndex)).toBeGreaterThan(failureIndex);
+      // It must not be retried, so there is exactly one failure block.
+      expect(text.indexOf(failureHeader, failureIndex + 1)).toBe(-1);
+      expect(result.exitCode).toBe(1);
+    });
+
     test('print stdio', async ({ runInlineTest }) => {
       const result = await runInlineTest({
         'a.test.ts': `
@@ -303,8 +360,285 @@ for (const useIntermediateMergeReport of [false, true] as const) {
       for (let i = 0; i < expected.length; ++i)
         expect(lines[firstIndex + i]).toContain(expected[i]);
     });
+
+    test('should update test status row only when TTY has not scrolled', async ({ runInlineTest }) => {
+      const result = await runInlineTest({
+        'a.test.ts': `
+          import { test, expect } from '@playwright/test';
+          test('A', async ({}) => {
+            for (let i = 0; i < 20; ++i) {
+              console.log('line ' + i);
+            }
+          });
+
+          test('B', async ({}) => {
+            // Go past end of the screen
+            for (let i = 20; i < 60; ++i) {
+              console.log('line ' + i);
+            }
+
+            // Should create new line
+            await test.step('First step', async () => {
+              console.log('step 1');
+            });
+
+            for (let i = 60; i < 80; ++i) {
+              console.log('line ' + i);
+            }
+
+            // Should update the new (not original) line
+            await test.step('Second step', async () => {
+              console.log('step 2');
+            });
+          });
+        `,
+      }, { reporter: 'list' }, { PW_TEST_DEBUG_REPORTERS: '1', PLAYWRIGHT_FORCE_TTY: '80' });
+      expect(result.exitCode).toBe(0);
+      expect(result.passed).toBe(2);
+      const expected = [
+        '#0 :      1 a.test.ts:3:15 › A',
+      ];
+      for (let i = 0; i < 20; ++i)
+        expected.push(`line ${i}`);
+      // Update to initial test status row
+      expected.push(`#0 :   ${POSITIVE_STATUS_MARK} 1 a.test.ts:3:15 › A`);
+      expected.push(`#21 :      2 a.test.ts:9:15 › B`);
+      for (let i = 20; i < 60; ++i)
+        expected.push(`line ${i}`);
+      expected.push(`#62 :      2 a.test.ts:9:15 › B › First step`);
+      expected.push(`step 1`);
+      expected.push(`#62 :      2 a.test.ts:9:15 › B`);
+      for (let i = 60; i < 80; ++i)
+        expected.push(`line ${i}`);
+      expected.push(`#62 :      2 a.test.ts:9:15 › B › Second step`);
+      expected.push(`step 2`);
+      expected.push(`#62 :      2 a.test.ts:9:15 › B`);
+      expected.push(`#62 :   ${POSITIVE_STATUS_MARK} 2 a.test.ts:9:15 › B`);
+      const lines = result.output.split('\n');
+      const firstIndex = lines.indexOf(expected[0]);
+      expect(firstIndex, 'first line should be there').not.toBe(-1);
+      for (let i = 0; i < expected.length; ++i)
+        expect(lines[firstIndex + i]).toContain(expected[i]);
+    });
+
+    test('should update test status row only within configured TTY height', async ({ runInlineTest }) => {
+      const result = await runInlineTest({
+        'a.test.ts': `
+          import { test, expect } from '@playwright/test';
+          test('A', async ({}) => {
+            // No scroll
+            for (let i = 0; i < 60; ++i) {
+              console.log('line ' + i);
+            }
+
+            // Update original line
+            await test.step('First step', async () => {
+              console.log('step 1');
+            });
+
+            for (let i = 60; i < 120; ++i) {
+              console.log('line ' + i);
+            }
+
+            // Should create new line
+            await test.step('Second step', async () => {
+              console.log('step 2');
+            });
+          });
+        `,
+      }, { reporter: 'list' }, { PW_TEST_DEBUG_REPORTERS: '1', PLAYWRIGHT_FORCE_TTY: '80x80' });
+      expect(result.exitCode).toBe(0);
+      expect(result.passed).toBe(1);
+      const expected = [
+        '#0 :      1 a.test.ts:3:15 › A',
+      ];
+      for (let i = 0; i < 60; ++i)
+        expected.push(`line ${i}`);
+      // Update to initial test status row
+      expected.push(`#0 :      1 a.test.ts:3:15 › A › First step`);
+      expected.push(`step 1`);
+      expected.push(`#0 :      1 a.test.ts:3:15 › A`);
+      for (let i = 60; i < 120; ++i)
+        expected.push(`line ${i}`);
+      expected.push(`#122 :      1 a.test.ts:3:15 › A › Second step`);
+      expected.push(`step 2`);
+      expected.push(`#122 :      1 a.test.ts:3:15 › A`);
+      expected.push(`#122 :   ${POSITIVE_STATUS_MARK} 1 a.test.ts:3:15 › A`);
+      const lines = result.output.split('\n');
+      const firstIndex = lines.indexOf(expected[0]);
+      expect(firstIndex, 'first line should be there').not.toBe(-1);
+      for (let i = 0; i < expected.length; ++i)
+        expect(lines[firstIndex + i]).toContain(expected[i]);
+    });
   });
 }
+
+test.describe('onTestPaused', () => {
+  test.skip(process.platform === 'win32', 'No SIGINT on windows');
+
+  test('pause at end', async ({ interactWithTestRunner }) => {
+    const runner = await interactWithTestRunner({
+      'a.test.ts': `
+        import { test, expect } from '@playwright/test';
+        test('foo', async ({}) => {
+        });
+
+        test.afterEach(() => {
+          console.log('Running teardown');
+        });
+      `,
+    }, { reporter: 'list' }, { PW_TEST_DEBUG_REPORTERS: '1', PWPAUSE: '1' });
+
+    await runner.waitForOutput('Paused at test end. Press Ctrl+C to end.');
+    const { exitCode } = await runner.kill('SIGINT');
+    expect(exitCode).toBe(130);
+
+    const output = stripAnsi(runner.output).replace(/\d+(\.\d+)?m?s/g, 'Xms');
+    expect(output).toEqual(`
+Running 1 test using 1 worker
+
+#0 :   ${POSITIVE_STATUS_MARK} 1 a.test.ts:3:13 › foo (Xms)
+#1 :        Paused at test end. Press Ctrl+C to end.
+Running teardown
+
+  1 interrupted
+    a.test.ts:3:13 › foo ───────────────────────────────────────────────────────────────────────────
+`);
+  });
+
+  test('pause at end - error in teardown', async ({ interactWithTestRunner }) => {
+    const runner = await interactWithTestRunner({
+      'a.test.ts': `
+        import { test, expect } from '@playwright/test';
+        test('foo', async ({}) => {
+        });
+
+        test.afterEach(() => {
+          throw new Error('teardown error');
+        });
+      `,
+    }, { reporter: 'list' }, { PW_TEST_DEBUG_REPORTERS: '1', PWPAUSE: '1' });
+
+    await runner.waitForOutput('Paused at test end. Press Ctrl+C to end.');
+    const { exitCode } = await runner.kill('SIGINT');
+    expect(exitCode).toBe(130);
+
+    const output = stripAnsi(runner.output).replace(/\d+(\.\d+)?m?s/g, 'Xms');
+    expect(output).toEqual(`
+Running 1 test using 1 worker
+
+#0 :   ${POSITIVE_STATUS_MARK} 1 a.test.ts:3:13 › foo (Xms)
+#1 :        Paused at test end. Press Ctrl+C to end.
+
+
+  1) a.test.ts:3:13 › foo ──────────────────────────────────────────────────────────────────────────
+
+    Test was interrupted.
+
+    Error: teardown error
+
+      5 |
+      6 |         test.afterEach(() => {
+    > 7 |           throw new Error('teardown error');
+        |                 ^
+      8 |         });
+      9 |       
+        at ${test.info().outputPath('a.test.ts')}:7:17
+
+    Error Context: test-results/a-foo/error-context.md
+
+  1 interrupted
+    a.test.ts:3:13 › foo ───────────────────────────────────────────────────────────────────────────
+`);
+  });
+
+  test('pause on error', async ({ interactWithTestRunner }) => {
+    const runner = await interactWithTestRunner({
+      'a.test.ts': `
+        import { test, expect } from '@playwright/test';
+        test('fails', async ({}) => {
+          expect.soft(2).toBe(3);
+          expect(3).toBe(4);
+        });
+      `,
+    }, { reporter: 'list' }, { PW_TEST_DEBUG_REPORTERS: '1', PWPAUSE: '1' });
+
+    await runner.waitForOutput('Paused on error. Press Ctrl+C to end.');
+    const { exitCode } = await runner.kill('SIGINT');
+    expect(exitCode).toBe(130);
+
+    const output = stripAnsi(runner.output).replace(/\d+(\.\d+)?m?s/g, 'Xms');
+    expect(output).toEqual(`
+Running 1 test using 1 worker
+
+#0 :   ${NEGATIVE_STATUS_MARK} 1 a.test.ts:3:13 › fails (Xms)
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 3
+    Received: 2
+
+      2 |         import { test, expect } from '@playwright/test';
+      3 |         test('fails', async ({}) => {
+    > 4 |           expect.soft(2).toBe(3);
+        |                          ^
+      5 |           expect(3).toBe(4);
+      6 |         });
+      7 |       
+        at ${test.info().outputPath('a.test.ts')}:4:26
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 4
+    Received: 3
+
+      3 |         test('fails', async ({}) => {
+      4 |           expect.soft(2).toBe(3);
+    > 5 |           expect(3).toBe(4);
+        |                     ^
+      6 |         });
+      7 |       
+        at ${test.info().outputPath('a.test.ts')}:5:21
+
+#1 :        Paused on error. Press Ctrl+C to end.
+
+
+
+  1 failed
+    a.test.ts:3:13 › fails ─────────────────────────────────────────────────────────────────────────
+`);
+  });
+});
+
+test('strips ansi from test stdout when FORCE_COLOR=0', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+      test('passes', async ({}) => {
+        console.log('\\u001b[31mRED\\u001b[39mWHITE');
+        process.stderr.write('GREEN\\u001b[32mDOT\\u001b[39mEND\\n');
+      });
+    `,
+  }, { reporter: 'list' }, { FORCE_COLOR: '0', PLAYWRIGHT_FORCE_TTY: '80' });
+  expect(result.exitCode).toBe(0);
+  expect(result.rawOutput).toContain('REDWHITE');
+  expect(result.rawOutput).toContain('GREENDOTEND');
+});
+
+test('strips ansi from test stdout when NO_COLOR is set', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+      test('passes', async ({}) => {
+        console.log('\\u001b[31mRED\\u001b[39mWHITE');
+        process.stderr.write('GREEN\\u001b[32mDOT\\u001b[39mEND\\n');
+      });
+    `,
+  }, { reporter: 'list' }, { NO_COLOR: '1', FORCE_COLOR: '', PLAYWRIGHT_FORCE_TTY: '80' });
+  expect(result.exitCode).toBe(0);
+  expect(result.rawOutput).toContain('REDWHITE');
+  expect(result.rawOutput).toContain('GREENDOTEND');
+});
 
 function simpleAnsiRenderer(text, ttyWidth) {
   let lineNumber = 0;

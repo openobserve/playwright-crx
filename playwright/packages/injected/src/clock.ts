@@ -18,6 +18,7 @@ export type ClockConfig = {
 
 export type InstallConfig = ClockConfig & {
   toFake?: (keyof Builtins)[];
+  browserName?: string;
 };
 
 enum TimerType {
@@ -59,6 +60,13 @@ type Time = {
 
 type LogEntryType = 'fastForward' |'install' | 'pauseAt' | 'resume' | 'runFor' | 'setFixedTime' | 'setSystemTime';
 
+type RealTimeTimer = {
+  callAt: Ticks;
+  cancel: () => void;
+  promise: Promise<void> | undefined;
+  dispose: () => Promise<void>;
+};
+
 export class ClockController {
   readonly _now: Time;
   private _duringTick = false;
@@ -68,7 +76,7 @@ export class ClockController {
   readonly disposables: (() => void)[] = [];
   private _log: { type: LogEntryType, time: number, param?: number }[] = [];
   private _realTime: { startTicks: EmbedderTicks, lastSyncTicks: EmbedderTicks } | undefined;
-  private _currentRealTimeTimer: { callAt: Ticks, dispose: () => void } | undefined;
+  private _currentRealTimeTimer: RealTimeTimer | undefined;
 
   constructor(embedder: Embedder) {
     this._timers = new Map();
@@ -83,13 +91,14 @@ export class ClockController {
 
   now(): number {
     this._replayLogOnce();
+    // Sync real time to support calling Date.now() in a loop.
     this._syncRealTime();
     return this._now.time;
   }
 
   install(time: number) {
     this._replayLogOnce();
-    this._innerSetTime(asWallTime(time));
+    this._innerInstall(asWallTime(time));
   }
 
   setSystemTime(time: number) {
@@ -104,6 +113,7 @@ export class ClockController {
 
   performanceNow(): DOMHighResTimeStamp {
     this._replayLogOnce();
+    // Sync real time to support calling performance.now() in a loop.
     this._syncRealTime();
     return this._now.ticks;
   }
@@ -126,12 +136,27 @@ export class ClockController {
       this._now.origin = this._now.time;
   }
 
+  private _innerInstall(time: WallTime) {
+    // On a fresh install, reset the monotonic counter so that drift
+    // accumulated by the realTime ticker before the user called install()
+    // does not leak into performance.now().
+    if (this._now.origin < 0)
+      this._now.ticks = 0 as Ticks;
+    this._innerSetTime(time);
+  }
+
   private _innerSetFixedTime(time: WallTime) {
     this._innerSetTime(time);
     this._now.isFixedTime = true;
   }
 
   private _advanceNow(to: Ticks) {
+    if (this._now.ticks > to) {
+      // While running timers, `now` can advance by syncing with real time
+      // from within now() or performance.now().
+      // This makes it possible for `now` to be ahead of where we want to advance it.
+      return;
+    }
     if (!this._now.isFixedTime)
       this._now.time = asWallTime(this._now.time + to - this._now.ticks);
     this._now.ticks = to;
@@ -145,7 +170,9 @@ export class ClockController {
     this._replayLogOnce();
     if (ticks < 0)
       throw new TypeError('Negative ticks are not supported');
-    await this._runTo(shiftTicks(this._now.ticks, ticks));
+    await this._runWithDisabledRealTimeSync(async () => {
+      await this._runTo(shiftTicks(this._now.ticks, ticks));
+    });
   }
 
   private async _runTo(to: Ticks) {
@@ -163,21 +190,23 @@ export class ClockController {
     }
 
     this._advanceNow(to);
+
     if (firstException)
       throw firstException;
   }
 
   async pauseAt(time: number): Promise<number> {
     this._replayLogOnce();
-    this._innerPause();
+    await this._innerPause();
     const toConsume = time - this._now.time;
     await this._innerFastForwardTo(shiftTicks(this._now.ticks, toConsume));
     return toConsume;
   }
 
-  private _innerPause() {
+  private async _innerPause() {
     this._realTime = undefined;
-    this._updateRealTimeTimer();
+    await this._currentRealTimeTimer?.dispose();
+    this._currentRealTimeTimer = undefined;
   }
 
   resume() {
@@ -192,38 +221,64 @@ export class ClockController {
   }
 
   private _updateRealTimeTimer() {
-    if (!this._realTime) {
-      this._currentRealTimeTimer?.dispose();
-      this._currentRealTimeTimer = undefined;
+    if (this._currentRealTimeTimer?.promise) {
+      // In progress, safe to return as it will call itself once promise is resolved.
       return;
     }
 
     const firstTimer = this._firstTimer();
 
     // Either run the next timer or move time in 100ms chunks.
-    const callAt = Math.min(firstTimer ? firstTimer.callAt : this._now.ticks + maxTimeout, this._now.ticks + 100) as Ticks;
-    if (this._currentRealTimeTimer && this._currentRealTimeTimer.callAt < callAt)
-      return;
+    const nextTick = Math.min(firstTimer ? firstTimer.callAt : this._now.ticks + maxTimeout, this._now.ticks + 100) as Ticks;
+    const callAt = this._currentRealTimeTimer ? Math.min(this._currentRealTimeTimer.callAt, nextTick) as Ticks : nextTick;
 
     if (this._currentRealTimeTimer) {
-      this._currentRealTimeTimer.dispose();
+      // Cancel and reschedule.
+      this._currentRealTimeTimer.cancel();
       this._currentRealTimeTimer = undefined;
     }
 
-    this._currentRealTimeTimer = {
+    const realTimeTimer: RealTimeTimer = {
       callAt,
-      dispose: this._embedder.setTimeout(() => {
-        this._currentRealTimeTimer = undefined;
+      promise: undefined,
+      cancel: this._embedder.setTimeout(() => {
         this._syncRealTime();
         // eslint-disable-next-line no-console
-        void this._runTo(this._now.ticks).catch(e => console.error(e)).then(() => this._updateRealTimeTimer());
+        realTimeTimer.promise = this._runTo(this._now.ticks).catch(e => console.error(e));
+        void realTimeTimer.promise.then(() => {
+          this._currentRealTimeTimer = undefined;
+          if (this._realTime)
+            this._updateRealTimeTimer();
+        });
       }, callAt - this._now.ticks),
+      dispose: async () => {
+        realTimeTimer.cancel();
+        await realTimeTimer.promise;
+      }
     };
+
+    this._currentRealTimeTimer = realTimeTimer;
+  }
+
+  private async _runWithDisabledRealTimeSync(fn: () => Promise<void>) {
+    if (!this._realTime) {
+      await fn();
+      return;
+    }
+
+    await this._innerPause();
+    try {
+      await fn();
+    } finally {
+      this._innerResume();
+    }
   }
 
   async fastForward(ticks: number) {
     this._replayLogOnce();
-    await this._innerFastForwardTo(shiftTicks(this._now.ticks, ticks | 0));
+    await this._runWithDisabledRealTimeSync(async () => {
+      await this._innerFastForwardTo(shiftTicks(this._now.ticks, ticks | 0));
+    });
   }
 
   private async _innerFastForwardTo(to: Ticks) {
@@ -339,6 +394,9 @@ export class ClockController {
   }
 
   getTimeToNextFrame() {
+    // When `window.requestAnimationFrame` is the first call in the page,
+    // this place is the first API call, so replay the log.
+    this._replayLogOnce();
     return 16 - this._now.ticks % 16;
   }
 
@@ -391,15 +449,13 @@ export class ClockController {
       lastLogTime = time;
 
       if (type === 'install') {
-        this._innerSetTime(asWallTime(param!));
+        this._innerInstall(asWallTime(param!));
       } else if (type === 'fastForward' || type === 'runFor') {
         this._advanceNow(shiftTicks(this._now.ticks, param!));
       } else if (type === 'pauseAt') {
         isPaused = true;
-        this._innerPause();
         this._innerSetTime(asWallTime(param!));
       } else if (type === 'resume') {
-        this._innerResume();
         isPaused = false;
       } else if (type === 'setFixedTime') {
         this._innerSetFixedTime(asWallTime(param!));
@@ -408,8 +464,13 @@ export class ClockController {
       }
     }
 
-    if (!isPaused && lastLogTime > 0)
-      this._advanceNow(shiftTicks(this._now.ticks, this._embedder.dateNow() - lastLogTime));
+    if (!isPaused) {
+      if (lastLogTime > 0)
+        this._advanceNow(shiftTicks(this._now.ticks, this._embedder.dateNow() - lastLogTime));
+      this._innerResume();
+    } else {
+      this._realTime = undefined;
+    }
 
     this._log.length = 0;
   }
@@ -430,7 +491,6 @@ function mirrorDateProperties(target: any, source: Builtins['Date']): Builtins['
 }
 
 function createDate(clock: ClockController, NativeDate: Builtins['Date']): Builtins['Date'] {
-  // eslint-disable-next-line no-restricted-globals
   function ClockDate(this: typeof ClockDate, year: number, month: number, date: number, hour: number, minute: number, second: number, ms: number): Date | string {
     // the Date constructor called as a function, ref Ecma-262 Edition 5.1, section 15.9.2.
     // This remains so in the 10th edition of 2019 as well.
@@ -497,7 +557,6 @@ function createIntl(clock: ClockController, NativeIntl: Builtins['Intl']): Built
 
   ClockIntl.DateTimeFormat = function(...args: any[]) {
     const realFormatter = new NativeIntl.DateTimeFormat(...args);
-    // eslint-disable-next-line no-restricted-globals
     const formatter: Intl.DateTimeFormat = {
       formatRange: realFormatter.formatRange.bind(realFormatter),
       formatRangeToParts: realFormatter.formatRangeToParts.bind(realFormatter),
@@ -563,10 +622,11 @@ function platformOriginals(globalObject: WindowOrWorkerGlobalScope): { raw: Buil
     Date: (globalObject as any).Date,
     performance: globalObject.performance,
     Intl: (globalObject as any).Intl,
+    AbortSignal: (globalObject as any).AbortSignal,
   };
   const bound = { ...raw };
   for (const key of Object.keys(bound) as (keyof Builtins)[]) {
-    if (key !== 'Date' && typeof bound[key] === 'function')
+    if (key !== 'Date' && key !== 'AbortSignal' && typeof bound[key] === 'function')
       bound[key] = (bound[key] as any).bind(globalObject);
   }
   return { raw, bound };
@@ -582,7 +642,7 @@ function getScheduleHandler(type: TimerType) {
   return `set${type}`;
 }
 
-function createApi(clock: ClockController, originals: Builtins): Builtins {
+function createApi(clock: ClockController, originals: Builtins, browserName?: string): Builtins {
   return {
     setTimeout: (func: TimerHandler, timeout?: number | undefined, ...args: any[]) => {
       const delay = timeout ? +timeout : timeout;
@@ -639,6 +699,7 @@ function createApi(clock: ClockController, originals: Builtins): Builtins {
     Intl: originals.Intl ? createIntl(clock, originals.Intl) : (undefined as unknown as Builtins['Intl']),
     Date: createDate(clock, originals.Date),
     performance: originals.performance ? fakePerformance(clock, originals.performance) : (undefined as unknown as Builtins['performance']),
+    AbortSignal: originals.AbortSignal ? fakeAbortSignal(clock, originals.AbortSignal, browserName) : (undefined as unknown as Builtins['AbortSignal']),
   };
 }
 
@@ -647,6 +708,24 @@ function getClearHandler(type: TimerType) {
     return `cancel${type}`;
 
   return `clear${type}`;
+}
+
+class FakePerformanceEntry {
+  name: string;
+  entryType: string;
+  startTime: number;
+  duration: number;
+
+  constructor(name: string, entryType: string, startTime: number, duration: number) {
+    this.name = name;
+    this.entryType = entryType;
+    this.startTime = startTime;
+    this.duration = duration;
+  }
+
+  toJSON() {
+    return JSON.stringify({ ...this });
+  }
 }
 
 function fakePerformance(clock: ClockController, performance: Builtins['performance']): Builtins['performance'] {
@@ -660,13 +739,37 @@ function fakePerformance(clock: ClockController, performance: Builtins['performa
       continue;
     if (key === 'getEntries' || key === 'getEntriesByName' || key === 'getEntriesByType')
       result[key] = () => [];
+    else if (key === 'mark')
+      result[key] = (name: string) => new FakePerformanceEntry(name, 'mark', 0, 0);
+    else if (key === 'measure')
+      result[key] = (name: string) => new FakePerformanceEntry(name, 'measure', 0, 50);
     else
       result[key] = () => {};
   }
   return result;
 }
 
-export function createClock(globalObject: WindowOrWorkerGlobalScope): { clock: ClockController, api: Builtins, originals: Builtins } {
+function fakeAbortSignal(clock: ClockController, abortSignal: Builtins['AbortSignal'], browserName?: string): Builtins['AbortSignal'] {
+  Object.defineProperty(abortSignal, 'timeout', {
+    value(ms: number) {
+      const controller = new AbortController();
+      clock.addTimer({
+        delay: ms,
+        type: TimerType.Timeout,
+        func: () => controller.abort(
+            new DOMException(
+                browserName === 'chromium' ? 'signal timed out' : 'The operation timed out.',
+                'TimeoutError'
+            )
+        ),
+      });
+      return controller.signal;
+    }
+  });
+  return abortSignal;
+}
+
+export function createClock(globalObject: WindowOrWorkerGlobalScope, config: InstallConfig = {}): { clock: ClockController, api: Builtins, originals: Builtins } {
   const originals = platformOriginals(globalObject);
   const embedder: Embedder = {
     dateNow: () => originals.raw.Date.now(),
@@ -682,7 +785,7 @@ export function createClock(globalObject: WindowOrWorkerGlobalScope): { clock: C
   };
 
   const clock = new ClockController(embedder);
-  const api = createApi(clock, originals.bound);
+  const api = createApi(clock, originals.bound, config.browserName);
   return { clock, api, originals: originals.raw };
 }
 
@@ -693,7 +796,7 @@ export function install(globalObject: WindowOrWorkerGlobalScope, config: Install
     throw new TypeError(`Can't install fake timers twice on the same global object.`);
   }
 
-  const { clock, api, originals } = createClock(globalObject);
+  const { clock, api, originals } = createClock(globalObject, config);
   const toFake = config.toFake?.length ? config.toFake : Object.keys(originals) as (keyof Builtins)[];
 
   for (const method of toFake) {
@@ -701,6 +804,8 @@ export function install(globalObject: WindowOrWorkerGlobalScope, config: Install
       (globalObject as any).Date = mirrorDateProperties(api.Date, (globalObject as any).Date);
     } else if (method === 'Intl') {
       (globalObject as any).Intl = api[method]!;
+    } else if (method === 'AbortSignal') {
+      (globalObject as any).AbortSignal = api[method]!;
     } else if (method === 'performance') {
       (globalObject as any).performance = api[method]!;
       const kEventTimeStamp = Symbol('playwrightEventTimeStamp');
@@ -724,9 +829,9 @@ export function install(globalObject: WindowOrWorkerGlobalScope, config: Install
   return { clock, api, originals };
 }
 
-export function inject(globalObject: WindowOrWorkerGlobalScope) {
+export function inject(globalObject: WindowOrWorkerGlobalScope, browserName?: string) {
   const builtins = platformOriginals(globalObject).bound;
-  const { clock: controller } = install(globalObject);
+  const { clock: controller } = install(globalObject, { browserName });
   controller.resume();
   return {
     controller,

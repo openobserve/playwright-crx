@@ -14,32 +14,40 @@
  * limitations under the License.
  */
 
-import { devices, defineConfig } from '@playwright/experimental-ct-react';
+import path from 'path';
+import { devices, defineConfig } from '@playwright/test';
 
-import type { ReporterDescription } from '@playwright/test';
+process.env.PWTEST_UNDER_TEST = '1';
 
-const reporters = () => {
-  const result: ReporterDescription[] = process.env.CI ? [
-    ['blob', { fileName: `${process.env.PWTEST_BOT_NAME}.zip` }],
-  ] : [
-    ['html']
-  ];
-  return result;
-};
+const outputDir = path.join(__dirname, '..', '..', 'test-results');
 
 export default defineConfig({
   testDir: 'src',
+  outputDir,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  reporter: reporters(),
+  reporter: process.env.CI ? [
+    ['dot'],
+    ['json', { outputFile: path.join(outputDir, 'report.json') }],
+    ['blob', { outputDir: path.join(__dirname, '..', '..', 'blob-report') }],
+    ['../../tests/config/parquetReporter.ts'],
+  ] : [
+    ['html', { open: 'on-failure' }]
+  ],
+  tag: process.env.PW_TAG,
   use: {
-    ctPort: 3102,
+    baseURL: 'http://localhost:3102/playwright/gallery/index.html',
+    serviceWorkers: 'block',
+    reuseContext: true,
     trace: 'on-first-retry',
   },
-  projects: [
-    {
-      name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
-    },
-  ],
+  projects: [{
+    name: 'chromium',
+    use: { ...devices['Desktop Chrome'] },
+  }],
+  webServer: {
+    command: 'npx vite --config playwright/vite.config.ts',
+    url: 'http://localhost:3102/playwright/gallery/index.html',
+    reuseExistingServer: !process.env.CI,
+  },
 });

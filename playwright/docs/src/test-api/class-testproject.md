@@ -99,8 +99,10 @@ export default defineConfig({
     - `scale` ?<[ScreenshotScale]<"css"|"device">> See [`option: Page.screenshot.scale`] in [`method: Page.screenshot`]. Defaults to `"css"`.
     - `stylePath` ?<[string]|[Array]<[string]>> See [`option: Page.screenshot.style`] in [`method: Page.screenshot`].
     - `pathTemplate` ?<[string]> A template controlling location of the screenshots. See [`property: TestProject.snapshotPathTemplate`] for details.
+    - `timeout` ?<[int]> Default timeout for [`method: PageAssertions.toHaveScreenshot#1`] in milliseconds, defaults to the global expect timeout. Setting to `0` disables the timeout.
   - `toMatchAriaSnapshot` ?<[Object]> Configuration for the [`method: LocatorAssertions.toMatchAriaSnapshot#2`] method.
     - `pathTemplate` ?<[string]> A template controlling location of the aria snapshots. See [`property: TestProject.snapshotPathTemplate`] for details.
+    - `children` ?<["contain" | "equal" | "deep-equal"]> Controls how children of the snapshot root are matched against the actual accessibility tree. This is equivalent to adding a `/children` property at the top of every aria snapshot template. Individual snapshots can override this by including an explicit `/children` property.
   - `toMatchSnapshot` ?<[Object]> Configuration for the [`method: SnapshotAssertions.toMatchSnapshot#1`] method.
     - `threshold` ?<[float]> an acceptable perceived color difference between the same pixel in compared images, ranging from `0` (strict) and `1` (lax). `"pixelmatch"` comparator computes color difference in [YIQ color space](https://en.wikipedia.org/wiki/YIQ) and defaults `threshold` value to `0.2`.
     - `maxDiffPixels` ?<[int]> an acceptable amount of pixels that could be different, unset by default.
@@ -134,7 +136,7 @@ Filter to only run tests with a title matching one of the patterns. For example,
 * since: v1.10
 - type: ?<[RegExp]|[Array]<[RegExp]>>
 
-Filter to only run tests with a title **not** matching one of the patterns. This is the opposite of [`property: TestProject.grep`]. Also available globally and in the [command line](../test-cli.md) with the `--grep-invert` option.
+Filter to only run tests with a title **not** matching any of the patterns. This is the opposite of [`property: TestProject.grep`]. Also available globally and in the [command line](../test-cli.md) with the `--grep-invert` option.
 
 `grepInvert` option is also useful for [tagging tests](../test-annotations.md#tag-tests).
 

@@ -1,7 +1,7 @@
 /**
  * Copyright (c) Microsoft Corporation.
  *
- * Licensed under the Apache License, Version 2.0 (the 'License");
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -16,40 +16,59 @@
 
 import { BrowserContextDispatcher } from './browserContextDispatcher';
 import { BrowserDispatcher } from './browserDispatcher';
+import { WorkerDispatcher } from './pageDispatcher';
 import { Dispatcher } from './dispatcher';
 
 import type { BrowserType } from '../browserType';
 import type { RootDispatcher } from './dispatcher';
-import type { CallMetadata } from '../instrumentation';
-import type * as channels from '@protocol/channels';
+import type * as channels from '../channels';
+import type { Progress } from '../progress';
 
 export class BrowserTypeDispatcher extends Dispatcher<BrowserType, channels.BrowserTypeChannel, RootDispatcher> implements channels.BrowserTypeChannel {
   _type_BrowserType = true;
-  constructor(scope: RootDispatcher, browserType: BrowserType) {
+  private readonly _denyLaunch: boolean;
+  constructor(scope: RootDispatcher, browserType: BrowserType, denyLaunch: boolean) {
     super(scope, browserType, 'BrowserType', {
       executablePath: browserType.executablePath(),
       name: browserType.name()
     });
+    this._denyLaunch = denyLaunch;
   }
 
-  async launch(params: channels.BrowserTypeLaunchParams, metadata: CallMetadata): Promise<channels.BrowserTypeLaunchResult> {
-    const browser = await this._object.launch(metadata, params);
+  async launch(params: channels.BrowserTypeLaunchParams, progress: Progress): Promise<channels.BrowserTypeLaunchResult> {
+    if (this._denyLaunch)
+      throw new Error(`Launching more browsers is not allowed.`);
+
+    const browser = await this._object.launch(progress, params);
     return { browser: new BrowserDispatcher(this, browser) };
   }
 
-  async launchPersistentContext(params: channels.BrowserTypeLaunchPersistentContextParams, metadata: CallMetadata): Promise<channels.BrowserTypeLaunchPersistentContextResult> {
-    const browserContext = await this._object.launchPersistentContext(metadata, params.userDataDir, params);
+  async launchPersistentContext(params: channels.BrowserTypeLaunchPersistentContextParams, progress: Progress): Promise<channels.BrowserTypeLaunchPersistentContextResult> {
+    if (this._denyLaunch)
+      throw new Error(`Launching more browsers is not allowed.`);
+
+    const browserContext = await this._object.launchPersistentContext(progress, params.userDataDir, params);
     const browserDispatcher = new BrowserDispatcher(this, browserContext._browser);
     const contextDispatcher = BrowserContextDispatcher.from(browserDispatcher, browserContext);
     return { browser: browserDispatcher, context: contextDispatcher };
   }
 
-  async connectOverCDP(params: channels.BrowserTypeConnectOverCDPParams, metadata: CallMetadata): Promise<channels.BrowserTypeConnectOverCDPResult> {
-    const browser = await this._object.connectOverCDP(metadata, params.endpointURL, params);
+  async connectOverCDP(params: channels.BrowserTypeConnectOverCDPParams, progress: Progress): Promise<channels.BrowserTypeConnectOverCDPResult> {
+    if (this._denyLaunch)
+      throw new Error(`Launching more browsers is not allowed.`);
+
+    const browser = await this._object.connectOverCDP(progress, params);
     const browserDispatcher = new BrowserDispatcher(this, browser);
     return {
       browser: browserDispatcher,
       defaultContext: browser._defaultContext ? BrowserContextDispatcher.from(browserDispatcher, browser._defaultContext) : undefined,
     };
+  }
+
+  async connectToWorker(params: channels.BrowserTypeConnectToWorkerParams, progress: Progress): Promise<channels.BrowserTypeConnectToWorkerResult> {
+    if (this._denyLaunch)
+      throw new Error(`Launching more browsers is not allowed.`);
+    const worker = await this._object.connectToWorker(progress, params.endpoint);
+    return { worker: new WorkerDispatcher(this, worker) };
   }
 }

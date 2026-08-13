@@ -17,7 +17,7 @@
 import * as React from 'react';
 import './stackTrace.css';
 import { ListView } from '@web/components/listView';
-import type { StackFrame } from '@protocol/channels';
+import type { StackFrame } from '@trace/trace';
 
 const StackFrameListView = ListView<StackFrame>;
 
@@ -29,6 +29,7 @@ export const StackTraceView: React.FunctionComponent<{
   const frames = stack || [];
   return <StackFrameListView
     name='stack-trace'
+    ariaLabel='Stack trace'
     items={frames}
     selectedItem={frames[selectedFrame]}
     render={frame => {

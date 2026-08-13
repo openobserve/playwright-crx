@@ -28,7 +28,7 @@ npx tsc -p tsconfig.json --noEmit -w
 
 ## tsconfig.json
 
-Playwright will pick up `tsconfig.json` for each source file it loads. Note that Playwright **only supports** the following tsconfig options: `allowJs`, `baseUrl`, `paths` and `references`.
+Playwright will pick up `tsconfig.json` for each source file it loads. Note that Playwright **only supports** the following tsconfig options: `allowJs`, `baseUrl`, `paths`, `references` and `extends`.
 
 We recommend setting up a separate `tsconfig.json` in the tests directory so that you can change some preferences specifically for the tests. Here is an example directory structure.
 
@@ -47,16 +47,15 @@ playwright.config.ts
 
 ### tsconfig path mapping
 
-Playwright supports [path mapping](https://www.typescriptlang.org/docs/handbook/module-resolution.html#path-mapping) declared in the `tsconfig.json`. Make sure that `baseUrl` is also set.
+Playwright supports [path mapping](https://www.typescriptlang.org/docs/handbook/module-resolution.html#path-mapping) declared in the `tsconfig.json`.
 
 Here is an example `tsconfig.json` that works with Playwright:
 
 ```json title="tsconfig.json"
 {
   "compilerOptions": {
-    "baseUrl": ".",
     "paths": {
-      "@myhelper/*": ["packages/myhelper/*"] // This mapping is relative to "baseUrl".
+      "@myhelper/*": ["packages/myhelper/*"] // This mapping is relative to the tsconfig.
     }
   }
 }

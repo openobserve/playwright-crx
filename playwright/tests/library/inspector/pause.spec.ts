@@ -16,13 +16,11 @@
 
 import type { Page } from 'playwright-core';
 import { test as it, expect, Recorder } from './inspectorTest';
-import { waitForTestLog } from '../../config/utils';
-import { roundBox } from '../../page/pageTest';
-import type { BoundingBox } from '../../page/pageTest';
+import { roundBox, waitForTestLog } from '../../config/utils';
+import type { BoundingBox } from '../../config/utils';
+import { pauseHelper } from './pause-helper';
 
 it('should resume when closing inspector', async ({ page, recorderPageGetter, closeRecorder, mode }) => {
-  it.skip(mode !== 'default');
-
   const scriptPromise = (async () => {
     // @ts-ignore
     await page.pause({ __testHookKeepTestTimeout: true });
@@ -47,9 +45,21 @@ it('should not reset timeouts', async ({ page, recorderPageGetter, closeRecorder
   expect(error.message).toContain('page.goto: Timeout 1000ms exceeded.');
 });
 
-it.describe('pause', () => {
-  it.skip(({ mode }) => mode !== 'default');
+it('should collapse log entries to a single line', async ({ page, recorderPageGetter }) => {
+  const scriptPromise = (async () => {
+    // @ts-ignore
+    await page.pause({ __testHookKeepTestTimeout: true });
+    await page.keyboard.type(`Hello
+world`);
+  })();
 
+  const recorderPage = await recorderPageGetter();
+  await recorderPage.click('[title="Resume (F8)"]');
+  await expect(recorderPage.locator('.call-log-call').nth(1)).toContainText('Type "Hello\\nworld"');
+  await scriptPromise;
+});
+
+it.describe('pause', () => {
   it.afterEach(async ({ recorderPageGetter }, testInfo) => {
     if (testInfo.status === 'skipped')
       return;
@@ -77,20 +87,19 @@ it.describe('pause', () => {
       await page.pause({ __testHookKeepTestTimeout: true });
     })();
     const recorderPage = await recorderPageGetter();
+    await expect(recorderPage.getByRole('button', { name: 'Resume' })).toBeEnabled();
     await recorderPage.keyboard.press('F8');
     await scriptPromise;
   });
 
-  it('should resume from console', async ({ page }) => {
+  it('should resume from console', async ({ page, mode }) => {
+    it.skip(mode !== 'default');
+
     const scriptPromise = (async () => {
       // @ts-ignore
       await page.pause({ __testHookKeepTestTimeout: true });
     })();
-    await Promise.all([
-      page.waitForFunction(() => (window as any).playwright && (window as any).playwright.resume).then(() => {
-        return page.evaluate('window.playwright.resume()');
-      })
-    ]);
+    await page.waitForFunction(() => (window as any).playwright && (window as any).playwright.resume() !== false);
     await scriptPromise;
   });
 
@@ -109,11 +118,16 @@ it.describe('pause', () => {
     const scriptPromise = (async () => {
       // @ts-ignore
       await page.pause({ __testHookKeepTestTimeout: true });
+      await pauseHelper(page);
     })();
     const recorderPage = await recorderPageGetter();
     await expect(recorderPage.getByRole('combobox', { name: 'Source chooser' })).toHaveValue(/pause\.spec\.ts/);
-    const source = await recorderPage.textContent('.source-line-paused');
-    expect(source).toContain('page.pause({ __testHookKeepTestTimeout: true })');
+    await expect(recorderPage.locator('.source-line-paused')).toContainText('page.pause({ __testHookKeepTestTimeout: true })');
+
+    await recorderPage.click('[title="Step over (F10)"]');
+    await expect(recorderPage.getByRole('combobox', { name: 'Source chooser' })).toHaveValue(/pause-helper\.ts/);
+    await expect(recorderPage.locator('.source-line-paused')).toContainText('page.setContent(\'<div>here we go</div>\')');
+
     await recorderPage.click('[title="Resume (F8)"]');
     await scriptPromise;
   });
@@ -147,6 +161,25 @@ it.describe('pause', () => {
 
     await recorderPage.click('[title="Step over (F10)"]');
     await recorderPage.waitForSelector('.source-line-paused :has-text("page.click")');
+
+    await recorderPage.click('[title="Resume (F8)"]');
+    await scriptPromise;
+  });
+
+  it('should disable timeout on paused actions', async ({ page, recorderPageGetter }) => {
+    await page.setContent('<button>Submit</button>');
+    const scriptPromise = (async () => {
+      // @ts-ignore
+      await page.pause({ __testHookKeepTestTimeout: true });
+      await page.click('button', { timeout: 1000 });
+    })();
+    const recorderPage = await recorderPageGetter();
+    const source = await recorderPage.textContent('.source-line-paused');
+    expect(source).toContain('page.pause({ __testHookKeepTestTimeout: true });');
+
+    await recorderPage.click('[title="Step over (F10)"]');
+    await recorderPage.waitForSelector('.source-line-paused :has-text("page.click")');
+    await page.waitForTimeout(5000);
 
     await recorderPage.click('[title="Resume (F8)"]');
     await scriptPromise;
@@ -186,22 +219,21 @@ it.describe('pause', () => {
     const recorderPage = await recorderPageGetter();
     await recorderPage.click('[title="Step over (F10)"]');
 
-    const iframe = page.frames()[1];
-    const button = await iframe.waitForSelector('button');
-    const box1Promise = button.boundingBox();
+    const { box1, box2 } = await (page as any)._wrapApiCall(async () => {
+      const iframe = page.frames()[1];
+      const button = await iframe.waitForSelector('button');
+      const box1 = await button.boundingBox();
 
-    const actionPoint = await page.waitForSelector('x-pw-action-point');
-    const box2Promise = actionPoint.boundingBox();
-    await recorderPage.click('[title="Step over (F10)"]');
+      const actionPoint = await page.waitForSelector('x-pw-action-point');
+      const box2 = await actionPoint.boundingBox();
 
-    const box1 = await box1Promise;
-    const box2 = await box2Promise;
+      const iframeActionPoint = await iframe.$('x-pw-action-point');
+      expect(await iframeActionPoint?.isVisible()).toBeFalsy();
 
-    const iframeActionPoint = await iframe.$('x-pw-action-point');
-    const iframeActionPointPromise = iframeActionPoint?.boundingBox();
+      return { box1, box2 };
+    }, { internal: true });
+
     await recorderPage.click('[title="Resume (F8)"]');
-
-    expect(await iframeActionPointPromise).toBeFalsy();
 
     const x1 = box1!.x + box1!.width / 2;
     const y1 = box1!.y + box1!.height / 2;
@@ -269,6 +301,8 @@ it.describe('pause', () => {
     await recorderPage.waitForSelector('.source-line-paused:has-text("page.pause({ __testHookKeepTestTimeout: true });  // 2")');
     expect(await sanitizeLog(recorderPage)).toEqual([
       'Pause- XXms',
+      'Start tracing- XXms',
+      'Stop tracing- XXms',
       'Pause',
     ]);
     await recorderPage.click('[title="Resume (F8)"]');
@@ -361,6 +395,27 @@ it.describe('pause', () => {
     expect(error.message).toContain('Not a checkbox or radio button');
   });
 
+  it('should populate log with expect failure', async ({ page, recorderPageGetter }) => {
+    await page.setContent('<button>Submit</button>');
+    const scriptPromise = (async () => {
+      // @ts-ignore
+      await page.pause({ __testHookKeepTestTimeout: true });
+      await expect(page.getByRole('button')).toHaveText('Other', { timeout: 1 });
+    })().catch(e => e);
+    const recorderPage = await recorderPageGetter();
+    await recorderPage.click('[title="Resume (F8)"]');
+    await recorderPage.waitForSelector('.source-line-error-underline');
+    expect(await sanitizeLog(recorderPage)).toEqual([
+      'Pause- XXms',
+      'Expect "toHaveText"(page.getByRole(\'button\'))- XXms',
+      'Expect "toHaveText" with timeout 1ms',
+      'waiting for getByRole(\'button\')',
+      'error: Expect failed',
+    ]);
+    const error = await scriptPromise;
+    expect(error.message).toContain('toHaveText');
+  });
+
   it('should populate log with error in waitForEvent', async ({ page, recorderPageGetter }) => {
     await page.setContent('<button>Submit</button>');
     const scriptPromise = (async () => {
@@ -437,29 +492,23 @@ it.describe('pause', () => {
     await scriptPromise;
   });
 
-  it('should highlight on explore (csharp)', async ({ page, recorderPageGetter }) => {
+  it('should highlight on explore (csharp)', async ({ openRecorder }) => {
     process.env.TEST_INSPECTOR_LANGUAGE = 'csharp';
     try {
+      const { page, recorder } = await openRecorder();
       await page.setContent('<button>Submit</button>');
-      const scriptPromise = (async () => {
-        // @ts-ignore
-        await page.pause({ __testHookKeepTestTimeout: true });
-      })();
-      const recorderPage = await recorderPageGetter();
 
       const box1Promise = waitForTestLog<BoundingBox>(page, 'Highlight box for test: ');
-      await recorderPage.getByText('Locator', { exact: true }).click();
-      await recorderPage.locator('.tabbed-pane .CodeMirror').click();
-      await recorderPage.keyboard.press('ControlOrMeta+A');
-      await recorderPage.keyboard.press('Backspace');
-      await recorderPage.keyboard.type('GetByText("Submit")');
+      await recorder.recorderPage.getByText('Locator', { exact: true }).click();
+      await recorder.recorderPage.locator('.tabbed-pane .CodeMirror').click();
+      await recorder.recorderPage.keyboard.press('ControlOrMeta+A');
+      await recorder.recorderPage.keyboard.press('Backspace');
+      await recorder.recorderPage.keyboard.type('GetByText("Submit")');
       const box1 = await box1Promise;
 
       const button = await page.$('text=Submit');
       const box2 = await button.boundingBox();
       expect(roundBox(box1)).toEqual(roundBox(box2));
-      await recorderPage.click('[title="Resume (F8)"]');
-      await scriptPromise;
     } finally {
       delete process.env.TEST_INSPECTOR_LANGUAGE;
     }
@@ -541,7 +590,7 @@ it.describe('pause', () => {
     await recorder.hoverOverElement('body', { omitTooltip: true });
     await recorder.trustedClick();
 
-    await expect(recorderPage.getByRole('combobox', { name: 'Source chooser' })).toHaveValue('javascript');
+    await expect(recorderPage.getByRole('combobox', { name: 'Source chooser' })).toHaveValue('playwright-test');
     await expect(recorderPage.locator('.cm-wrapper')).toContainText(`await page.locator('body').click();`);
     await recorderPage.getByRole('button', { name: 'Resume' }).click();
     await scriptPromise;

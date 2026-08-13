@@ -115,8 +115,10 @@ List of arguments passed to a `console` function call. See also [`event: Page.co
 * langs: js, python
 - returns: <[Object]>
   - `url` <[string]> URL of the resource.
-  - `lineNumber` <[int]> 0-based line number in the resource.
-  - `columnNumber` <[int]> 0-based column number in the resource.
+  - `line` <[int]> 0-based line number in the resource.
+  - `column` <[int]> 0-based column number in the resource.
+  - `lineNumber` <[int]> 0-based line number in the resource. Deprecated, use `line` instead.
+  - `columnNumber` <[int]> 0-based column number in the resource. Deprecated, use `column` instead.
 
 ## method: ConsoleMessage.location
 * since: v1.8
@@ -137,10 +139,28 @@ The page that produced this console message, if any.
 
 The text of the console message.
 
+## method: ConsoleMessage.timestamp
+* since: v1.59
+- returns: <[float]>
+
+The timestamp of the console message in milliseconds since the Unix epoch.
+
 ## method: ConsoleMessage.type
 * since: v1.8
+* langs: js, python
+- returns: <[ConsoleMessageType]<"log"|"debug"|"info"|"error"|"warning"|"dir"|"dirxml"|"table"|"trace"|"clear"|"startGroup"|"startGroupCollapsed"|"endGroup"|"assert"|"profile"|"profileEnd"|"count"|"time"|"timeEnd">>
+
+## method: ConsoleMessage.type
+* since: v1.8
+* langs: csharp, java
 - returns: <[string]>
 
 One of the following values: `'log'`, `'debug'`, `'info'`, `'error'`, `'warning'`, `'dir'`, `'dirxml'`, `'table'`,
 `'trace'`, `'clear'`, `'startGroup'`, `'startGroupCollapsed'`, `'endGroup'`, `'assert'`, `'profile'`, `'profileEnd'`,
 `'count'`, `'timeEnd'`.
+
+## method: ConsoleMessage.worker
+* since: v1.57
+- returns: <[null]|[Worker]>
+
+The web worker or service worker that produced this console message, if any. Note that console messages from web workers also have non-null [`method: ConsoleMessage.page`].

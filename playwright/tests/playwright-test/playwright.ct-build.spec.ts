@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-import { test, expect, playwrightCtConfigText } from './playwright-test-fixtures';
 import fs from 'fs';
 import path from 'path';
+import { expect, playwrightCtConfigText, test } from './playwright-test-fixtures';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -41,7 +41,7 @@ test('should work with the empty component list', async ({ runInlineTest }, test
   expect(metainfo.version).toEqual(require('playwright-core/package.json').version);
   expect(metainfo.viteVersion).toEqual(require('vite/package.json').version);
   expect(Object.entries(metainfo.deps)).toHaveLength(0);
-  expect(Object.entries(metainfo.sources)).toHaveLength(9);
+  expect(Object.entries(metainfo.sources)).toHaveLength(14);
 });
 
 test('should extract component list', async ({ runInlineTest }, testInfo) => {
@@ -349,6 +349,55 @@ test('should grow cache', async ({ runInlineTest }, testInfo) => {
     const output = result.output;
     expect(output).not.toContain('modules transformed');
   });
+});
+
+test('should not crash when cached component test file is deleted', async ({ runInlineTest }, testInfo) => {
+
+  await test.step('run first test to build the cache', async () => {
+    const result = await runInlineTest({
+      'playwright.config.ts': playwrightCtConfigText,
+      'playwright/index.html': `<script type="module" src="./index.ts"></script>`,
+      'playwright/index.ts': ``,
+      'src/button.tsx': `
+      export const Button = () => <button>Button</button>;
+    `,
+      'src/button.test.tsx': `
+      import { test, expect } from '@playwright/experimental-ct-react';
+      import { Button } from './button.tsx';
+      test('pass', async ({ mount }) => {
+        const component = await mount(<Button></Button>);
+        await expect(component).toHaveText('Button');
+      });
+    `,
+      'src/button2.tsx': `
+      export const Button2 = () => <button>Button 2</button>;
+    `,
+      'src/button2.test.tsx': `
+      import { test, expect } from '@playwright/experimental-ct-react';
+      import { Button2 } from './button2.tsx';
+      test('pass', async ({ mount }) => {
+        const component = await mount(<Button2></Button2>);
+        await expect(component).toHaveText('Button 2');
+      });
+    `,
+    }, { workers: 1 });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.passed).toBe(2);
+
+  });
+
+  await test.step('remove the second test and component and run the tests again', async () => {
+
+    fs.unlinkSync(testInfo.outputPath('src/button2.tsx'));
+    fs.unlinkSync(testInfo.outputPath('src/button2.test.tsx'));
+
+    const result2 = await runInlineTest({}, { workers: 1 });
+
+    expect(result2.exitCode).toBe(0);
+    expect(result2.passed).toBe(1);
+  });
+
 });
 
 test('should not use global config for preview', async ({ runInlineTest }) => {
@@ -686,4 +735,63 @@ test('should resolve components imported from node_modules', async ({ runInlineT
 
   expect(result.exitCode).toBe(0);
   expect(result.passed).toBe(1);
+});
+
+test('should remove ? or # from deps in metainfo.json', async ({ runInlineTest }, testInfo) => {
+  const result = await runInlineTest({
+    'playwright.config.ts': playwrightCtConfigText,
+    'playwright/index.html': `<script type="module" src="./index.js"></script>`,
+    'playwright/index.js': ``,
+    'button.tsx': `
+      export const Button = () => <button>Button</button>;
+    `,
+    'button2.tsx': `
+      export const Button2 = () => <button>Button2</button>;
+    `,
+    'button3.tsx': `
+      export const Button3 = () => <button>Button3</button>;
+    `,
+    'button.story.tsx': `
+      import { Button as Button1 } from './button';
+      import { Button } from './button';
+      import { Button as ButtonA } from './button?a';
+      import { Button as ButtonB } from './button#b';
+      import { Button2 } from './button2?c';
+      import { Button3 } from './button3#d';
+
+      export const ButtonStory = () => (
+        <div>
+          <Button />
+          <Button2 />
+          <ButtonA />
+          <Button3 />
+          <ButtonB />
+        </div>
+      )
+    `,
+    'a.test.tsx': `
+      import { test, expect } from '@playwright/experimental-ct-react';
+      import { ButtonStory } from './button.story.tsx';
+
+      test('Button', async ({ mount }) => {
+        const component = await mount(<ButtonStory />);
+        await expect(component).toHaveText('ButtonButton2ButtonButton3Button');
+      });
+    `,
+  }, { workers: 1 });
+  expect(result.exitCode).toBe(0);
+  expect(result.passed).toBe(1);
+  const metainfo = JSON.parse(fs.readFileSync(testInfo.outputPath('playwright/.cache/metainfo.json'), 'utf-8'));
+
+  for (const [, value] of Object.entries(metainfo.deps))
+    (value as string[]).sort();
+
+  expect(Object.entries(metainfo.deps)).toEqual([
+    [expect.stringContaining('button.story.tsx'), [
+      expect.stringContaining('button.story.tsx'),
+      expect.stringContaining('button.tsx'),
+      expect.stringContaining('button2.tsx'),
+      expect.stringContaining('button3.tsx'),
+    ]],
+  ]);
 });

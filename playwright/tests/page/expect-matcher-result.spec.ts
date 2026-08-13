@@ -27,18 +27,21 @@ test('toMatchText-based assertions should have matcher result', async ({ page })
     expect.soft(e.matcherResult).toEqual({
       actual: 'Text content',
       expected: /Text2/,
-      message: expect.stringContaining(`Timed out 1ms waiting for expect(locator).toHaveText(expected)`),
+      message: expect.stringContaining(`expect(locator).toHaveText(expected) failed`),
       name: 'toHaveText',
       pass: false,
       log: expect.any(Array),
       timeout: 1,
+      ariaSnapshot: expect.any(String),
     });
 
-    expect.soft(stripAnsi(e.toString())).toContain(`Error: Timed out 1ms waiting for expect(locator).toHaveText(expected)
+    expect.soft(stripAnsi(e.toString())).toContain(`Error: expect(locator).toHaveText(expected) failed
 
 Locator: locator('#node')
 Expected pattern: /Text2/
 Received string:  \"Text content\"
+Timeout: 1ms
+
 Call log`);
 
   }
@@ -49,17 +52,20 @@ Call log`);
     expect.soft(e.matcherResult).toEqual({
       actual: 'Text content',
       expected: /Text/,
-      message: expect.stringContaining(`Timed out 1ms waiting for expect(locator).not.toHaveText(expected)`),
+      message: expect.stringContaining(`expect(locator).not.toHaveText(expected) failed`),
       name: 'toHaveText',
       pass: true,
       log: expect.any(Array),
       timeout: 1,
+      ariaSnapshot: expect.any(String),
     });
-    expect.soft(stripAnsi(e.toString())).toContain(`Error: Timed out 1ms waiting for expect(locator).not.toHaveText(expected)
+    expect.soft(stripAnsi(e.toString())).toContain(`Error: expect(locator).not.toHaveText(expected) failed
 
 Locator: locator('#node')
 Expected pattern: not /Text/
 Received string: \"Text content\"
+Timeout: 1ms
+
 Call log`);
 
   }
@@ -73,21 +79,24 @@ test('toBeTruthy-based assertions should have matcher result', async ({ page }) 
     const e = await expect(page.locator('#node2')).toBeVisible({ timeout: 1 }).catch(e => e);
     e.matcherResult.message = stripAnsi(e.matcherResult.message);
     expect.soft(e.matcherResult).toEqual({
-      actual: '<element(s) not found>',
       expected: 'visible',
-      message: expect.stringContaining(`Timed out 1ms waiting for expect(locator).toBeVisible()`),
+      message: expect.stringContaining(`expect(locator).toBeVisible() failed`),
       name: 'toBeVisible',
       pass: false,
       log: expect.any(Array),
       timeout: 1,
+      ariaSnapshot: expect.any(String),
     });
 
-    expect.soft(stripAnsi(e.toString())).toContain(`Error: Timed out 1ms waiting for expect(locator).toBeVisible()
+    expect.soft(stripAnsi(e.toString())).toContain(`Error: expect(locator).toBeVisible() failed
 
 Locator: locator('#node2')
 Expected: visible
-Received: <element(s) not found>
-Call log`);
+Timeout: 1ms
+Error: element(s) not found
+
+Call log:
+`);
 
   }
 
@@ -97,20 +106,23 @@ Call log`);
     expect.soft(e.matcherResult).toEqual({
       actual: 'visible',
       expected: 'visible',
-      message: expect.stringContaining(`Timed out 1ms waiting for expect(locator).not.toBeVisible()`),
+      message: expect.stringContaining(`expect(locator).not.toBeVisible() failed`),
       name: 'toBeVisible',
       pass: true,
       log: expect.any(Array),
       timeout: 1,
+      ariaSnapshot: expect.any(String),
     });
 
-    expect.soft(stripAnsi(e.toString())).toContain(`Error: Timed out 1ms waiting for expect(locator).not.toBeVisible()
+    expect.soft(stripAnsi(e.toString())).toContain(`Error: expect(locator).not.toBeVisible() failed
 
-Locator: locator('#node')
+Locator:  locator('#node')
 Expected: not visible
 Received: visible
-Call log`);
+Timeout:  1ms
 
+Call log:
+`);
   }
 });
 
@@ -123,18 +135,20 @@ test('toEqual-based assertions should have matcher result', async ({ page }) => 
     expect.soft(e.matcherResult).toEqual({
       actual: 0,
       expected: 1,
-      message: expect.stringContaining(`Timed out 1ms waiting for expect(locator).toHaveCount(expected)`),
+      message: expect.stringContaining(`expect(locator).toHaveCount(expected) failed`),
       name: 'toHaveCount',
       pass: false,
       log: expect.any(Array),
       timeout: 1,
     });
 
-    expect.soft(stripAnsi(e.toString())).toContain(`Error: Timed out 1ms waiting for expect(locator).toHaveCount(expected)
+    expect.soft(stripAnsi(e.toString())).toContain(`Error: expect(locator).toHaveCount(expected) failed
 
-Locator: locator('#node2')
+Locator:  locator('#node2')
 Expected: 1
 Received: 0
+Timeout:  1ms
+
 Call log`);
   }
 
@@ -144,18 +158,20 @@ Call log`);
     expect.soft(e.matcherResult).toEqual({
       actual: 1,
       expected: 1,
-      message: expect.stringContaining(`Timed out 1ms waiting for expect(locator).not.toHaveCount(expected)`),
+      message: expect.stringContaining(`expect(locator).not.toHaveCount(expected) failed`),
       name: 'toHaveCount',
       pass: true,
       log: expect.any(Array),
       timeout: 1,
     });
 
-    expect.soft(stripAnsi(e.toString())).toContain(`Error: Timed out 1ms waiting for expect(locator).not.toHaveCount(expected)
+    expect.soft(stripAnsi(e.toString())).toContain(`Error: expect(locator).not.toHaveCount(expected) failed
 
-Locator: locator('#node')
+Locator:  locator('#node')
 Expected: not 1
 Received: 1
+Timeout:  1ms
+
 Call log`);
 
   }
@@ -173,18 +189,21 @@ test('toBeChecked({ checked }) should have expected', async ({ page }) => {
     expect.soft(e.matcherResult).toEqual({
       actual: 'unchecked',
       expected: 'checked',
-      message: expect.stringContaining(`Timed out 1ms waiting for expect(locator).toBeChecked()`),
+      message: expect.stringContaining(`expect(locator).toBeChecked() failed`),
       name: 'toBeChecked',
       pass: false,
       log: expect.any(Array),
       timeout: 1,
+      ariaSnapshot: expect.any(String),
     });
 
-    expect.soft(stripAnsi(e.toString())).toContain(`Error: Timed out 1ms waiting for expect(locator).toBeChecked()
+    expect.soft(stripAnsi(e.toString())).toContain(`Error: expect(locator).toBeChecked() failed
 
-Locator: locator('#unchecked')
+Locator:  locator('#unchecked')
 Expected: checked
 Received: unchecked
+Timeout:  1ms
+
 Call log`);
 
   }
@@ -195,18 +214,21 @@ Call log`);
     expect.soft(e.matcherResult).toEqual({
       actual: 'checked',
       expected: 'checked',
-      message: expect.stringContaining(`Timed out 1ms waiting for expect(locator).not.toBeChecked()`),
+      message: expect.stringContaining(`expect(locator).not.toBeChecked() failed`),
       name: 'toBeChecked',
       pass: true,
       log: expect.any(Array),
       timeout: 1,
+      ariaSnapshot: expect.any(String),
     });
 
-    expect.soft(stripAnsi(e.toString())).toContain(`Error: Timed out 1ms waiting for expect(locator).not.toBeChecked()
+    expect.soft(stripAnsi(e.toString())).toContain(`Error: expect(locator).not.toBeChecked() failed
 
-Locator: locator('#checked')
+Locator:  locator('#checked')
 Expected: not checked
 Received: checked
+Timeout:  1ms
+
 Call log`);
 
   }
@@ -217,18 +239,21 @@ Call log`);
     expect.soft(e.matcherResult).toEqual({
       actual: 'checked',
       expected: 'unchecked',
-      message: expect.stringContaining(`Timed out 1ms waiting for expect(locator).toBeChecked({ checked: false })`),
+      message: expect.stringContaining(`expect(locator).toBeChecked({ checked: false }) failed`),
       name: 'toBeChecked',
       pass: false,
       log: expect.any(Array),
       timeout: 1,
+      ariaSnapshot: expect.any(String),
     });
 
-    expect.soft(stripAnsi(e.toString())).toContain(`Error: Timed out 1ms waiting for expect(locator).toBeChecked({ checked: false })
+    expect.soft(stripAnsi(e.toString())).toContain(`Error: expect(locator).toBeChecked({ checked: false }) failed
 
-Locator: locator('#checked')
+Locator:  locator('#checked')
 Expected: unchecked
 Received: checked
+Timeout:  1ms
+
 Call log`);
 
   }
@@ -239,18 +264,21 @@ Call log`);
     expect.soft(e.matcherResult).toEqual({
       actual: 'unchecked',
       expected: 'unchecked',
-      message: expect.stringContaining(`Timed out 1ms waiting for expect(locator).not.toBeChecked({ checked: false })`),
+      message: expect.stringContaining(`expect(locator).not.toBeChecked({ checked: false }) failed`),
       name: 'toBeChecked',
       pass: true,
       log: expect.any(Array),
       timeout: 1,
+      ariaSnapshot: expect.any(String),
     });
 
-    expect.soft(stripAnsi(e.toString())).toContain(`Error: Timed out 1ms waiting for expect(locator).not.toBeChecked({ checked: false })
+    expect.soft(stripAnsi(e.toString())).toContain(`Error: expect(locator).not.toBeChecked({ checked: false }) failed
 
-Locator: locator('#unchecked')
+Locator:  locator('#unchecked')
 Expected: not unchecked
 Received: unchecked
+Timeout:  1ms
+
 Call log`);
 
   }
@@ -261,18 +289,21 @@ Call log`);
     expect.soft(e.matcherResult).toEqual({
       actual: 'unchecked',
       expected: 'indeterminate',
-      message: expect.stringContaining(`Timed out 1ms waiting for expect(locator).toBeChecked({ indeterminate: true })`),
+      message: expect.stringContaining(`expect(locator).toBeChecked({ indeterminate: true }) failed`),
       name: 'toBeChecked',
       pass: false,
       log: expect.any(Array),
       timeout: 1,
+      ariaSnapshot: expect.any(String),
     });
 
-    expect.soft(stripAnsi(e.toString())).toContain(`Error: Timed out 1ms waiting for expect(locator).toBeChecked({ indeterminate: true })
+    expect.soft(stripAnsi(e.toString())).toContain(`Error: expect(locator).toBeChecked({ indeterminate: true }) failed
 
-Locator: locator('#unchecked')
+Locator:  locator('#unchecked')
 Expected: indeterminate
 Received: unchecked
+Timeout:  1ms
+
 Call log`);
 
   }
@@ -286,6 +317,7 @@ test('toHaveScreenshot should populate matcherResult', async ({ page, server, is
   e.matcherResult.message = stripAnsi(e.matcherResult.message);
 
   expect.soft(e.matcherResult).toEqual({
+    attachments: [expect.any(Object), expect.any(Object), expect.any(Object)],
     actual: expect.stringContaining('screenshot-sanity-actual'),
     expected: expect.stringContaining('screenshot-sanity-'),
     diff: expect.stringContaining('screenshot-sanity-diff'),
@@ -295,9 +327,8 @@ test('toHaveScreenshot should populate matcherResult', async ({ page, server, is
     log: expect.any(Array),
   });
 
-  expect.soft(stripAnsi(e.toString())).toContain(`Error: expect(page).toHaveScreenshot(expected)
+  expect.soft(stripAnsi(e.toString())).toContain(`Error: expect(page).toHaveScreenshot(expected) failed
 
   23362 pixels (ratio 0.10 of all image pixels) are different.
-
-Expected:`);
+`);
 });

@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
+import fs from 'fs';
 import os from 'os';
 import * as util from 'util';
-import { getPlaywrightVersion } from '../../packages/playwright-core/lib/server/utils/userAgent';
+import { getPlaywrightVersion, utils } from '../../packages/playwright-core/lib/coreBundle';
 import { expect, playwrightTest as base } from '../config/browserTest';
-import { kTargetClosedErrorMessage } from 'tests/config/errors';
 
 const it = base.extend({
   context: async ({}, use) => {
@@ -70,7 +70,7 @@ it('should support global timeout option', async ({ playwright, server }) => {
   const request = await playwright.request.newContext({ timeout: 100 });
   server.setRoute('/empty.html', (req, res) => {});
   const error = await request.get(server.EMPTY_PAGE).catch(e => e);
-  expect(error.message).toContain('Request timed out after 100ms');
+  expect(error.message).toContain('apiRequestContext.get: Timeout 100ms exceeded');
   await request.dispose();
 });
 
@@ -87,6 +87,28 @@ it('should propagate extra http headers with redirects', async ({ playwright, se
   expect(req1.headers['my-secret']).toBe('Value');
   expect(req2.headers['my-secret']).toBe('Value');
   expect(req3.headers['my-secret']).toBe('Value');
+  await request.dispose();
+});
+
+it('should preserve authorization on same-origin redirect but strip on cross-origin', async ({ playwright, server }) => {
+  server.setRedirect('/same/redirect', '/same/dest');
+  server.setRedirect('/cross/redirect', server.CROSS_PROCESS_PREFIX + '/cross/dest');
+  const request = await playwright.request.newContext({
+    extraHTTPHeaders: { 'Authorization': 'Bearer secret' },
+  });
+
+  const [sameDestReq] = await Promise.all([
+    server.waitForRequest('/same/dest'),
+    request.get(`${server.PREFIX}/same/redirect`),
+  ]);
+  expect(sameDestReq.headers['authorization']).toBe('Bearer secret');
+
+  const [crossDestReq] = await Promise.all([
+    server.waitForRequest('/cross/dest'),
+    request.get(`${server.PREFIX}/cross/redirect`),
+  ]);
+  expect(crossDestReq.headers['authorization']).toBeUndefined();
+
   await request.dispose();
 });
 
@@ -213,6 +235,59 @@ it('should propagate ignoreHTTPSErrors on redirects', async ({ playwright, https
   await request.dispose();
 });
 
+it('should return server address from response', async ({ playwright, server }) => {
+  const request = await playwright.request.newContext();
+  // The second request reuses the keep-alive socket and should report the address as well.
+  for (let i = 0; i < 2; i++) {
+    const response = await request.get(server.EMPTY_PAGE);
+    const addr = await response.serverAddr();
+    expect(addr!.ipAddress).toMatch(/^(127\.0\.0\.1|::1)$/);
+    expect(addr!.port).toBe(server.PORT);
+  }
+  await request.dispose();
+});
+
+it('should return security details from response', async ({ playwright, httpsServer }) => {
+  const request = await playwright.request.newContext({ ignoreHTTPSErrors: true });
+  // The second request reuses the keep-alive socket and should report the details as well.
+  for (let i = 0; i < 2; i++) {
+    const response = await request.get(httpsServer.EMPTY_PAGE);
+    expect(await response.securityDetails()).toEqual({ issuer: 'playwright-test', protocol: 'TLSv1.3', subjectName: 'playwright-test', validFrom: 1691708270, validTo: 2007068270 });
+  }
+  await request.dispose();
+});
+
+it('should return null security details for http response', async ({ playwright, server }) => {
+  const request = await playwright.request.newContext();
+  const response = await request.get(server.EMPTY_PAGE);
+  expect(await response.securityDetails()).toBeNull();
+  await request.dispose();
+});
+
+it('should return security details for certificate with multiple CN attributes', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41815' },
+}, async ({ playwright, asset }) => {
+  const server = utils.createHttpsServer({
+    key: fs.readFileSync(asset('multi-value-rdn/key.pem')),
+    cert: fs.readFileSync(asset('multi-value-rdn/cert.pem')),
+  }, (req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const request = await playwright.request.newContext({ ignoreHTTPSErrors: true });
+    const response = await request.get(`https://localhost:${server.address().port}/`);
+    expect(response.status()).toBe(200);
+    const securityDetails = await response.securityDetails();
+    expect(securityDetails.subjectName).toBe('localhost');
+    expect(securityDetails.issuer).toBe('localhost');
+    await request.dispose();
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
 it('should resolve url relative to global baseURL option', async ({ playwright, server }) => {
   const request = await playwright.request.newContext({ baseURL: server.PREFIX });
   const response = await request.get('/empty.html');
@@ -255,7 +330,9 @@ it('should set playwright as user-agent', async ({ playwright, server, isWindows
 });
 
 it('should be able to construct with context options', async ({ playwright, browserType, server }) => {
-  const request = await playwright.request.newContext((browserType as any)._playwright._defaultContextOptions);
+  const defaultContextOptions = {};
+  await (playwright as any)._instrumentation.runBeforeCreateRequestContext(defaultContextOptions);
+  const request = await playwright.request.newContext(defaultContextOptions);
   const response = await request.get(server.EMPTY_PAGE);
   expect(response.ok()).toBeTruthy();
   await request.dispose();
@@ -283,7 +360,7 @@ it('should abort requests when context is disposed', async ({ playwright, server
   ]);
   for (const result of results.slice(0, -1)) {
     expect(result instanceof Error).toBeTruthy();
-    expect(result.message).toContain(kTargetClosedErrorMessage);
+    expect(result.message).toContain('Request context disposed.');
   }
   await connectionClosed;
   await request.dispose();
@@ -300,7 +377,7 @@ it('should abort redirected requests when context is disposed', async ({ playwri
     server.waitForRequest('/test').then(() => request.dispose())
   ]);
   expect(result instanceof Error).toBeTruthy();
-  expect(result.message).toContain(kTargetClosedErrorMessage);
+  expect(result.message).toMatch(/Request context disposed|Target page, context or browser has been closed/);
   await connectionClosed;
   await request.dispose();
 });

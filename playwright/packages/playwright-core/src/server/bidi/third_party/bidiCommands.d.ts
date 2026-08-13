@@ -50,6 +50,10 @@ export interface Commands {
     };
     returnType: Bidi.Browser.RemoveUserContext;
   };
+  'browser.setDownloadBehavior': {
+    params: Bidi.Browser.SetDownloadBehaviorParameters;
+    returnType: Bidi.Browser.SetDownloadBehaviorResult;
+  }
 
   'browsingContext.activate': {
     params: Bidi.BrowsingContext.ActivateParameters;
@@ -117,6 +121,31 @@ export interface Commands {
     params: Bidi.Emulation.SetGeolocationOverrideParameters;
     returnType: Bidi.EmptyResult;
   };
+  'emulation.setScreenSettingsOverride': {
+    params: Bidi.Emulation.SetScreenSettingsOverrideParameters;
+    returnType: Bidi.SetScreenSettingsOverrideResult;
+  };
+  'emulation.setScreenOrientationOverride': {
+    params: Bidi.Emulation.SetScreenOrientationOverrideParameters;
+    returnType: Bidi.EmptyResult;
+  };
+  'emulation.setTimezoneOverride': {
+    params: Bidi.Emulation.SetTimezoneOverrideParameters;
+    returnType: Bidi.EmptyResult;
+  };
+  'emulation.setUserAgentOverride': {
+    params: Bidi.Emulation.SetUserAgentOverrideParameters;
+    returnType: Bidi.Emulation.SetUserAgentOverrideResult;
+  };
+
+  'emulation.setLocaleOverride': {
+    params: Bidi.Emulation.SetLocaleOverrideParameters;
+    returnType: Bidi.EmptyResult;
+  };
+  'emulation.setNetworkConditions': {
+    params: Bidi.Emulation.SetNetworkConditionsParameters;
+    returnType: Bidi.Emulation.SetNetworkConditionsResult;
+  };
 
   'permissions.setPermission': {
     params: Bidi.Permissions.SetPermissionParameters;
@@ -159,6 +188,23 @@ export interface Commands {
   'storage.setCookie': {
     params: Bidi.Storage.SetCookieParameters;
     returnType: Bidi.Storage.SetCookieParameters;
+  };
+
+  'network.setExtraHeaders': {
+    params: Bidi.Network.SetExtraHeadersParameters;
+    returnType: Bidi.Network.SetExtraHeadersResult;
+  };
+  'network.addDataCollector': {
+    params: Bidi.Network.AddDataCollectorParameters;
+    returnType: Bidi.Network.AddDataCollectorResult;
+  };
+  'network.removeDataCollector': {
+    params: Bidi.Network.RemoveDataCollectorParameters;
+    returnType: Bidi.Network.RemoveDataCollectorResult;
+  };
+  'network.getData': {
+    params: Bidi.Network.GetDataParameters;
+    returnType: Bidi.Network.GetDataResult;
   };
 
   'network.addIntercept': {

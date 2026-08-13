@@ -1,7 +1,7 @@
 /**
  * Copyright (c) Microsoft Corporation.
  *
- * Licensed under the Apache License, Version 2.0 (the 'License");
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 // @ts-check
-const { DefaultAzureCredential } = require('@azure/identity');
+const { ManagedIdentityCredential } = require('@azure/identity');
 const { BlobServiceClient } = require('@azure/storage-blob');
-const defaultAzureCredential = new DefaultAzureCredential();
+const defaultAzureCredential = new ManagedIdentityCredential();
 const zlib = require('zlib');
 const util = require('util');
 

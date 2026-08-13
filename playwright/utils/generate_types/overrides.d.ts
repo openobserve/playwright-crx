@@ -19,6 +19,10 @@ import { ReadStream } from 'fs';
 import { Protocol } from './protocol';
 import { Serializable, EvaluationArgument, PageFunction, PageFunctionOn, SmartHandle, ElementHandleForTag, BindingSource } from './structs';
 
+// Use the global URLPattern type if available (Node.js 22+, modern browsers),
+// otherwise fall back to `never` so it disappears from union types.
+type URLPattern = typeof globalThis extends { URLPattern: new (...args: any) => infer T } ? T : never;
+
 type PageWaitForSelectorOptionsNotHidden = PageWaitForSelectorOptions & {
   state?: 'visible'|'attached';
 };
@@ -26,14 +30,21 @@ type ElementHandleWaitForSelectorOptionsNotHidden = ElementHandleWaitForSelector
   state?: 'visible'|'attached';
 };
 
+// @ts-ignore this will be any if zod is not installed
+import { ZodTypeAny, z } from 'zod';
+// @ts-ignore this will be any if zod is not installed
+import * as z3 from 'zod/v3';
+type ZodSchema = ZodTypeAny | z3.ZodTypeAny;
+type InferZodSchema<T extends ZodSchema> = T extends z3.ZodTypeAny ? z3.infer<T> : T extends ZodTypeAny ? z.infer<T> : never;
+
 export interface Page {
-  evaluate<R, Arg>(pageFunction: PageFunction<Arg, R>, arg: Arg): Promise<R>;
-  evaluate<R>(pageFunction: PageFunction<void, R>, arg?: any): Promise<R>;
+  evaluate<R, Arg>(pageFunction: PageFunction<Arg, R>, arg: Arg, options?: { exposeFunctions?: boolean }): Promise<R>;
+  evaluate<R>(pageFunction: PageFunction<void, R>, arg?: any, options?: { exposeFunctions?: boolean }): Promise<R>;
 
-  evaluateHandle<R, Arg>(pageFunction: PageFunction<Arg, R>, arg: Arg): Promise<SmartHandle<R>>;
-  evaluateHandle<R>(pageFunction: PageFunction<void, R>, arg?: any): Promise<SmartHandle<R>>;
+  evaluateHandle<R, Arg>(pageFunction: PageFunction<Arg, R>, arg: Arg, options?: { exposeFunctions?: boolean }): Promise<SmartHandle<R>>;
+  evaluateHandle<R>(pageFunction: PageFunction<void, R>, arg?: any, options?: { exposeFunctions?: boolean }): Promise<SmartHandle<R>>;
 
-  addInitScript<Arg>(script: PageFunction<Arg, any> | { path?: string, content?: string }, arg?: Arg): Promise<void>;
+  addInitScript<Arg>(script: PageFunction<Arg, any> | { path?: string, content?: string }, arg?: Arg, options?: { exposeFunctions?: boolean }): Promise<Disposable>;
 
   $<K extends keyof HTMLElementTagNameMap>(selector: K, options?: { strict: boolean }): Promise<ElementHandleForTag<K> | null>;
   $(selector: string, options?: { strict: boolean }): Promise<ElementHandle<SVGElement | HTMLElement> | null>;
@@ -59,8 +70,7 @@ export interface Page {
   waitForSelector<K extends keyof HTMLElementTagNameMap>(selector: K, options: PageWaitForSelectorOptions): Promise<ElementHandleForTag<K> | null>;
   waitForSelector(selector: string, options: PageWaitForSelectorOptions): Promise<null|ElementHandle<SVGElement | HTMLElement>>;
 
-  exposeBinding(name: string, playwrightBinding: (source: BindingSource, arg: JSHandle) => any, options: { handle: true }): Promise<void>;
-  exposeBinding(name: string, playwrightBinding: (source: BindingSource, ...args: any[]) => any, options?: { handle?: boolean }): Promise<void>;
+  exposeBinding(name: string, playwrightBinding: (source: BindingSource, ...args: any[]) => any): Promise<Disposable>;
 
   removeAllListeners(type?: string): this;
   removeAllListeners(type: string | undefined, options: {
@@ -75,11 +85,11 @@ export interface Page {
 }
 
 export interface Frame {
-  evaluate<R, Arg>(pageFunction: PageFunction<Arg, R>, arg: Arg): Promise<R>;
-  evaluate<R>(pageFunction: PageFunction<void, R>, arg?: any): Promise<R>;
+  evaluate<R, Arg>(pageFunction: PageFunction<Arg, R>, arg: Arg, options?: { exposeFunctions?: boolean }): Promise<R>;
+  evaluate<R>(pageFunction: PageFunction<void, R>, arg?: any, options?: { exposeFunctions?: boolean }): Promise<R>;
 
-  evaluateHandle<R, Arg>(pageFunction: PageFunction<Arg, R>, arg: Arg): Promise<SmartHandle<R>>;
-  evaluateHandle<R>(pageFunction: PageFunction<void, R>, arg?: any): Promise<SmartHandle<R>>;
+  evaluateHandle<R, Arg>(pageFunction: PageFunction<Arg, R>, arg: Arg, options?: { exposeFunctions?: boolean }): Promise<SmartHandle<R>>;
+  evaluateHandle<R>(pageFunction: PageFunction<void, R>, arg?: any, options?: { exposeFunctions?: boolean }): Promise<SmartHandle<R>>;
 
   $<K extends keyof HTMLElementTagNameMap>(selector: K, options?: { strict: boolean }): Promise<ElementHandleForTag<K> | null>;
   $(selector: string, options?: { strict: boolean }): Promise<ElementHandle<SVGElement | HTMLElement> | null>;
@@ -107,10 +117,9 @@ export interface Frame {
 }
 
 export interface BrowserContext {
-  exposeBinding(name: string, playwrightBinding: (source: BindingSource, arg: JSHandle) => any, options: { handle: true }): Promise<void>;
-  exposeBinding(name: string, playwrightBinding: (source: BindingSource, ...args: any[]) => any, options?: { handle?: boolean }): Promise<void>;
+  exposeBinding(name: string, playwrightBinding: (source: BindingSource, ...args: any[]) => any): Promise<Disposable>;
 
-  addInitScript<Arg>(script: PageFunction<Arg, any> | { path?: string, content?: string }, arg?: Arg): Promise<void>;
+  addInitScript<Arg>(script: PageFunction<Arg, any> | { path?: string, content?: string }, arg?: Arg, options?: { exposeFunctions?: boolean }): Promise<Disposable>;
 
   removeAllListeners(type?: string): this;
   removeAllListeners(type: string | undefined, options: {
@@ -122,6 +131,7 @@ export interface BrowserContext {
      */
     behavior?: 'wait'|'ignoreErrors'|'default'
   }): Promise<void>;
+
 }
 
 export interface Browser {
@@ -146,11 +156,11 @@ export interface Worker {
 }
 
 export interface JSHandle<T = any> {
-  evaluate<R, Arg, O extends T = T>(pageFunction: PageFunctionOn<O, Arg, R>, arg: Arg): Promise<R>;
-  evaluate<R, O extends T = T>(pageFunction: PageFunctionOn<O, void, R>, arg?: any): Promise<R>;
+  evaluate<R, Arg, O extends T = T>(pageFunction: PageFunctionOn<O, Arg, R>, arg: Arg, options?: { exposeFunctions?: boolean }): Promise<R>;
+  evaluate<R, O extends T = T>(pageFunction: PageFunctionOn<O, void, R>, arg?: any, options?: { exposeFunctions?: boolean }): Promise<R>;
 
-  evaluateHandle<R, Arg, O extends T = T>(pageFunction: PageFunctionOn<O, Arg, R>, arg: Arg): Promise<SmartHandle<R>>;
-  evaluateHandle<R, O extends T = T>(pageFunction: PageFunctionOn<O, void, R>, arg?: any): Promise<SmartHandle<R>>;
+  evaluateHandle<R, Arg, O extends T = T>(pageFunction: PageFunctionOn<O, Arg, R>, arg: Arg, options?: { exposeFunctions?: boolean }): Promise<SmartHandle<R>>;
+  evaluateHandle<R, O extends T = T>(pageFunction: PageFunctionOn<O, void, R>, arg?: any, options?: { exposeFunctions?: boolean }): Promise<SmartHandle<R>>;
 
   jsonValue(): Promise<T>;
   asElement(): T extends Node ? ElementHandle<T> : null;
@@ -180,28 +190,24 @@ export interface ElementHandle<T=Node> extends JSHandle<T> {
 }
 
 export interface Locator {
-  evaluate<R, Arg, E extends SVGElement | HTMLElement = SVGElement | HTMLElement>(pageFunction: PageFunctionOn<E, Arg, R>, arg: Arg, options?: {
-    timeout?: number;
-  }): Promise<R>;
-  evaluate<R, E extends SVGElement | HTMLElement = SVGElement | HTMLElement>(pageFunction: PageFunctionOn<E, void, R>, options?: {
-    timeout?: number;
-  }): Promise<R>;
-  evaluateHandle<R, Arg, E extends SVGElement | HTMLElement = SVGElement | HTMLElement>(pageFunction: PageFunctionOn<E, Arg, R>, arg: Arg): Promise<SmartHandle<R>>;
-  evaluateHandle<R, E extends SVGElement | HTMLElement = SVGElement | HTMLElement>(pageFunction: PageFunctionOn<E, void, R>): Promise<SmartHandle<R>>;
-  evaluateAll<R, Arg, E extends SVGElement | HTMLElement = SVGElement | HTMLElement>(pageFunction: PageFunctionOn<E[], Arg, R>, arg: Arg): Promise<R>;
-  evaluateAll<R, E extends SVGElement | HTMLElement = SVGElement | HTMLElement>(pageFunction: PageFunctionOn<E[], void, R>): Promise<R>;
-  elementHandle(options?: {
-    timeout?: number;
-  }): Promise<null|ElementHandle<SVGElement | HTMLElement>>;
+  evaluate<R, Arg, E extends SVGElement | HTMLElement = SVGElement | HTMLElement>(pageFunction: PageFunctionOn<E, Arg, R>, arg?: Arg, options?: { timeout?: number, signal?: AbortSignal, exposeFunctions?: boolean }): Promise<R>;
+  evaluateHandle<R, Arg, E extends SVGElement | HTMLElement = SVGElement | HTMLElement>(pageFunction: PageFunctionOn<E, Arg, R>, arg?: Arg, options?: { timeout?: number, signal?: AbortSignal, exposeFunctions?: boolean }): Promise<SmartHandle<R>>;
+  evaluateAll<R, Arg, E extends SVGElement | HTMLElement = SVGElement | HTMLElement>(pageFunction: PageFunctionOn<E[], Arg, R>, arg?: Arg): Promise<R>;
+  waitForFunction<Arg, E extends SVGElement | HTMLElement = SVGElement | HTMLElement>(pageFunction: PageFunctionOn<E, Arg, any>, arg?: Arg, options?: { timeout?: number, signal?: AbortSignal }): Promise<void>;
+  elementHandle(options?: { timeout?: number }): Promise<ElementHandle<SVGElement | HTMLElement>>;
+  highlight(options?: { style?: string | { [key: string]: string | number } }): Promise<Disposable>;
+  toString(): string;
 }
 
 export interface BrowserType<Unused = {}> {
   connectOverCDP(endpointURL: string, options?: ConnectOverCDPOptions): Promise<Browser>;
+  connectOverCDP(transport: ConnectOverCDPTransport, options?: ConnectOverCDPOptions): Promise<Browser>;
   /**
    * Option `wsEndpoint` is deprecated. Instead use `endpointURL`.
    * @deprecated
    */
   connectOverCDP(options: ConnectOverCDPOptions & { wsEndpoint?: string }): Promise<Browser>;
+
   connect(wsEndpoint: string, options?: ConnectOptions): Promise<Browser>;
   /**
    * wsEndpoint in options is deprecated. Instead use `wsEndpoint`.
@@ -212,12 +218,20 @@ export interface BrowserType<Unused = {}> {
   connect(options: ConnectOptions & { wsEndpoint?: string }): Promise<Browser>;
 }
 
+export interface ConnectOverCDPTransport {
+  open?(): void;
+  send(message: object): void;
+  close(): void;
+  onmessage?: (message: object) => void;
+  onclose?: (reason?: string) => void;
+}
+
 export interface CDPSession {
-  on: <T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void) => this;
-  addListener: <T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void) => this;
-  off: <T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void) => this;
-  removeListener: <T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void) => this;
-  once: <T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void) => this;
+  on<T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void): this;
+  addListener<T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void): this;
+  off<T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void): this;
+  removeListener<T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void): this;
+  once<T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void): this;
   send<T extends keyof Protocol.CommandParameters>(
     method: T,
     params?: Protocol.CommandParameters[T]
@@ -227,6 +241,23 @@ export interface CDPSession {
 export interface WebSocketRoute {
   onMessage(handler: (message: string | Buffer) => any): void;
   onClose(handler: (code: number | undefined, reason: string | undefined) => any): void;
+}
+
+export interface Screencast {
+  start(options?: {
+    onFrame?: (frame: { data: Buffer, timestamp: number, viewportWidth: number, viewportHeight: number }) => Promise<any>|any;
+    path?: string;
+    size?: {
+      width: number;
+      height: number;
+    };
+    quality?: number;
+    annotate?: {
+      duration?: number;
+      position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right';
+      fontSize?: number;
+    };
+  }): Promise<Disposable>;
 }
 
 type DeviceDescriptor = {
@@ -242,39 +273,6 @@ export namespace errors {
 
 class TimeoutError extends Error {}
 
-}
-
-export interface Accessibility {
-  snapshot(options?: AccessibilitySnapshotOptions): Promise<null|AccessibilityNode>;
-}
-
-type AccessibilityNode = {
-  role: string;
-  name: string;
-  value?: string|number;
-  description?: string;
-  keyshortcuts?: string;
-  roledescription?: string;
-  valuetext?: string;
-  disabled?: boolean;
-  expanded?: boolean;
-  focused?: boolean;
-  modal?: boolean;
-  multiline?: boolean;
-  multiselectable?: boolean;
-  readonly?: boolean;
-  required?: boolean;
-  selected?: boolean;
-  checked?: boolean|"mixed";
-  pressed?: boolean|"mixed";
-  level?: number;
-  valuemin?: number;
-  valuemax?: number;
-  autocomplete?: string;
-  haspopup?: string;
-  invalid?: string;
-  orientation?: string;
-  children?: AccessibilityNode[];
 }
 
 export const devices: Devices;
@@ -334,18 +332,16 @@ export type AndroidKey =
   'Home' |
   'Back' |
   'Call' | 'EndCall' |
-  '0' |  '1' |  '2' |  '3' |  '4' |  '5' |  '6' |  '7' |  '8' |  '9' |
-  'Star' | 'Pound' | '*' | '#' |
+  '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' |
+  'Star' | '*' | 'Pound' | '#' |
   'DialUp' | 'DialDown' | 'DialLeft' | 'DialRight' | 'DialCenter' |
   'VolumeUp' | 'VolumeDown' |
-  'ChannelUp' | 'ChannelDown' |
   'Power' |
   'Camera' |
   'Clear' |
   'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' |
   'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y' | 'Z' |
-  'Comma' | ',' |
-  'Period' | '.' |
+  'Comma' | ',' | 'Period' | '.' |
   'AltLeft' | 'AltRight' |
   'ShiftLeft' | 'ShiftRight' |
   'Tab' | '\t' |
@@ -373,16 +369,32 @@ export type AndroidKey =
   'Notification' |
   'Search' |
   'RecentApps' |
+  'MediaPlayPause' |
+  'MediaStop' |
+  'MediaNext' |
+  'MediaPrevious' |
+  'MediaRewind' |
+  'MediaFastForward' |
+  'MediaPlay' |
+  'MediaPause' |
+  'MediaClose' |
+  'MediaEject' |
+  'MediaRecord' |
+  'ChannelUp' | 'ChannelDown' |
   'AppSwitch' |
   'Assist' |
+  'MediaAudioTrack' |
+  'MediaTopMenu' |
+  'MediaSkipForward' |
+  'MediaSkipBackward' |
+  'MediaStepForward' |
+  'MediaStepBackward' |
   'Cut' |
   'Copy' |
   'Paste';
 
 export const _electron: Electron;
 export const _android: Android;
-export const _bidiChromium: BrowserType;
-export const _bidiFirefox: BrowserType;
 
 // This is required to not export everything by default. See https://github.com/Microsoft/TypeScript/issues/19545#issuecomment-340490459
 export {};

@@ -16,9 +16,9 @@
 
 import { parseEvaluationResultValue, serializeAsCallArgument } from '@isomorphic/utilityScriptSerializers';
 
-import type * as channels from '@protocol/channels';
+import type { IndexedDBDatabase, OriginStorage, SetOriginStorage } from '@protocol/structs';
 
-export type SerializedStorage = Omit<channels.OriginStorage, 'origin'>;
+export type SerializedStorage = Omit<OriginStorage, 'origin'>;
 
 export class StorageScript {
   private _isFirefox: boolean;
@@ -85,7 +85,7 @@ export class StorageScript {
 
       const keys = await this._idbRequestToPromise(objectStore.getAllKeys());
       const records = await Promise.all(keys.map(async key => {
-        const record: channels.IndexedDBDatabase['stores'][0]['records'][0] = {};
+        const record: IndexedDBDatabase['stores'][0]['records'][0] = {};
 
         if (objectStore.keyPath === null) {
           const { encoded, trivial } = this._trySerialize(key);
@@ -146,7 +146,7 @@ export class StorageScript {
     }
   }
 
-  private async _restoreDB(dbInfo: channels.IndexedDBDatabase) {
+  private async _restoreDB(dbInfo: IndexedDBDatabase) {
     const openRequest = this._global.indexedDB.open(dbInfo.name, dbInfo.version);
     openRequest.addEventListener('upgradeneeded', () => {
       const db = openRequest.result;
@@ -176,13 +176,35 @@ export class StorageScript {
     }));
   }
 
-  async restore(originState: channels.SetOriginStorage) {
+  async restore(originState: SetOriginStorage | undefined) {
+    // Clean Service Workers.
+    const registrations = this._global.navigator.serviceWorker ? await this._global.navigator.serviceWorker.getRegistrations() : [];
+    await Promise.all(registrations.map(async r => {
+      // Heuristic for service workers that stalled during main script fetch or importScripts:
+      // Waiting for them to finish unregistering takes ages so we do not await.
+      // However, they will unregister immediately after fetch finishes and should not affect next page load.
+      // Unfortunately, loading next page in Chromium still takes 5 seconds waiting for
+      // some operation on this bogus service worker to finish.
+      if (!r.installing && !r.waiting && !r.active)
+        r.unregister().catch(() => {});
+      else
+        await r.unregister().catch(() => {});
+    }));
+
     try {
-      await Promise.all((originState.indexedDB ?? []).map(dbInfo => this._restoreDB(dbInfo)));
+      for (const db of await this._global.indexedDB.databases?.() || []) {
+        // Do not wait for the callback - it is called on timer in Chromium (slow).
+        if (db.name)
+          this._global.indexedDB.deleteDatabase(db.name!);
+      }
+      await Promise.all((originState?.indexedDB ?? []).map(dbInfo => this._restoreDB(dbInfo)));
     } catch (e) {
       throw new Error('Unable to restore IndexedDB: ' + e.message);
     }
-    for (const { name, value } of (originState.localStorage || []))
+
+    this._global.sessionStorage.clear();
+    this._global.localStorage.clear();
+    for (const { name, value } of (originState?.localStorage || []))
       this._global.localStorage.setItem(name, value);
   }
 }

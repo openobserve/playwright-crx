@@ -21,15 +21,17 @@ export interface MountOptions<HooksConfig> {
 }
 
 export interface MountResult extends Locator {
-  unmount(): Promise<void>;
-  update(component: JSX.Element): Promise<void>;
+  unmount: () => Promise<void>;
+  update: (component: JSX.Element) => Promise<void>;
 }
 
-export const test: TestType<{
-  mount<HooksConfig>(
+export interface ComponentFixtures {
+  mount: <HooksConfig>(
     component: JSX.Element,
     options?: MountOptions<HooksConfig>
-  ): Promise<MountResult>;
-}>;
+  ) => Promise<MountResult>;
+}
+
+export const test: TestType<ComponentFixtures>;
 
 export { defineConfig, PlaywrightTestConfig, expect, devices } from '@playwright/experimental-ct-core';

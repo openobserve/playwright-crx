@@ -730,6 +730,29 @@ it.describe('runFor', () => {
 
     expect(spies[0].calledBefore(spies[1])).toBeTruthy();
   });
+
+  it('does not rewind back in time', async ({ clock }) => {
+    const stub = createStub();
+    const gotTime = await new Promise<number>(done => {
+      clock.setTimeout(() => {
+        stub(clock.Date.now());
+      }, 10);
+      clock.setTimeout(() => {
+        stub(clock.Date.now());
+      }, 10);
+      clock.resume();
+      setTimeout(async () => {
+        // Call fast-forward right after the real time sync happens,
+        // but before all the callbacks are processed.
+        await clock.runFor(1000);
+        setTimeout(() => {
+          done(clock.Date.now());
+        }, 20);
+      }, 10);
+    });
+    expect(stub.callCount).toBe(2);
+    expect(gotTime).toBeGreaterThan(1010);
+  });
 });
 
 it.describe('clearTimeout', () => {
@@ -1156,6 +1179,26 @@ it.describe('stubTimers', () => {
     });
   });
 
+  it('should return PerformanceEntry-like objects from performance.mark and performance.measure', async ({ install }) => {
+    it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/39816' });
+    it.skip(nodeMajorVersion < 20);
+    install();
+    const markEntry = performance.mark('foo');
+    const measureEntry = performance.measure('bar');
+    for (const entry of [markEntry, measureEntry]) {
+      expect(entry).toHaveProperty('startTime');
+      expect(entry).toHaveProperty('duration');
+      expect(entry).toHaveProperty('name');
+      expect(entry).toHaveProperty('entryType');
+      expect(typeof entry.toJSON()).toBe('string');
+    }
+    expect(markEntry.name).toBe('foo');
+    expect(markEntry.entryType).toBe('mark');
+    expect(measureEntry.name).toBe('bar');
+    expect(measureEntry.entryType).toBe('measure');
+    expect(measureEntry.duration).toBe(50);
+  });
+
   it('restores global property on uninstall if it was inherited onto the global object', ({}) => {
     // Give the global object an inherited 'setTimeout' method
     const proto = {
@@ -1384,6 +1427,53 @@ it.describe('fastForward', () => {
     expect(shortTimers[1].callCount).toBe(1);
     expect(shortTimers[2].callCount).toBe(1);
   });
+
+  it('does not rewind back in time', async ({ clock }) => {
+    const stub = createStub();
+    const gotTime = await new Promise<number>(done => {
+      clock.setTimeout(() => {
+        stub(clock.Date.now());
+      }, 10);
+      clock.setTimeout(() => {
+        stub(clock.Date.now());
+      }, 10);
+      clock.resume();
+      setTimeout(async () => {
+        // Call fast-forward right after the real time sync happens,
+        // but before all the callbacks are processed.
+        await clock.fastForward(1000);
+        setTimeout(() => {
+          done(clock.Date.now());
+        }, 20);
+      }, 10);
+    });
+    expect(stub.callCount).toBe(2);
+    expect(gotTime).toBeGreaterThan(1010);
+  });
+
+  it('error does not break the clock', async ({ clock }) => {
+    const stub = createStub();
+    clock.setTimeout(() => {
+      stub(clock.Date.now());
+    }, 1000);
+    const error = await clock.fastForward(-1000).catch(e => e);
+    expect(error.message).toContain('Cannot fast-forward to the past');
+    await clock.fastForward(2000);
+    expect(stub.callCount).toBe(1);
+    expect(stub.calledWith(2000)).toBeTruthy();
+  });
+
+  it('error does not pause forever', async ({ clock }) => {
+    const stub = createStub();
+    clock.setTimeout(() => {
+      stub(clock.Date.now());
+    }, 1000);
+    clock.resume();
+    const error = await clock.fastForward(-1000).catch(e => e);
+    expect(error.message).toContain('Cannot fast-forward to the past');
+    await new Promise(f => setTimeout(f, 1500));
+    expect(stub.callCount).toBe(1);
+  });
 });
 
 it.describe('pauseAt', () => {
@@ -1595,37 +1685,6 @@ it.describe('Intl API', () => {
   });
 });
 
-it('works with concurrent runFor calls', async ({ clock }) => {
-  clock.setSystemTime(0);
-
-  const log: string[] = [];
-  for (let t = 500; t > 0; t -= 100) {
-    clock.setTimeout(() => {
-      log.push(`${t}: ${clock.Date.now()}`);
-      clock.setTimeout(() => {
-        log.push(`${t}+0: ${clock.Date.now()}`);
-      }, 0);
-    }, t);
-  }
-
-  await Promise.all([
-    clock.runFor(500),
-    clock.runFor(600),
-  ]);
-  expect(log).toEqual([
-    `100: 100`,
-    `100+0: 101`,
-    `200: 200`,
-    `200+0: 201`,
-    `300: 300`,
-    `300+0: 301`,
-    `400: 400`,
-    `400+0: 401`,
-    `500: 500`,
-    `500+0: 501`,
-  ]);
-});
-
 it('works with slow setTimeout in busy embedder', async ({ installEx }) => {
   const { originals, api, clock } = installEx({ now: 0 });
   await clock.pauseAt(0);
@@ -1701,7 +1760,7 @@ interface Stub {
 
 const createStub = (body?: () => void): Stub => {
   const allFirstArgs = new Set<any>();
-  const stub: Stub = function(...args: any[]) {
+  const stub: Stub = function(this: any, ...args: any[]) {
     stub.calls.push({ receiver: this, args, time: process.hrtime.bigint() });
     allFirstArgs.add(args[0]);
     if (body)

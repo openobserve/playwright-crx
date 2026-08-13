@@ -128,7 +128,7 @@ test('should batch watch updates', async ({ runUITest, writeFiles }) => {
     'd.test.ts': `import { test } from '@playwright/test'; test('test', () => {});`,
   });
 
-  await expect(page.getByTestId('status-line')).toHaveText('4/4 passed (100%)');
+  await expect(page.getByTestId('status-line')).toHaveText('4/4 (100%) — 4 passed');
 
   await expect.poll(dumpTestTree(page)).toBe(`
     ▼ ✅ a.test.ts 👁
@@ -150,6 +150,8 @@ test('should watch all', async ({ runUITest, writeFiles }) => {
     'd.test.ts': `import { test } from '@playwright/test'; test('test', () => {});`,
   });
 
+  await page.getByTitle('Watch all').click();
+
   await expect.poll(dumpTestTree(page)).toBe(`
     ▼ ◯ a.test.ts
         ◯ test
@@ -160,14 +162,13 @@ test('should watch all', async ({ runUITest, writeFiles }) => {
     ▼ ◯ d.test.ts
         ◯ test
   `);
-  await page.getByTitle('Watch all').click();
 
   await writeFiles({
     'a.test.ts': `import { test } from '@playwright/test'; test('test', () => {});`,
     'd.test.ts': `import { test } from '@playwright/test'; test('test', () => {});`,
   });
 
-  await expect(page.getByTestId('status-line')).toHaveText('2/2 passed (100%)');
+  await expect(page.getByTestId('status-line')).toHaveText('2/2 (100%) — 2 passed');
 
   await expect.poll(dumpTestTree(page)).toBe(`
     ▼ ✅ a.test.ts
@@ -210,7 +211,7 @@ test('should watch new file', async ({ runUITest, writeFiles }) => {
     'b.test.ts': ` import { test } from '@playwright/test'; test('test', () => {});`,
   });
 
-  await expect(page.getByTestId('status-line')).toHaveText('1/1 passed (100%)');
+  await expect(page.getByTestId('status-line')).toHaveText('1/1 (100%) — 1 passed');
 
   await expect.poll(dumpTestTree(page)).toBe(`
     ▼ ◯ a.test.ts
@@ -276,7 +277,7 @@ test('should queue watches', async ({ runUITest, writeFiles, createLatch }) => {
   await page.getByTitle('Watch all').click();
   await page.getByTitle('Run all').click();
 
-  await expect(page.getByTestId('status-line')).toHaveText('Running 1/4 passed (25%)');
+  await expect(page.getByTestId('status-line')).toHaveText('Running 1/4 (25%) — 1 passed');
 
   await writeFiles({
     'a.test.ts': `import { test } from '@playwright/test'; test('test', () => {});`,
@@ -286,12 +287,12 @@ test('should queue watches', async ({ runUITest, writeFiles, createLatch }) => {
 
   // Now watches should not kick in.
   await new Promise(f => setTimeout(f, 1000));
-  await expect(page.getByTestId('status-line')).toHaveText('Running 1/4 passed (25%)');
+  await expect(page.getByTestId('status-line')).toHaveText('Running 1/4 (25%) — 1 passed');
 
   // Allow test to finish and new watch to  kick in.
   latch.open();
 
-  await expect(page.getByTestId('status-line')).toHaveText('3/3 passed (100%)');
+  await expect(page.getByTestId('status-line')).toHaveText('3/3 (100%) — 3 passed');
 });
 
 test('should not watch output', async ({ runUITest }) => {
@@ -316,7 +317,7 @@ test('should not watch output', async ({ runUITest }) => {
 
   await page.getByTitle('Run all').click();
 
-  await expect(page.getByTestId('status-line')).toHaveText('1/1 passed (100%)');
+  await expect(page.getByTestId('status-line')).toHaveText('1/1 (100%) — 1 passed');
   expect(commands).toContain('runTests');
   expect(commands).not.toContain('listTests');
 });
@@ -347,5 +348,37 @@ test('should have watch icon highlighted when a test is focused and watch on the
   await expect.poll(dumpTestTree(page)).toBe(`
     ▼ ◯ a.test.ts <=
         ◯ passes 👁
+  `);
+});
+
+test('should watch test defined outside of .spec.ts file', async ({ runUITest, writeFiles }) => {
+  const { page } = await runUITest({
+    'example.spec.ts': `
+      import './impl';
+    `,
+    'impl.ts': `
+      import { test } from '@playwright/test';
+      test('one', async () => {});
+    `,
+  });
+
+  await page.getByRole('treeitem', { name: 'one' }).click();
+  await page.getByRole('treeitem', { name: 'one' }).getByRole('button', { name: 'Watch' }).click();
+
+  await expect.poll(dumpTestTree(page)).toBe(`
+    ▼ ◯ example.spec.ts
+        ◯ one 👁 <=
+  `);
+
+  await writeFiles({
+    'impl.ts': `
+      import { test } from '@playwright/test';
+      test('one', async () => { /* modified */ });
+    `,
+  });
+
+  await expect.poll(dumpTestTree(page)).toBe(`
+    ▼ ✅ example.spec.ts
+        ✅ one 👁 <=
   `);
 });

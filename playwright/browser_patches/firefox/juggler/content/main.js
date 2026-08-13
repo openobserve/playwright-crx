@@ -16,12 +16,12 @@ const {PageAgent} = ChromeUtils.importESModule('chrome://juggler/content/content
 const helper = new Helper();
 
 export function initialize(browsingContext, docShell) {
-  const data = { channel: undefined, pageAgent: undefined, frameTree: undefined, failedToOverrideTimezone: false };
+  const data = { channel: undefined, pageAgent: undefined, frameTree: undefined, };
 
   const applySetting = {
     geolocation: (geolocation) => {
       if (geolocation) {
-        docShell.setGeolocationOverride({
+        browsingContext.setGeolocationServiceOverride({
           coords: {
             latitude: geolocation.latitude,
             longitude: geolocation.longitude,
@@ -31,24 +31,14 @@ export function initialize(browsingContext, docShell) {
             heading: NaN,
             speed: NaN,
           },
-          address: null,
-          timestamp: Date.now()
+          timestamp: Date.now() + 24 * 60 * 60 * 1000,  // Make sure it does not expire for a day.
         });
       } else {
-        docShell.setGeolocationOverride(null);
+        browsingContext.setGeolocationServiceOverride();
       }
     },
-
     bypassCSP: (bypassCSP) => {
       docShell.bypassCSPEnabled = bypassCSP;
-    },
-
-    timezoneId: (timezoneId) => {
-      data.failedToOverrideTimezone = !docShell.overrideTimezone(timezoneId);
-    },
-
-    locale: (locale) => {
-      docShell.languageOverride = locale;
     },
 
     javaScriptDisabled: (javaScriptDisabled) => {
@@ -96,21 +86,21 @@ export function initialize(browsingContext, docShell) {
       // noop, just a rountrip.
     },
 
-    hasFailedToOverrideTimezone() {
-      return data.failedToOverrideTimezone;
-    },
-
     async awaitViewportDimensions({width, height}) {
-      const win = docShell.domWindow;
-      if (win.innerWidth === width && win.innerHeight === height)
-        return;
       await new Promise(resolve => {
-        const listener = helper.addEventListener(win, 'resize', () => {
-          if (win.innerWidth === width && win.innerHeight === height) {
-            helper.removeListeners([listener]);
+        const listeners = [];
+        const check = () => {
+          helper.removeListeners(listeners);
+          if (docShell.domWindow.innerWidth === width && docShell.domWindow.innerHeight === height) {
             resolve();
+            return;
           }
-        });
+          // Note: "domWindow" listeners are often removed upon navigation, as specced.
+          // To survive viewport changes across navigations, re-install listeners upon commit.
+          listeners.push(helper.addEventListener(docShell.domWindow, 'resize', check));
+          listeners.push(helper.addEventListener(data.frameTree, 'navigationcommitted', check));
+        };
+        check();
       });
     },
 

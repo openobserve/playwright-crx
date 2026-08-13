@@ -4,21 +4,25 @@
 This API is used for the Web API testing. You can use it to trigger API endpoints, configure micro-services, prepare
 environment or the service to your e2e test.
 
-Each Playwright browser context has associated with it [APIRequestContext] instance which shares cookie storage with
-the browser context and can be accessed via [`property: BrowserContext.request`] or [`property: Page.request`].
-It is also possible to create a new APIRequestContext instance manually by calling [`method: APIRequest.newContext`].
+Each Playwright browser context has an associated [APIRequestContext], accessible via
+[`property: BrowserContext.request`] or [`property: Page.request`] (these return the
+**same instance** — `page.request` is a shortcut for `page.context().request`).
+You can also create a standalone, isolated instance with [`method: APIRequest.newContext`].
 
 **Cookie management**
 
-[APIRequestContext] returned by [`property: BrowserContext.request`] and [`property: Page.request`] shares cookie
-storage with the corresponding [BrowserContext]. Each API request will have `Cookie` header populated with the
-values from the browser context. If the API response contains `Set-Cookie` header it will automatically update
-[BrowserContext] cookies and requests made from the page will pick them up. This means that if you log in using
-this API, your e2e test will be logged in and vice versa.
+The [APIRequestContext] returned by [`property: BrowserContext.request`] and
+[`property: Page.request`] uses the same cookie jar as its [BrowserContext]:
 
-If you want API requests to not interfere with the browser cookies you should create a new [APIRequestContext] by
-calling [`method: APIRequest.newContext`]. Such `APIRequestContext` object will have its own isolated cookie
-storage.
+- Every outgoing API request **automatically includes** the context's cookies in the
+  `Cookie` header — you do not need to read cookies from the context and attach them manually.
+- Any `Set-Cookie` headers in API responses are written back to the [BrowserContext],
+  so subsequent page navigations and API calls pick them up.
+- Logging in via the API logs in the browser, and vice versa.
+
+If you want API requests that do **not** share cookies with the browser, create an
+isolated context via [`method: APIRequest.newContext`]. Such `APIRequestContext`
+object will have its own isolated cookie storage.
 
 ```python async
 import os
@@ -179,6 +183,8 @@ context cookies from the response. The method will automatically follow redirect
 
 ### option: APIRequestContext.delete.timeout = %%-js-python-csharp-fetch-option-timeout-%%
 * since: v1.16
+
+### option: APIRequestContext.delete.signal = %%-input-signal-%%
 
 ### option: APIRequestContext.delete.failOnStatusCode = %%-js-python-csharp-fetch-option-failonstatuscode-%%
 * since: v1.16
@@ -357,6 +363,8 @@ If set changes the fetch method (e.g. [PUT](https://developer.mozilla.org/en-US/
 ### option: APIRequestContext.fetch.timeout = %%-js-python-csharp-fetch-option-timeout-%%
 * since: v1.16
 
+### option: APIRequestContext.fetch.signal = %%-input-signal-%%
+
 ### option: APIRequestContext.fetch.failOnStatusCode = %%-js-python-csharp-fetch-option-failonstatuscode-%%
 * since: v1.16
 
@@ -470,6 +478,8 @@ await request.GetAsync("https://example.com/api/getText", new() { Params = query
 ### option: APIRequestContext.get.timeout = %%-js-python-csharp-fetch-option-timeout-%%
 * since: v1.16
 
+### option: APIRequestContext.get.signal = %%-input-signal-%%
+
 ### option: APIRequestContext.get.failOnStatusCode = %%-js-python-csharp-fetch-option-failonstatuscode-%%
 * since: v1.16
 
@@ -535,6 +545,8 @@ context cookies from the response. The method will automatically follow redirect
 ### option: APIRequestContext.head.timeout = %%-js-python-csharp-fetch-option-timeout-%%
 * since: v1.16
 
+### option: APIRequestContext.head.signal = %%-input-signal-%%
+
 ### option: APIRequestContext.head.failOnStatusCode = %%-js-python-csharp-fetch-option-failonstatuscode-%%
 * since: v1.16
 
@@ -599,6 +611,8 @@ context cookies from the response. The method will automatically follow redirect
 
 ### option: APIRequestContext.patch.timeout = %%-js-python-csharp-fetch-option-timeout-%%
 * since: v1.16
+
+### option: APIRequestContext.patch.signal = %%-input-signal-%%
 
 ### option: APIRequestContext.patch.failOnStatusCode = %%-js-python-csharp-fetch-option-failonstatuscode-%%
 * since: v1.16
@@ -786,6 +800,8 @@ await request.PostAsync("https://example.com/api/uploadScript", new() { Multipar
 ### option: APIRequestContext.post.timeout = %%-js-python-csharp-fetch-option-timeout-%%
 * since: v1.16
 
+### option: APIRequestContext.post.signal = %%-input-signal-%%
+
 ### option: APIRequestContext.post.failOnStatusCode = %%-js-python-csharp-fetch-option-failonstatuscode-%%
 * since: v1.16
 
@@ -851,6 +867,8 @@ context cookies from the response. The method will automatically follow redirect
 ### option: APIRequestContext.put.timeout = %%-js-python-csharp-fetch-option-timeout-%%
 * since: v1.16
 
+### option: APIRequestContext.put.signal = %%-input-signal-%%
+
 ### option: APIRequestContext.put.failOnStatusCode = %%-js-python-csharp-fetch-option-failonstatuscode-%%
 * since: v1.16
 
@@ -896,3 +914,7 @@ Returns storage state for this request context, contains current cookies and loc
 - `indexedDB` ?<boolean>
 
 Set to `true` to include IndexedDB in the storage state snapshot.
+
+## property: APIRequestContext.tracing
+* since: v1.60
+- type: <[Tracing]>

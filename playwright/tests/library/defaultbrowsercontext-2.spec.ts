@@ -19,6 +19,8 @@ import { playwrightTest as it, expect } from '../config/browserTest';
 import fs from 'fs';
 import path from 'path';
 
+it.skip(({ mode }) => mode !== 'default', 'Remote persistent contexts are not supported');
+
 it('should support hasTouch option', async ({ server, launchPersistent }) => {
   const { page } = await launchPersistent({ hasTouch: true });
   await page.goto(server.PREFIX + '/mobile.html');
@@ -26,8 +28,6 @@ it('should support hasTouch option', async ({ server, launchPersistent }) => {
 });
 
 it('should work in persistent context', async ({ server, launchPersistent, browserName }) => {
-  it.skip(browserName === 'firefox', 'Firefox does not support mobile');
-
   const { page } = await launchPersistent({ viewport: { width: 320, height: 480 }, isMobile: true });
   await page.goto(server.PREFIX + '/empty.html');
   expect(await page.evaluate(() => window.innerWidth)).toBe(980);
@@ -108,14 +108,18 @@ it('should accept relative userDataDir', async ({ createUserDataDir, browserType
   await context.close();
 });
 
-it('should restore state from userDataDir', async ({ browserType, server, createUserDataDir, isMac, browserName }) => {
+it('should restore state from userDataDir', async ({ browserType, server, createUserDataDir, channel }) => {
   it.slow();
+  it.fixme(channel === 'webkit-wsl', 'Pending local storage writes are lost on close, see https://github.com/microsoft/playwright-browsers/issues/2275');
 
   const userDataDir = await createUserDataDir();
   const browserContext = await browserType.launchPersistentContext(userDataDir);
   const page = await browserContext.newPage();
   await page.goto(server.EMPTY_PAGE);
   await page.evaluate(() => localStorage.hey = 'hello');
+  // Browsers do not persist local storage immediately, they do it asynchronously in another process.
+  // Navigate away to give it a chance to save (best-effort).
+  await page.goto(server.EMPTY_PAGE);
   await browserContext.close();
 
   const browserContext2 = await browserType.launchPersistentContext(userDataDir);
@@ -139,25 +143,42 @@ it('should create userDataDir if it does not exist', async ({ createUserDataDir,
   expect(fs.readdirSync(userDataDir).length).toBeGreaterThan(0);
 });
 
+it('should goto about:blank on relaunched persistent context', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41216' },
+}, async ({ browserType, createUserDataDir, browserName, isBidi }) => {
+  it.fixme(browserName === 'firefox' && !isBidi);
+
+  const userDataDir = await createUserDataDir();
+
+  const context1 = await browserType.launchPersistentContext(userDataDir);
+  await context1.pages()[0].goto('about:blank');
+  await context1.close();
+
+  // When relaunching with an existing profile, Firefox session restore can race with the user's goto and cause "interrupted by another navigation".
+  // This issue is timing-sensitive and might not fire on every run, so rely on CI's --repeat-each matrix for coverage.
+  const context2 = await browserType.launchPersistentContext(userDataDir);
+  await context2.pages()[0].goto('about:blank');
+  expect(context2.pages()[0].url()).toBe('about:blank');
+  await context2.close();
+});
+
 it('should have default URL when launching browser', async ({ launchPersistent }) => {
   const { context } = await launchPersistent();
   const urls = context.pages().map(page => page.url());
   expect(urls).toEqual(['about:blank']);
 });
 
-it('should throw if page argument is passed', async ({ browserType, server, createUserDataDir, browserName }) => {
-  it.skip(browserName === 'firefox');
+it('should throw if page argument is passed', async ({ browserType, server, createUserDataDir, browserName, isBidi }) => {
+  it.skip(browserName === 'firefox' && !isBidi);
 
   const options = { args: [server.EMPTY_PAGE] };
   const error = await browserType.launchPersistentContext(await createUserDataDir(), options).catch(e => e);
   expect(error.message).toContain('can not specify page');
 });
 
-it('should have passed URL when launching with ignoreDefaultArgs: true', async ({ browserType, server, createUserDataDir, toImpl, mode, browserName }) => {
-  it.skip(mode !== 'default');
-
+it('should have passed URL when launching with ignoreDefaultArgs: true', async ({ browserType, server, createUserDataDir, toImpl, browserName }) => {
   const userDataDir = await createUserDataDir();
-  const args = toImpl(browserType).defaultArgs((browserType as any)._playwright._defaultLaunchOptions, 'persistent', userDataDir, 0).filter(a => a !== 'about:blank');
+  const args = (await toImpl(browserType).defaultArgs((browserType as any)._playwright._defaultLaunchOptions, 'persistent', userDataDir, 0)).filter(a => a !== 'about:blank');
   const options = {
     args: browserName === 'firefox' ? [...args, '-new-tab', server.EMPTY_PAGE] : [...args, server.EMPTY_PAGE],
     ignoreDefaultArgs: true,
@@ -171,17 +192,13 @@ it('should have passed URL when launching with ignoreDefaultArgs: true', async (
   await browserContext.close();
 });
 
-it('should handle timeout', async ({ browserType, createUserDataDir, mode }) => {
-  it.skip(mode !== 'default');
-
+it('should handle timeout', async ({ browserType, createUserDataDir }) => {
   const options: any = { timeout: 5000, __testHookBeforeCreateBrowser: () => new Promise(f => setTimeout(f, 6000)) };
   const error = await browserType.launchPersistentContext(await createUserDataDir(), options).catch(e => e);
   expect(error.message).toContain(`browserType.launchPersistentContext: Timeout 5000ms exceeded.`);
 });
 
-it('should handle exception', async ({ browserType, createUserDataDir, mode }) => {
-  it.skip(mode !== 'default');
-
+it('should handle exception', async ({ browserType, createUserDataDir }) => {
   const e = new Error('Dummy');
   const options: any = { __testHookBeforeCreateBrowser: () => { throw e; } };
   const error = await browserType.launchPersistentContext(await createUserDataDir(), options).catch(e => e);
@@ -209,8 +226,6 @@ it('coverage should work', async ({ server, launchPersistent, browserName }) => 
 });
 
 it('should respect selectors', async ({ playwright, launchPersistent }) => {
-  const { page } = await launchPersistent();
-
   const defaultContextCSS = () => ({
     query(root, selector) {
       return root.querySelector(selector);
@@ -221,14 +236,13 @@ it('should respect selectors', async ({ playwright, launchPersistent }) => {
   });
   await playwright.selectors.register('defaultContextCSS', defaultContextCSS);
 
+  const { page } = await launchPersistent();
   await page.setContent(`<div>hello</div>`);
   expect(await page.innerHTML('css=div')).toBe('hello');
   expect(await page.innerHTML('defaultContextCSS=div')).toBe('hello');
 });
 
-it('should connect to a browser with the default page', async ({ browserType, createUserDataDir, mode }) => {
-  it.skip(mode !== 'default');
-
+it('should connect to a browser with the default page', async ({ browserType, createUserDataDir }) => {
   const options: any = { __testHookOnConnectToBrowser: () => new Promise(f => setTimeout(f, 3000)) };
   const context = await browserType.launchPersistentContext(await createUserDataDir(), options);
   expect(context.pages().length).toBe(1);
@@ -246,8 +260,7 @@ it('should support har option', async ({ launchPersistent, asset }) => {
   await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(255, 0, 0)');
 });
 
-it('user agent is up to date', async ({ launchPersistent, browser, mode }) => {
-  it.skip(mode !== 'default');
+it('user agent is up to date', async ({ launchPersistent, browser }) => {
   const { userAgent } = await (browser as any)._channel.defaultUserAgentForTest();
   const { context, page } = await launchPersistent();
   expect(await page.evaluate(() => navigator.userAgent)).toBe(userAgent);
@@ -256,8 +269,7 @@ it('user agent is up to date', async ({ launchPersistent, browser, mode }) => {
 
 it('dialog.accept should work', {
   annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/35663' }
-}, async ({ launchPersistent, mode }) => {
-  it.skip(mode !== 'default');
+}, async ({ launchPersistent }) => {
   const { context, page } = await launchPersistent();
   await page.goto('data:text/html,<html><title>Title</title><button onclick="alert(\'Alert\')">Button</button></html>');
   let shown = false;
@@ -267,6 +279,27 @@ it('dialog.accept should work', {
   });
   await page.getByRole('button', { name: 'Button' }).click();
   expect(shown).toBe(true);
+  await context.close();
+});
+
+it('CacheStorage entry should survive page.reload()', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41618' }
+}, async ({ launchPersistent, server }) => {
+  const { context, page } = await launchPersistent();
+  await page.goto(server.EMPTY_PAGE);
+  await page.evaluate(async () => {
+    const cache = await caches.open('repro-cache');
+    await cache.put('/meta', new Response('payload'));
+  });
+
+  await page.reload();
+
+  const after = await page.evaluate(async () => {
+    const cache = await caches.open('repro-cache');
+    const resp = await cache.match('/meta');
+    return resp ? await resp.text() : null;
+  });
+  expect(after).toBe('payload');
   await context.close();
 });
 

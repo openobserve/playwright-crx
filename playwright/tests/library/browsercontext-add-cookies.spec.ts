@@ -65,6 +65,72 @@ it('should add cookies with empty value', async ({ context, page, server }) => {
   expect(await page.evaluate(() => document.cookie)).toEqual('marker=');
 });
 
+it('should set cookies with SameSite attribute and no secure attribute', async ({ context, browserName, isWindows, isLinux, defaultSameSiteCookieValue, channel, isBidi }) => {
+  // Use domain instead of URL to ensure that the `secure` attribute is not set.
+  await context.addCookies([{
+    domain: 'foo.com',
+    path: '/',
+    name: 'same-site-unset',
+    value: '1',
+  }, {
+    domain: 'foo.com',
+    path: '/',
+    name: 'same-site-none',
+    value: '1',
+    sameSite: 'None',
+  }, {
+    domain: 'foo.com',
+    path: '/',
+    name: 'same-site-lax',
+    value: '1',
+    sameSite: 'Lax',
+  }, {
+    domain: 'foo.com',
+    path: '/',
+    name: 'same-site-strict',
+    value: '1',
+    sameSite: 'Strict',
+  }]);
+  const cookies = new Set(await context.cookies(['https://foo.com']));
+  expect(cookies).toEqual(new Set([{
+    name: 'same-site-unset',
+    value: '1',
+    domain: 'foo.com',
+    path: '/',
+    expires: -1,
+    httpOnly: false,
+    secure: false,
+    sameSite: defaultSameSiteCookieValue,
+  }, ...(browserName === 'chromium' || (browserName === 'webkit' && (isLinux || channel === 'webkit-wsl')) || isBidi ? [] : [{
+    name: 'same-site-none',
+    value: '1',
+    domain: 'foo.com',
+    path: '/',
+    expires: -1,
+    httpOnly: false,
+    secure: false,
+    sameSite: 'None',
+  }]), {
+    name: 'same-site-lax',
+    value: '1',
+    domain: 'foo.com',
+    path: '/',
+    expires: -1,
+    httpOnly: false,
+    secure: false,
+    sameSite: (browserName === 'webkit' && isWindows && channel !== 'webkit-wsl') ? 'None' : 'Lax',
+  }, {
+    name: 'same-site-strict',
+    value: '1',
+    domain: 'foo.com',
+    path: '/',
+    expires: -1,
+    httpOnly: false,
+    secure: false,
+    sameSite: (browserName === 'webkit' && isWindows && channel !== 'webkit-wsl') ? 'None' : 'Strict',
+  }]));
+});
+
 it('should roundtrip cookie', async ({ context, page, server }) => {
   await page.goto(server.EMPTY_PAGE);
   // @see https://en.wikipedia.org/wiki/Year_2038_problem
@@ -234,7 +300,7 @@ it('should set cookie with reasonable defaults', async ({ context, server, defau
   expect(cookies.sort((a, b) => a.name.localeCompare(b.name))).toEqual([{
     name: 'defaults',
     value: '123456',
-    domain: 'localhost',
+    domain: server.HOSTNAME,
     path: '/',
     expires: -1,
     httpOnly: false,
@@ -243,10 +309,10 @@ it('should set cookie with reasonable defaults', async ({ context, server, defau
   }]);
 });
 
-it('should set a cookie with a path', async ({ context, page, server, browserName, isWindows }) => {
+it('should set a cookie with a path', async ({ context, page, server, browserName, isWindows, channel }) => {
   await page.goto(server.PREFIX + '/grid.html');
   await context.addCookies([{
-    domain: 'localhost',
+    domain: server.HOSTNAME,
     path: '/grid.html',
     name: 'gridcookie',
     value: 'GRID',
@@ -255,12 +321,12 @@ it('should set a cookie with a path', async ({ context, page, server, browserNam
   expect(await context.cookies()).toEqual([{
     name: 'gridcookie',
     value: 'GRID',
-    domain: 'localhost',
+    domain: server.HOSTNAME,
     path: '/grid.html',
     expires: -1,
     httpOnly: false,
     secure: false,
-    sameSite: (browserName === 'webkit' && isWindows) ? 'None' : 'Lax',
+    sameSite: (browserName === 'webkit' && isWindows && channel !== 'webkit-wsl') ? 'None' : 'Lax',
   }]);
   expect(await page.evaluate('document.cookie')).toBe('gridcookie=GRID');
   await page.goto(server.EMPTY_PAGE);
@@ -318,7 +384,7 @@ it('should be able to set unsecure cookie for HTTP website', async ({ context, p
   expect(cookie.secure).toBe(false);
 });
 
-it('should set a cookie on a different domain', async ({ context, page, server, browserName, isWindows }) => {
+it('should set a cookie on a different domain', async ({ context, page, server, browserName, isWindows, channel }) => {
   await page.goto(server.EMPTY_PAGE);
   await context.addCookies([{
     url: 'https://www.example.com',
@@ -335,7 +401,7 @@ it('should set a cookie on a different domain', async ({ context, page, server, 
     expires: -1,
     httpOnly: false,
     secure: true,
-    sameSite: (browserName === 'webkit' && isWindows) ? 'None' : 'Lax',
+    sameSite: (browserName === 'webkit' && isWindows && channel !== 'webkit-wsl') ? 'None' : 'Lax',
   }]);
 });
 
@@ -357,7 +423,7 @@ it('should set cookies for a frame', async ({ context, page, server }) => {
   expect(await page.frames()[1].evaluate('document.cookie')).toBe('frame-cookie=value');
 });
 
-it('should allow unnamed cookies', async ({ page, context, server, browserName, platform }) => {
+it('should allow unnamed cookies', async ({ page, context, server, browserName, platform, isBidi }) => {
   server.setRoute('/cookies', (req, res) => {
     res.write(req.headers.cookie ?? 'undefined-on-server');
     res.end();
@@ -369,7 +435,7 @@ it('should allow unnamed cookies', async ({ page, context, server, browserName, 
   }]);
   // Round-trip behavior
   const resp = await page.goto(server.PREFIX + '/cookies');
-  if (browserName === 'webkit' && platform === 'darwin') {
+  if ((browserName === 'webkit' && platform === 'darwin') || (browserName === 'firefox' && isBidi)) {
     expect.soft(await resp!.text()).toBe('undefined-on-server');
     expect.soft(await page.evaluate('document.cookie')).toBe('');
   } else {
@@ -380,7 +446,7 @@ it('should allow unnamed cookies', async ({ page, context, server, browserName, 
   await page.goto(server.EMPTY_PAGE);
   await page.evaluate(() => document.cookie = '=unnamed-via-js;');
   await context.addCookies(await context.cookies());
-  if (browserName === 'webkit' && platform === 'darwin')
+  if ((browserName === 'webkit' && platform === 'darwin') || (browserName === 'firefox' && isBidi))
     expect.soft(await page.evaluate('document.cookie')).toBe('');
   else
     expect.soft(await page.evaluate('document.cookie')).toBe('unnamed-via-js');
@@ -393,8 +459,8 @@ it('should set secure cookies on secure WebSocket', async ({ contextFactory, htt
   const context = await contextFactory({ ignoreHTTPSErrors: true });
   const page = await context.newPage();
   await page.goto(httpsServer.EMPTY_PAGE);
-  await context.addCookies([{ domain: 'localhost', path: '/', name: 'foo', value: 'bar', secure: true }]);
-  await page.evaluate(port => new WebSocket(`wss://localhost:${port}/ws`), httpsServer.PORT);
+  await context.addCookies([{ domain: new URL(httpsServer.PREFIX).hostname, path: '/', name: 'foo', value: 'bar', secure: true }]);
+  await page.evaluate(hostname => new WebSocket(`wss://${hostname}/ws`), httpsServer.HOST);
   const headers = await receivedWebSocketHeaders;
   expect(headers.cookie).toBe('foo=bar');
 });

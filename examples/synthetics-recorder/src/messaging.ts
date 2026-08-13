@@ -3,7 +3,7 @@
  */
 
 import type { Mode, Source, ElementInfo } from '@recorder/recorderTypes';
-import type { ActionInContext } from '@recorder/actions';
+import type { ActionInContext } from '@isomorphic/codegen/actions';
 import type { BrowserStep, StructuredError } from 'playwright-crx';
 
 // Auth config for basic HTTP authentication during replay.
@@ -25,7 +25,59 @@ export type O2Command =
   | { action: 'setMode'; mode: Mode }
   | { action: 'getStatus' }
   | { action: 'replay'; steps: BrowserStep[]; targetUrl?: string; testIdAttr?: string; auth?: ReplayAuth; headers?: ReplayHeader[]; cookies?: ReplayCookie[] }
+  /**
+   * Replay `prefixSteps`, then record in the SAME session. The browser context stays
+   * open across the mode flip, which is the whole point: it is what puts the author on
+   * the screen their next step will act on. Unlike `replay`, this does not close the
+   * CrxApplication when the steps finish — nor when they fail, so the recovery can be
+   * a mode flip rather than another replay.
+   */
+  | { action: 'startRecordingFrom'; prefixSteps: BrowserStep[]; targetUrl?: string; testIdAttr?: string; auth?: ReplayAuth; headers?: ReplayHeader[]; cookies?: ReplayCookie[] }
   | { action: 'stopReplay' };
+
+/**
+ * Response to `getStatus` — also the capability handshake.
+ *
+ * The extension is installed from the Chrome Web Store and updates asynchronously,
+ * so the web app always runs against a mix of versions. `capabilities` is what every
+ * O2 affordance gates on: a STRING list rather than a version comparison, so a
+ * capability can be added or withdrawn without the web app parsing version numbers.
+ * `extVersion` is for the "update the extension" message and for support — never for
+ * inferring what the extension can do.
+ *
+ * Both are optional so that an O2 build reading a pre-handshake extension type-checks;
+ * O2 defines the absent-behaviour (assume `record` + `replay`, and nothing newer).
+ */
+export type RecorderStatus = {
+  isRecording: boolean;
+  mode: Mode;
+  tabId?: number;
+  stepCount: number;
+  extVersion?: string;
+  capabilities?: string[];
+  /**
+   * The same value as `extVersion`, under the name O2 reads today.
+   *
+   * Kept because the cost of removing it is invisible: `isExtensionOutdated(status.version)`
+   * would receive `undefined` and quietly stop warning, rather than fail. It goes when O2
+   * reads `extVersion` — a change on the O2 side, not this one.
+   */
+  version?: string;
+};
+
+/**
+ * Answer to a command this build does not implement.
+ *
+ * It exists because the alternative is silence: an unrecognised action used to fall
+ * off the end of `runO2Command` with no response at all, so the caller waited out its
+ * full 4 s timeout and could only report a generic failure. `action` names what was
+ * refused, so a stale extension can be attributed to the feature the author was using.
+ */
+export type UnsupportedCommandResponse = {
+  success: false;
+  error: 'unsupported-command';
+  action: string;
+};
 
 // Response returned for a `replay` command. `passed` is the overall result; `stopped` is set when the
 // replay was cancelled mid-run; `error` carries the failing step's message; `structuredError` carries
@@ -50,8 +102,26 @@ export type ExtensionToO2Payload =
   | { method: 'setActions'; actions: ActionInContext[]; browserSteps: BrowserStep[]; sources: Source[] }
   | { method: 'setSources'; sources: Source[]; generatedCode?: string; generatedLanguage?: string }
   | { method: 'elementPicked'; elementInfo: ElementInfo; userGesture?: boolean }
-  | { method: 'recordingStarted'; tabId: number; url: string }
+  | {
+    method: 'recordingStarted';
+    tabId: number;
+    url: string;
+    /** Set only for a restore-then-record session, so O2 can tell the two apart. */
+    mode?: 'insert';
+    /**
+     * Where the author's own capture starts. The collection is reset at the mode
+     * flip, so this is 0 — sent explicitly rather than assumed, so that if the reset
+     * ever fails to clear something, O2 skips it instead of inserting it.
+     */
+    baselineStepCount?: number;
+  }
   | { method: 'recordingStopped'; totalSteps: number }
+  /**
+   * The restore could not reach the requested point. The session is deliberately left
+   * alive: the browser is sitting where `stepId` stopped, which is a legitimate
+   * restored state and exactly where an author fixing that step wants to be.
+   */
+  | { method: 'prefixFailed'; stepId: string; error?: string; structuredError?: StructuredError }
   | { method: 'stepReplayStarted'; stepId: string; stepName?: string }
   | {
     method: 'stepReplayResult';
@@ -133,6 +203,10 @@ export type SwPong = {
   isRecording: boolean;
   isReplaying: boolean;
   stepCount: number;
+  // Same handshake as RecorderStatus. The popup pings before any port exists, so it
+  // must be able to tell a stale extension from a working one without a command.
+  extVersion?: string;
+  capabilities?: string[];
 };
 
 // Popup → content script, to test whether a given tab is already bridged.

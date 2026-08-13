@@ -14,20 +14,22 @@
  * limitations under the License.
  */
 
+import mime from 'mime';
+import { monotonicTime } from '@isomorphic/time';
+import { calculateSha1, createGuid } from '@utils/crypto';
+import { debugLogger } from '@utils/debugLogger';
+import { eventsHelper } from '@utils/eventsHelper';
 import { frameSnapshotStreamer } from './snapshotterInjected';
-import { monotonicTime } from '../../../utils/isomorphic/time';
-import { calculateSha1, createGuid } from '../../utils/crypto';
-import { debugLogger } from '../../utils/debugLogger';
-import { eventsHelper } from '../../utils/eventsHelper';
-import { mime } from '../../../utilsBundle';
 import { BrowserContext } from '../../browserContext';
 import { Page } from '../../page';
+import { nullProgress } from '../../progress';
 
 import type { SnapshotData } from './snapshotterInjected';
-import type { RegisteredListener } from '../../utils/eventsHelper';
+import type { RegisteredListener } from '@utils/eventsHelper';
 import type { Frame } from '../../frames';
 import type { InitScript } from '../../page';
 import type { FrameSnapshot } from '@trace/snapshot';
+import type { Progress } from '../../progress';
 
 export type SnapshotterBlob = {
   buffer: Buffer,
@@ -58,54 +60,70 @@ export class Snapshotter {
     return this._started;
   }
 
-  async start() {
+  async start(progress: Progress) {
     this._started = true;
     if (!this._initScript)
-      await this._initialize();
-    await this.reset();
+      await this._initialize(progress);
+    await progress.race(this.reset());
   }
 
   async reset() {
     if (this._started)
-      await this._context.safeNonStallingEvaluateInAllFrames(`window["${this._snapshotStreamer}"].reset()`, 'main');
+      await this._context.safeNonStallingEvaluateInAllFrames(`window["${this._snapshotStreamer}"].resetHistory()`, 'main');
   }
 
-  async stop() {
+  stop() {
     this._started = false;
   }
 
   async resetForReuse() {
     // Next time we start recording, we will call addInitScript again.
     if (this._initScript) {
-      await this._context.removeInitScripts([this._initScript]);
+      eventsHelper.removeEventListeners(this._eventListeners);
+      await this._initScript.dispose();
       this._initScript = undefined;
     }
   }
 
-  async _initialize() {
+  async _initialize(progress: Progress) {
     for (const page of this._context.pages())
       this._onPage(page);
     this._eventListeners = [
       eventsHelper.addEventListener(this._context, BrowserContext.Events.Page, this._onPage.bind(this)),
+      eventsHelper.addEventListener(this._context, BrowserContext.Events.FrameAttached, frame => this._annotateFrameHierarchy(frame)),
     ];
 
     const { javaScriptEnabled } = this._context._options;
     const initScriptSource = `(${frameSnapshotStreamer})("${this._snapshotStreamer}", ${javaScriptEnabled || javaScriptEnabled === undefined})`;
-    this._initScript = await this._context.addInitScript(initScriptSource);
-    await this._context.safeNonStallingEvaluateInAllFrames(initScriptSource, 'main');
+    this._initScript = await this._context.addInitScript(progress, initScriptSource);
+    await progress.race(this._context.safeNonStallingEvaluateInAllFrames(initScriptSource, 'main'));
   }
 
   dispose() {
     eventsHelper.removeEventListeners(this._eventListeners);
   }
 
-  async captureSnapshot(page: Page, callId: string, snapshotName: string): Promise<void> {
+  private async _captureFrameSnapshot(frame: Frame, resetTargets: boolean): Promise<SnapshotData | void> {
     // Prepare expression synchronously.
-    const expression = `window["${this._snapshotStreamer}"].captureSnapshot(${JSON.stringify(snapshotName)})`;
+    const needsHistoryReset = !!(frame as any)[kNeedsResetSymbol];
+    (frame as any)[kNeedsResetSymbol] = false;
+    const reset = needsHistoryReset ? 'history' : (resetTargets ? 'targets' : undefined);
+    const expression = `window["${this._snapshotStreamer}"].captureSnapshot(${JSON.stringify(reset)})`;
+    try {
+      return await frame.nonStallingRawEvaluateInExistingMainContext(expression);
+    } catch (e) {
+      // If we fail to capture snapshot in this frame, we cannot rely on the snapshot index
+      // being the same here and in snapshotter injected script.
+      // Therefore, next time force a reset to avoid using node references.
+      (frame as any)[kNeedsResetSymbol] = true;
+      debugLogger.log('error', e);
+    }
+  }
 
+  async captureSnapshot(page: Page, callId: string, snapshotName: string, resetTargets: boolean): Promise<void> {
     // In each frame, in a non-stalling manner, capture the snapshots.
     const snapshots = page.frames().map(async frame => {
-      const data = await frame.nonStallingRawEvaluateInExistingMainContext(expression).catch(e => debugLogger.log('error', e)) as SnapshotData;
+      const data = await this._captureFrameSnapshot(frame, resetTargets);
       // Something went wrong -> bail out, our snapshots are best-efforty.
       if (!data || !this._started)
         return;
@@ -144,21 +162,21 @@ export class Snapshotter {
     // Annotate frame hierarchy so that snapshots could include frame ids.
     for (const frame of page.frames())
       this._annotateFrameHierarchy(frame);
-    this._eventListeners.push(eventsHelper.addEventListener(page, Page.Events.FrameAttached, frame => this._annotateFrameHierarchy(frame)));
   }
 
-  private async _annotateFrameHierarchy(frame: Frame) {
-    try {
-      const frameElement = await frame.frameElement();
+  private _annotateFrameHierarchy(frame: Frame) {
+    (async () => {
+      const frameElement = await frame.frameElement(nullProgress);
       const parent = frame.parentFrame();
       if (!parent)
         return;
-      const context = await parent._mainContext();
+      const context = await parent.mainContext();
       await context?.evaluate(({ snapshotStreamer, frameElement, frameId }) => {
         (window as any)[snapshotStreamer].markIframe(frameElement, frameId);
       }, { snapshotStreamer: this._snapshotStreamer, frameElement, frameId: frame.guid });
       frameElement.dispose();
-    } catch (e) {
-    }
+    })().catch(() => {});
   }
 }
+
+const kNeedsResetSymbol = Symbol('kNeedsReset');

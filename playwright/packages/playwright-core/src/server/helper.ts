@@ -15,12 +15,12 @@
  * limitations under the License.
  */
 
-import { debugLogger } from './utils/debugLogger';
-import { eventsHelper } from './utils/eventsHelper';
+import { debugLogger } from '@utils/debugLogger';
+import { eventsHelper } from '@utils/eventsHelper';
 
 import type { Progress } from './progress';
 import type * as types from './types';
-import type { RegisteredListener } from './utils/eventsHelper';
+import type { RegisteredListener } from '@utils/eventsHelper';
 import type { EventEmitter } from 'events';
 
 
@@ -55,24 +55,20 @@ class Helper {
     return null;
   }
 
-  static waitForEvent(progress: Progress | null, emitter: EventEmitter, event: string | symbol, predicate?: Function): { promise: Promise<any>, dispose: () => void } {
+  static waitForEvent(progress: Progress, emitter: EventEmitter, event: string | symbol, predicate?: Function): { promise: Promise<any>, dispose: () => void } {
     const listeners: RegisteredListener[] = [];
-    const promise = new Promise((resolve, reject) => {
+    const dispose = () => eventsHelper.removeEventListeners(listeners);
+    const promise = progress.race(new Promise((resolve, reject) => {
       listeners.push(eventsHelper.addEventListener(emitter, event, eventArg => {
         try {
           if (predicate && !predicate(eventArg))
             return;
-          eventsHelper.removeEventListeners(listeners);
           resolve(eventArg);
         } catch (e) {
-          eventsHelper.removeEventListeners(listeners);
           reject(e);
         }
       }));
-    });
-    const dispose = () => eventsHelper.removeEventListeners(listeners);
-    if (progress)
-      progress.cleanupWhenAborted(dispose);
+    })).finally(() => dispose());
     return { promise, dispose };
   }
 

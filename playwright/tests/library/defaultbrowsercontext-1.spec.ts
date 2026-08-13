@@ -36,7 +36,7 @@ it('context.cookies() should work @smoke', async ({ server, launchPersistent, de
   expect(maybeFilterCookies(channel, await page.context().cookies())).toEqual([{
     name: 'username',
     value: 'John Doe',
-    domain: 'localhost',
+    domain: server.HOSTNAME,
     path: '/',
     expires: -1,
     httpOnly: false,
@@ -58,12 +58,12 @@ it('context.addCookies() should work', async ({ server, launchPersistent, browse
   expect(maybeFilterCookies(channel, await page.context().cookies())).toEqual([{
     name: 'username',
     value: 'John Doe',
-    domain: 'localhost',
+    domain: server.HOSTNAME,
     path: '/',
     expires: -1,
     httpOnly: false,
     secure: false,
-    sameSite: (browserName === 'webkit' && isWindows) ? 'None' : 'Lax',
+    sameSite: (browserName === 'webkit' && isWindows && channel !== 'webkit-wsl') ? 'None' : 'Lax',
   }]);
 });
 
@@ -113,6 +113,7 @@ it('should support bypassCSP option', async ({ server, launchPersistent }) => {
   await page.goto(server.PREFIX + '/csp.html');
   await page.addScriptTag({ content: 'window["__injected"] = 42;' });
   expect(await page.evaluate('__injected')).toBe(42);
+  expect(await page.evaluate('window["__inlineScriptValue"]')).toBe(42);
 });
 
 it('should support javascriptEnabled option', async ({ launchPersistent, browserName }) => {

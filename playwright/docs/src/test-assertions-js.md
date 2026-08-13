@@ -55,6 +55,7 @@ Note that retrying assertions are async, so you must `await` them.
 | [await expect(locator).toHaveValue()](./api/class-locatorassertions.md#locator-assertions-to-have-value) | Input has a value |
 | [await expect(locator).toHaveValues()](./api/class-locatorassertions.md#locator-assertions-to-have-values) | Select has options selected |
 | [await expect(locator).toMatchAriaSnapshot()](./api/class-locatorassertions.md#locator-assertions-to-match-aria-snapshot) | Element matches the Aria snapshot |
+| [await expect(page).toMatchAriaSnapshot()](./api/class-pageassertions.md#page-assertions-to-match-aria-snapshot) | Page matches the Aria snapshot |
 | [await expect(page).toHaveScreenshot()](./api/class-pageassertions.md#page-assertions-to-have-screenshot-1) | Page has a screenshot |
 | [await expect(page).toHaveTitle()](./api/class-pageassertions.md#page-assertions-to-have-title) | Page has a title |
 | [await expect(page).toHaveURL()](./api/class-pageassertions.md#page-assertions-to-have-url) | Page has a URL |
@@ -91,13 +92,21 @@ Prefer [auto-retrying](#auto-retrying-assertions) assertions whenever possible. 
 | [`method: GenericAssertions.toMatchObject`] | Object contains specified properties |
 | [`method: GenericAssertions.toStrictEqual`] | Value is similar, including property types |
 | [`method: GenericAssertions.toThrow`] | Function throws an error |
-| [`method: GenericAssertions.any`] | Matches any instance of a class/primitive |
-| [`method: GenericAssertions.anything`] | Matches anything |
-| [`method: GenericAssertions.arrayContaining`] | Array contains specific elements |
-| [`method: GenericAssertions.closeTo`] | Number is approximately equal |
-| [`method: GenericAssertions.objectContaining`] | Object contains specific properties |
-| [`method: GenericAssertions.stringContaining`] | String contains a substring |
-| [`method: GenericAssertions.stringMatching`] | String matches a regular expression |
+
+## Asymmetric matchers
+
+These expressions can be nested in other assertions to allow more relaxed matching against a given condition.
+
+| Matcher | Description |
+| :- | :- |
+| [expect.any()](./api/class-genericassertions.md#generic-assertions-any) | Matches any instance of a class/primitive |
+| [expect.anything()](./api/class-genericassertions.md#generic-assertions-anything) | Matches anything |
+| [expect.arrayContaining()](./api/class-genericassertions.md#generic-assertions-array-containing) | Array contains specific elements |
+| [expect.arrayOf()](./api/class-genericassertions.md#generic-assertions-array-of) | Array contains elements of specific type |
+| [expect.closeTo()](./api/class-genericassertions.md#generic-assertions-close-to) | Number is approximately equal |
+| [expect.objectContaining()](./api/class-genericassertions.md#generic-assertions-object-containing) | Object contains specific properties |
+| [expect.stringContaining()](./api/class-genericassertions.md#generic-assertions-string-containing) | String contains a substring |
+| [expect.stringMatching()](./api/class-genericassertions.md#generic-assertions-string-matching) | String matches a regular expression |
 
 ## Negating matchers
 
@@ -225,16 +234,24 @@ await expect.poll(async () => {
 }).toBe(200);
 ```
 
-You can combine `expect.configure({ soft: true })` with expect.poll to perform soft assertions in polling logic.
+You can combine `expect.soft` with `expect.poll` to perform soft assertions in polling logic. This allows the test to continue even if the assertion inside poll fails.
+
+```js
+await expect.soft.poll(async () => {
+  const response = await page.request.get('https://api.example.com');
+  return response.status();
+}).toBe(200);
+```
+
+`expect.configure({ soft: true })` also chains with `expect.poll` and is useful when you want to reuse a configured instance.
 
 ```js
 const softExpect = expect.configure({ soft: true });
 await softExpect.poll(async () => {
   const response = await page.request.get('https://api.example.com');
   return response.status();
-}, {}).toBe(200);
+}).toBe(200);
 ```
-This allows the test to continue even if the assertion inside poll fails.
 
 ## expect.toPass
 

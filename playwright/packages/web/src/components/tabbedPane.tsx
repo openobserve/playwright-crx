@@ -30,8 +30,8 @@ export interface TabbedPaneTabModel {
 
 export const TabbedPane: React.FunctionComponent<{
   tabs: TabbedPaneTabModel[],
-  leftToolbar?: React.ReactElement[],
-  rightToolbar?: React.ReactElement[],
+  leftToolbar?: React.ReactNode[],
+  rightToolbar?: React.ReactNode[],
   selectedTab?: string,
   setSelectedTab?: (tab: string) => void,
   dataTestId?: string,
@@ -42,6 +42,7 @@ export const TabbedPane: React.FunctionComponent<{
     selectedTab = tabs[0].id;
   if (!mode)
     mode = 'default';
+
   return <div className='tabbed-pane' data-testid={dataTestId}>
     <div className='vbox'>
       <Toolbar>
@@ -102,13 +103,14 @@ export const TabbedPaneTab: React.FunctionComponent<{
   onSelect?: (id: string) => void,
   ariaControls?: string,
 }> = ({ id, title, count, errorCount, selected, onSelect, ariaControls }) => {
-  return <div className={clsx('tabbed-pane-tab', selected && 'selected')}
+  return <button className={clsx('tabbed-pane-tab', selected && 'selected')}
     onClick={() => onSelect?.(id)}
     role='tab'
     title={title}
-    aria-controls={ariaControls}>
+    aria-controls={ariaControls}
+    aria-selected={selected}>
     <div className='tabbed-pane-tab-label'>{title}</div>
     {!!count && <div className='tabbed-pane-tab-counter'>{count}</div>}
     {!!errorCount && <div className='tabbed-pane-tab-counter error'>{errorCount}</div>}
-  </div>;
+  </button>;
 };

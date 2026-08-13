@@ -17,12 +17,15 @@
 import type { LookupAddress } from 'dns';
 import formidable from 'formidable';
 import fs from 'fs';
+import http from 'http';
 import type { IncomingMessage } from 'http';
+import https from 'https';
 import { pipeline } from 'stream';
 import zlib from 'zlib';
 import { contextTest as it, expect } from '../config/browserTest';
 import { suppressCertificateWarning } from '../config/utils';
-import { kTargetClosedErrorMessage } from 'tests/config/errors';
+import { kTargetClosedErrorMessage } from '../config/errors';
+import { TestServer } from '../config/testserver';
 
 it.skip(({ mode }) => mode !== 'default');
 
@@ -53,6 +56,53 @@ it('fetch should work', async ({ context, server }) => {
   expect(response.headers()['content-type']).toBe('application/json; charset=utf-8');
   expect(response.headersArray()).toContainEqual({ name: 'Content-Type', value: 'application/json; charset=utf-8' });
   expect(await response.text()).toBe('{"foo": "bar"}\n');
+});
+
+it('should return timing', async ({ context }) => {
+  // Create a fresh server to guarantee a new connection, because keep-alive
+  // sockets from other tests do not have dns/connect timings.
+  const httpServer = http.createServer((req, res) => res.end('Hello'));
+  const port = await new Promise<number>(resolve => httpServer.listen(0, () => resolve((httpServer.address() as any).port)));
+  try {
+    const response = await context.request.get(`http://localhost:${port}/`);
+    expect(response.ok()).toBeTruthy();
+    const timing = response.timing();
+    expect(timing.startTime).toBeCloseTo(Date.now(), -4);
+    expect(timing.domainLookupStart).toBe(0);
+    expect(timing.domainLookupEnd).toBeGreaterThanOrEqual(timing.domainLookupStart);
+    expect(timing.connectStart).toBe(timing.domainLookupEnd);
+    expect(timing.secureConnectionStart).toBe(-1);
+    expect(timing.connectEnd).toBeGreaterThanOrEqual(timing.connectStart);
+    expect(timing.requestStart).toBe(timing.connectEnd);
+    expect(timing.responseStart).toBeGreaterThanOrEqual(timing.requestStart);
+    expect(timing.responseEnd).toBeGreaterThanOrEqual(timing.responseStart);
+    expect(timing.responseEnd).toBeLessThan(60_000);
+  } finally {
+    await new Promise(resolve => httpServer.close(resolve));
+  }
+});
+
+it('should return timing for https', async ({ context }) => {
+  // Create a fresh server to guarantee a new connection, because keep-alive
+  // sockets from other tests do not have dns/connect timings.
+  const httpsServer = https.createServer(await TestServer.certOptions(), (req, res) => res.end('Hello'));
+  const port = await new Promise<number>(resolve => httpsServer.listen(0, () => resolve((httpsServer.address() as any).port)));
+  try {
+    const response = await context.request.get(`https://localhost:${port}/`, { ignoreHTTPSErrors: true });
+    expect(response.ok()).toBeTruthy();
+    const timing = response.timing();
+    expect(timing.startTime).toBeCloseTo(Date.now(), -4);
+    expect(timing.domainLookupStart).toBe(0);
+    expect(timing.domainLookupEnd).toBeGreaterThanOrEqual(timing.domainLookupStart);
+    expect(timing.connectStart).toBe(timing.domainLookupEnd);
+    expect(timing.secureConnectionStart).toBeGreaterThanOrEqual(timing.connectStart);
+    expect(timing.connectEnd).toBeGreaterThanOrEqual(timing.secureConnectionStart);
+    expect(timing.requestStart).toBe(timing.connectEnd);
+    expect(timing.responseStart).toBeGreaterThanOrEqual(timing.requestStart);
+    expect(timing.responseEnd).toBeGreaterThanOrEqual(timing.responseStart);
+  } finally {
+    await new Promise(resolve => httpsServer.close(resolve));
+  }
 });
 
 it('should throw on network error', async ({ context, server }) => {
@@ -400,7 +450,7 @@ it('should remove cookie with expires far in the past', async ({ page, server })
   expect(serverRequest.headers.cookie).toBeFalsy();
 });
 
-it('should handle cookies on redirects', async ({ context, server, browserName, isWindows }) => {
+it('should handle cookies on redirects', async ({ context, server, browserName, isWindows, channel }) => {
   server.setRoute('/redirect1', (req, res) => {
     res.setHeader('Set-Cookie', 'r1=v1;SameSite=Lax');
     res.writeHead(301, { location: '/a/b/redirect2' });
@@ -436,20 +486,20 @@ it('should handle cookies on redirects', async ({ context, server, browserName, 
   const cookies = await context.cookies();
   expect(new Set(cookies)).toEqual(new Set([
     {
-      'sameSite': (browserName === 'webkit' && isWindows) ? 'None' : 'Lax',
+      'sameSite': (browserName === 'webkit' && isWindows && channel !== 'webkit-wsl') ? 'None' : 'Lax',
       'name': 'r2',
       'value': 'v2',
-      'domain': 'localhost',
+      'domain': server.HOSTNAME,
       'path': '/a/b',
       'expires': -1,
       'httpOnly': false,
       'secure': false
     },
     {
-      'sameSite': (browserName === 'webkit' && isWindows) ? 'None' : 'Lax',
+      'sameSite': (browserName === 'webkit' && isWindows && channel !== 'webkit-wsl') ? 'None' : 'Lax',
       'name': 'r1',
       'value': 'v1',
-      'domain': 'localhost',
+      'domain': server.HOSTNAME,
       'path': '/',
       'expires': -1,
       'httpOnly': false,
@@ -786,6 +836,26 @@ it('should support gzip compression', async function({ context, server }) {
   expect(await response.text()).toBe('Hello, world!');
 });
 
+it('should support case-insensitive content-encoding', async function({ context, server }) {
+  server.setRoute('/compressed-uppercase', (req, res) => {
+    res.writeHead(200, {
+      'Content-Encoding': 'GZIP',
+      'Content-Type': 'text/plain',
+    });
+
+    const gzip = zlib.createGzip();
+    pipeline(gzip, res, err => {
+      if (err)
+        console.log(`Server error: ${err}`);
+    });
+    gzip.write('Hello, world!');
+    gzip.end();
+  });
+
+  const response = await context.request.get(server.PREFIX + '/compressed-uppercase');
+  expect(await response.text()).toBe('Hello, world!');
+});
+
 it('should throw informative error on corrupted gzip body', async function({ context, server }) {
   server.setRoute('/corrupted', (req, res) => {
     res.writeHead(200, {
@@ -877,7 +947,7 @@ it('should support timeout option', async function({ context, server }) {
   });
 
   const error = await context.request.get(server.PREFIX + '/slow', { timeout: 10 }).catch(e => e);
-  expect(error.message).toContain(`Request timed out after 10ms`);
+  expect(error.message).toContain(`apiRequestContext.get: Timeout 10ms exceeded`);
 });
 
 it('should support a timeout of 0', async function({ context, server }) {
@@ -908,7 +978,7 @@ it('should respect timeout after redirects', async function({ context, server })
 
   context.setDefaultTimeout(100);
   const error = await context.request.get(server.PREFIX + '/redirect').catch(e => e);
-  expect(error.message).toContain(`Request timed out after 100ms`);
+  expect(error.message).toContain(`apiRequestContext.get: Timeout 100ms exceeded`);
 });
 
 it('should not hang on a brotli encoded Range request', async ({ context, server, nodeVersion }) => {
@@ -1047,6 +1117,7 @@ it('should support multipart/form-data', async function({ context, server }) {
     context.request.post(server.EMPTY_PAGE, {
       multipart: {
         firstName: 'John',
+        middleName: '',
         lastName: 'Doe',
         file
       }
@@ -1056,6 +1127,7 @@ it('should support multipart/form-data', async function({ context, server }) {
   expect(serverRequest.method).toBe('POST');
   expect(serverRequest.headers['content-type']).toContain('multipart/form-data');
   expect(fields['firstName']).toBe('John');
+  expect(fields['middleName']).toBe('');
   expect(fields['lastName']).toBe('Doe');
   expect(files['file'].originalFilename).toBe(file.name);
   expect(files['file'].mimetype).toBe(file.mimeType);
@@ -1201,7 +1273,8 @@ it('context request should export same storage state as context', async ({ conte
   expect(pageState).toEqual(contextState);
 });
 
-it('should send secure cookie over http for localhost', async ({ page, server }) => {
+it('should send secure cookie over http for localhost', async ({ page, server, channel }) => {
+  it.skip(channel === 'webkit-wsl');
   server.setRoute('/setcookie.html', (req, res) => {
     res.setHeader('Set-Cookie', ['a=v; secure']);
     res.end();
@@ -1255,7 +1328,7 @@ it('should abort requests when browser context closes', async ({ contextFactory,
     server.waitForRequest('/empty.html').then(() => context.close())
   ]);
   expect(error instanceof Error).toBeTruthy();
-  expect(error.message).toContain(kTargetClosedErrorMessage);
+  expect(error.message).toMatch(/Request context disposed|Target page, context or browser has been closed/);
   await connectionClosed;
 });
 
@@ -1277,7 +1350,7 @@ it('should work with connectOverCDP', async ({ browserName, browserType, server 
   }
 });
 
-it('should support SameSite cookie attribute over https', async ({ contextFactory, httpsServer, browserName, isWindows }) => {
+it('should support SameSite cookie attribute over https', async ({ contextFactory, httpsServer, browserName, isWindows, channel }) => {
   // Cookies with SameSite=None must also specify the Secure attribute. WebKit navigation
   // to HTTP url will fail if the response contains a cookie with Secure attribute, so
   // we do HTTPS navigation.
@@ -1291,7 +1364,7 @@ it('should support SameSite cookie attribute over https', async ({ contextFactor
       });
       await page.request.get(httpsServer.EMPTY_PAGE);
       const [cookie] = await page.context().cookies();
-      if (browserName === 'webkit' && isWindows)
+      if (browserName === 'webkit' && isWindows && channel !== 'webkit-wsl')
         expect(cookie.sameSite).toBe('None');
       else
         expect(cookie.sameSite).toBe(value);
@@ -1301,7 +1374,7 @@ it('should support SameSite cookie attribute over https', async ({ contextFactor
 
 it('should set domain=localhost cookie', async ({ context, server, browserName, isWindows }) => {
   server.setRoute('/empty.html', (req, res) => {
-    res.setHeader('Set-Cookie', `name=val; Domain=localhost; Path=/;`);
+    res.setHeader('Set-Cookie', `name=val; Domain=${server.HOSTNAME}; Path=/;`);
     res.end();
   });
   await context.request.get(server.EMPTY_PAGE);
@@ -1322,7 +1395,7 @@ it('fetch should not throw on long set-cookie value', async ({ context, server }
   expect(cookies.map(c => c.name)).toContain('bar');
 });
 
-it('should support set-cookie with SameSite and without Secure attribute over HTTP', async ({ page, server, browserName, isWindows, isLinux }) => {
+it('should support set-cookie with SameSite and without Secure attribute over HTTP', async ({ page, server, browserName, isWindows, isLinux, channel, isBidi }) => {
   for (const value of ['None', 'Lax', 'Strict']) {
     await it.step(`SameSite=${value}`, async () => {
       server.setRoute('/empty.html', (req, res) => {
@@ -1331,11 +1404,11 @@ it('should support set-cookie with SameSite and without Secure attribute over HT
       });
       await page.request.get(server.EMPTY_PAGE);
       const [cookie] = await page.context().cookies();
-      if (browserName === 'chromium' && value === 'None')
+      if ((browserName === 'chromium' || isBidi) && value === 'None')
         expect(cookie).toBeFalsy();
-      else if (browserName === 'webkit' && isLinux && value === 'None')
+      else if (browserName === 'webkit' && (isLinux || channel === 'webkit-wsl') && value === 'None')
         expect(cookie).toBeFalsy();
-      else if (browserName === 'webkit' && isWindows)
+      else if (browserName === 'webkit' && isWindows && channel !== 'webkit-wsl')
         expect(cookie.sameSite).toBe('None');
       else
         expect(cookie.sameSite).toBe(value);
@@ -1363,7 +1436,7 @@ it('should update host header on redirect', async ({ context, server }) => {
   });
   const reqPromise = server.waitForRequest('/test');
   const response = await context.request.get(server.PREFIX + '/redirect', {
-    headers: { host: new URL(server.PREFIX).host }
+    headers: { HosT: new URL(server.PREFIX).host }
   });
   expect(redirectCount).toBe(2);
   await expect(response).toBeOK();
@@ -1399,4 +1472,63 @@ it('should retry on ECONNRESET', {
   expect(response.status()).toBe(200);
   expect(await response.text()).toBe('Hello!');
   expect(requestCount).toBe(4);
+});
+
+it('should retry ECONNRESET on compressed response', async ({ context, server }) => {
+  let requestCount = 0;
+  server.setRoute('/test-gzip', (req, res) => {
+    if (requestCount++ < 2) {
+      req.socket.destroy();
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Encoding': 'gzip',
+      'Content-Type': 'text/plain',
+    });
+    const gzipStream = zlib.createGzip();
+    pipeline(gzipStream, res, err => {
+      if (err)
+        console.log(`Server error: ${err}`);
+    });
+    gzipStream.write('compressed-retry-ok');
+    gzipStream.end();
+  });
+  const response = await context.request.get(server.PREFIX + '/test-gzip', { maxRetries: 3 });
+  expect(response.status()).toBe(200);
+  expect(await response.text()).toBe('compressed-retry-ok');
+  expect(requestCount).toBe(3);
+});
+
+it('should retry ECONNRESET mid-stream during gzip decompression', async ({ context, server }) => {
+  let requestCount = 0;
+  server.setRoute('/test-gzip-midstream', (req, res) => {
+    requestCount++;
+    if (requestCount <= 2) {
+      // Send response headers to make client enter the decompression pipeline,
+      // then destroy the socket. This exercises the fix: without it, the
+      // pipeline error callback wraps the error, stripping .code for retry.
+      res.writeHead(200, {
+        'Content-Encoding': 'gzip',
+        'Content-Type': 'text/plain',
+      });
+      res.flushHeaders();
+      req.socket.destroy();
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Encoding': 'gzip',
+      'Content-Type': 'text/plain',
+    });
+    const gzipStream = zlib.createGzip();
+    pipeline(gzipStream, res, err => {
+      if (err)
+        console.log(`Server error: ${err}`);
+    });
+    gzipStream.write('midstream-retry-ok');
+    gzipStream.end();
+  });
+  const response = await context.request.get(server.PREFIX + '/test-gzip-midstream', { maxRetries: 3 });
+  expect(response.status()).toBe(200);
+  expect(await response.text()).toBe('midstream-retry-ok');
+  expect(requestCount).toBe(3);
 });

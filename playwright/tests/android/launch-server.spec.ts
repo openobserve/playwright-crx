@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-import ws from 'ws';
+import { WebSocket, WebSocketServer, type AddressInfo } from 'ws';
 import { androidTest as test, expect } from './androidTest';
 import { kTargetClosedErrorMessage } from '../config/errors';
 
 // Force a separate worker to avoid messing up with `androidDevice` fixture.
-test.use({ launchOptions: {} });
+test.use({ launchOptions: [async ({ launchOptions }, use) => use(launchOptions), { scope: 'worker' }] });
 
 test('android.launchServer should connect to a device', async ({ playwright }) => {
   const browserServer = await playwright._android.launchServer();
@@ -126,30 +126,43 @@ test('android.launchServer BrowserServer.kill() will disconnect the device',  as
 
 test('android.launchServer should terminate WS connection when device gets disconnected', async  ({ playwright }) => {
   const browserServer = await playwright._android.launchServer();
-  const forwardingServer = new ws.Server({ port: 0, path: '/connect' });
-  let receivedConnection: ws.WebSocket | undefined;
+  const forwardingServer = new WebSocketServer({ port: 0, path: '/connect' });
+  let receivedConnection: WebSocket | undefined;
   forwardingServer.on('connection', connection => {
     // Pause the connection until we establish the actual connection to the browser server.
-    connection.pause();
+    // Someone is using non-existing api
+    (connection as any).pause();
     receivedConnection = connection;
-    const actualConnection = new ws.WebSocket(browserServer.wsEndpoint());
+    const actualConnection = new WebSocket(browserServer.wsEndpoint());
     // We need to wait for the actual connection to be established before resuming
-    actualConnection.on('open', () => connection.resume());
+    actualConnection.on('open', () => (connection as any).resume());
     actualConnection.on('message', message => connection.send(message));
     connection.on('message', message => actualConnection.send(message));
     connection.on('close', () => actualConnection.close());
     actualConnection.on('close', () => connection.close());
   });
   try {
-    const device = await playwright._android.connect(`ws://localhost:${(forwardingServer.address() as ws.AddressInfo).port}/connect`);
+    const device = await playwright._android.connect(`ws://localhost:${(forwardingServer.address() as AddressInfo).port}/connect`);
     expect((await device.shell('echo 123')).toString()).toBe('123\n');
-    expect(receivedConnection!.readyState).toBe(ws.OPEN);
+    expect(receivedConnection!.readyState).toBe(WebSocket.OPEN);
     const waitToClose = new Promise(f => receivedConnection!.on('close', f));
     await device.close();
     await waitToClose;
-    expect(receivedConnection!.readyState).toBe(ws.CLOSED);
+    expect(receivedConnection!.readyState).toBe(WebSocket.CLOSED);
   } finally {
     await browserServer.close();
     await new Promise(f => forwardingServer.close(f));
   }
+});
+
+test('android.launchServer should be able to launch browser', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36911' } }, async ({ playwright }) => {
+  const browserServer = await playwright._android.launchServer();
+  const device = await playwright._android.connect(browserServer.wsEndpoint());
+  const context = await device.launchBrowser();
+  const [page] = context.pages();
+  await page.goto('data:text/html,<title>Hello world!</title>');
+  expect(await page.title()).toBe('Hello world!');
+  await context.close();
+  await device.close();
+  await browserServer.close();
 });

@@ -52,9 +52,9 @@ it('page.goBack should work with HistoryAPI', async ({ page, server }) => {
   expect(page.url()).toBe(server.PREFIX + '/first.html');
 });
 
-it('page.goBack should work for file urls', async ({ page, server, asset, browserName, platform, isAndroid, mode }) => {
+it('page.goBack should work for file urls', async ({ page, server, asset, channel, isAndroid, mode }) => {
   it.skip(isAndroid, 'No files on Android');
-  it.skip(mode.startsWith('service'));
+  it.skip(channel === 'webkit-wsl');
 
   const url1 = url.pathToFileURL(asset('consolelog.html')).href;
   const url2 = server.PREFIX + '/consolelog.html';
@@ -278,7 +278,8 @@ it('regression test for issue 20791', async ({ page, server }) => {
 });
 
 it('should reload proper page', async ({ page, server }) => {
-  let mainRequest = 0, popupRequest = 0;
+  let mainRequest = 0;
+  let popupRequest = 0;
   server.setRoute('/main.html', (req, res) => {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(`<!doctype html><h1>main: ${++mainRequest}</h1>`);

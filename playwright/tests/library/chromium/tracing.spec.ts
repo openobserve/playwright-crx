@@ -17,6 +17,7 @@
 import { browserTest as it, expect } from '../../config/browserTest';
 import fs from 'fs';
 import path from 'path';
+import { rafraf } from '../../page/pageTest';
 
 it('should output a trace', async ({ browser, server }, testInfo) => {
   let warning = null;
@@ -26,7 +27,7 @@ it('should output a trace', async ({ browser, server }, testInfo) => {
   const page = await browser.newPage();
   const outputTraceFile = testInfo.outputPath(path.join(`trace.json`));
   await browser.startTracing(page, { screenshots: true, path: outputTraceFile });
-  for (let i = 0; i < 20; i++)
+  for (let i = 0; i < 11; i++)
     await page.goto(server.PREFIX + '/grid.html');
   await browser.stopTracing();
   expect(fs.existsSync(outputTraceFile)).toBe(true);
@@ -49,11 +50,16 @@ it('should create directories as needed', async ({ browser, server }, testInfo) 
 it('should run with custom categories if provided', async ({ browser }, testInfo) => {
   const page = await browser.newPage();
   const outputTraceFile = testInfo.outputPath(path.join(`trace.json`));
-  await browser.startTracing(page, { path: outputTraceFile, categories: ['disabled-by-default-v8.cpu_profiler.hires'] });
+  await browser.startTracing(page, { path: outputTraceFile, categories: ['disabled-by-default-cc.debug'] });
+  await rafraf(page);
   await browser.stopTracing();
 
   const traceJson = JSON.parse(fs.readFileSync(outputTraceFile).toString());
-  expect(traceJson.metadata['trace-config']).toContain('disabled-by-default-v8.cpu_profiler.hires');
+  expect(
+      // NOTE: trace-config is deprecated as per http://crrev.com/c/6628182
+      traceJson.metadata['trace-config']?.includes('disabled-by-default-cc.debug') ||
+      traceJson.traceEvents.filter(event => event.cat === 'disabled-by-default-cc.debug').length > 0
+  ).toBe(true);
   await page.close();
 });
 
@@ -94,7 +100,8 @@ it('should support a buffer without a path', async ({ browser, server }) => {
   const page = await browser.newPage();
   await browser.startTracing(page, { screenshots: true });
   await page.goto(server.PREFIX + '/grid.html');
+  await rafraf(page, 100);
   const trace = await browser.stopTracing();
-  expect(trace.toString()).toContain('screenshot');
+  expect(trace.toString().includes('screenshot')).toBe(true);
   await page.close();
 });

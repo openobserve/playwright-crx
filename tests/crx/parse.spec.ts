@@ -27,7 +27,10 @@ const test = base.extend<{ testParse: (code: string, skipAssertCode?: boolean) =
       }, code);
       if (!skipAssertCode)
         expect.soft(code).toEqual(resultCode);
-      const actions = actionsInContext.map(a => ({ ...a.action, pageAlias: a.frame.pageAlias }));
+      // 1.62 removed `frame` from ActionInContext — an action now carries only the page
+      // key. For parsed code that key IS the alias the author wrote (`page`, `page1`, …),
+      // so the values asserted below are unchanged; only where they are read moved.
+      const actions = actionsInContext.map(a => ({ ...a.action, pageAlias: a.pageGuid }));
       return { actions, options };
     });
   },
@@ -218,22 +221,29 @@ test('test', async ({ page }) => {
   await expect.soft(testParseWithMouseOptions('dblclick', `{ button: 'middle' }`)).resolves.toEqual({ ...dblclickDefaults, button: 'middle' });
 });
 
+// A page the author named themselves does not survive a round trip any more: 1.62 has the
+// generator assign page names itself, in first-seen order, from the page key alone
+// (playwright#41594 moved codegen and rebuilt aliasing around pageGuid). So `newPage` is
+// parsed faithfully — the assertions below still read the author's name — and regenerated
+// as `page1`. Preserving it would mean patching an alias back into a generator that
+// deliberately stopped carrying one. The parsed shape is what replay uses, and that is
+// unchanged; only the rendered variable name is canonicalised.
 test('should parse new page', async ({ testParse }) => {
   const { actions } = await testParse(`import { test, expect } from '@playwright/test';
 
 test('test', async ({ page, context }) => {
-  const newPage = await context.newPage();
-  await newPage.goto('https://example.com');
-  await expect(newPage.getByRole('heading')).toContainText('Example Domain');
-  await newPage.close();
+  const page1 = await context.newPage();
+  await page1.goto('https://example.com');
+  await expect(page1.getByRole('heading')).toContainText('Example Domain');
+  await page1.close();
 });`);
 
   expect.soft(actions).toMatchObject([
     { pageAlias: 'page', name: 'openPage' },
-    { pageAlias: 'newPage', name: 'openPage' },
-    { pageAlias: 'newPage', name: 'navigate', url: 'https://example.com' },
-    { pageAlias: 'newPage', name: 'assertText',  selector: 'internal:role=heading', text: 'Example Domain' },
-    { pageAlias: 'newPage', name: 'closePage' },
+    { pageAlias: 'page1', name: 'openPage' },
+    { pageAlias: 'page1', name: 'navigate', url: 'https://example.com' },
+    { pageAlias: 'page1', name: 'assertText',  selector: 'internal:role=heading', text: 'Example Domain' },
+    { pageAlias: 'page1', name: 'closePage' },
   ]);
 });
 

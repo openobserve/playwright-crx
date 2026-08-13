@@ -19,7 +19,6 @@
 
 const fs = require('fs');
 const path = require('path');
-const yaml = require('yaml');
 
 const channels = new Set();
 const inherits = new Map();
@@ -109,7 +108,7 @@ function inlineType(type, indent = '', name, level) {
   if (type.type.startsWith('object')) {
     const optional = type.type.endsWith('?');
 
-    const custom = processCustomType(type, optional);
+    const custom = processCustomType(type, optional, name);
     if (custom)
       return custom;
     if (level >= 1) {
@@ -145,7 +144,7 @@ function properties(properties, indent, onlyOptional, parentName, level) {
       ts.push('');
       ts.push(`${indent}[JsonPropertyName("${name}")]`);
       let suffix = ''
-      if (!['bool', 'int', 'System.Text.Json.JsonElement'].includes(inner.ts))
+      if (!['bool', 'int', 'float', 'System.Text.Json.JsonElement'].includes(inner.ts))
         suffix = ' = null!;'
       ts.push(`${indent}public ${inner.ts}${nullableSuffix(inner)} ${toTitleCase(name)} { get; set; }${suffix}`);
       const wrapped = inner.optional ? `tOptional(${inner.scheme})` : inner.scheme;
@@ -163,8 +162,7 @@ function objectType(props, indent, onlyOptional = false, parentName = '') {
   return { ts: `${indent}{${inner.ts}\n${indent}}`, scheme: `tObject({\n${inner.scheme}\n${indent}})` };
 }
 
-const yml = fs.readFileSync(path.join(__dirname, '..', 'packages', 'protocol', 'src', 'protocol.yml'), 'utf-8');
-const protocol = yaml.parse(yml);
+const protocol = require('./protocol_spec').loadProtocol();
 
 for (const [name, value] of Object.entries(protocol)) {
   if (value.type === 'interface') {
@@ -186,8 +184,8 @@ fs.mkdirSync(dir, { recursive: true });
 
 for (const [name, item] of Object.entries(protocol)) {
   if (item.type === 'interface') {
-    const init = objectType(item.initializer || {}, '');
     const initializerName = name + 'Initializer';
+    const init = objectType(item.initializer || {}, '', false, initializerName);
     const superName = inherits.has(name) ? inherits.get(name) + 'Initializer' : null;
     writeCSharpClass(initializerName, superName, init.ts);
   } else if (item.type === 'object') {
@@ -234,7 +232,7 @@ function toTitleCase(name) {
   return name.charAt(0).toUpperCase() + name.substring(1);
 }
 
-function processCustomType(type, optional) {
+function processCustomType(type, optional, fullName) {
   if (type.properties.name
       && type.properties.value
       && inlineType(type.properties.name).ts === 'string'
@@ -258,4 +256,6 @@ function processCustomType(type, optional) {
     && inlineType(type.properties.name).ts === 'string')
     return { ts: 'DeviceDescriptorEntry', scheme: 'tObject()', optional };
 
+  if (fullName === 'BrowserContextInitializerOptions')
+    return { ts: 'System.Text.Json.JsonElement', scheme: 'tObject()', optional };
 }

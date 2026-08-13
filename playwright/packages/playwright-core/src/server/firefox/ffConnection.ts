@@ -17,13 +17,13 @@
 
 import { EventEmitter } from 'events';
 
-import { debugLogger } from '../utils/debugLogger';
+import { debugLogger } from '@utils/debugLogger';
 import { helper } from '../helper';
 import { ProtocolError } from '../protocolError';
 
 import type { ConnectionTransport, ProtocolRequest, ProtocolResponse } from '../transport';
 import type { Protocol } from './protocol';
-import type { RecentLogsCollector } from '../utils/debugLogger';
+import type { RecentLogsCollector } from '@utils/debugLogger';
 import type { ProtocolLogger } from '../types';
 
 
@@ -101,18 +101,13 @@ export class FFConnection extends EventEmitter {
   }
 }
 
-export class FFSession extends EventEmitter {
+export class FFSession extends EventEmitter<Protocol.EventMap> {
   _connection: FFConnection;
   _disposed = false;
   private _callbacks: Map<number, { resolve: Function, reject: Function, error: ProtocolError }>;
   private _sessionId: string;
   private _rawSend: (message: any) => void;
   private _crashed: boolean = false;
-  override on: <T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void) => this;
-  override addListener: <T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void) => this;
-  override off: <T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void) => this;
-  override removeListener: <T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void) => this;
-  override once: <T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void) => this;
 
   constructor(connection: FFConnection, sessionId: string, rawSend: (message: any) => void) {
     super();
@@ -121,24 +116,28 @@ export class FFSession extends EventEmitter {
     this._connection = connection;
     this._sessionId = sessionId;
     this._rawSend = rawSend;
-
-    this.on = super.on;
-    this.addListener = super.addListener;
-    this.off = super.removeListener;
-    this.removeListener = super.removeListener;
-    this.once = super.once;
   }
 
   markAsCrashed() {
     this._crashed = true;
+    this._rejectPendingCallbacks();
   }
 
   async send<T extends keyof Protocol.CommandParameters>(
     method: T,
     params?: Protocol.CommandParameters[T]
   ): Promise<Protocol.CommandReturnValues[T]> {
-    if (this._crashed || this._disposed || this._connection._closed || this._connection._browserDisconnectedLogs)
-      throw new ProtocolError(this._crashed ? 'crashed' : 'closed', undefined, this._connection._browserDisconnectedLogs);
+    if (this._crashed)
+      throw new ProtocolError('crashed', undefined, this._connection._browserDisconnectedLogs);
+    return this.sendEvenAfterCrash(method, params);
+  }
+
+  async sendEvenAfterCrash<T extends keyof Protocol.CommandParameters>(
+    method: T,
+    params?: Protocol.CommandParameters[T]
+  ): Promise<Protocol.CommandReturnValues[T]> {
+    if (this._disposed || this._connection._closed || this._connection._browserDisconnectedLogs)
+      throw new ProtocolError('closed', undefined, this._connection._browserDisconnectedLogs);
     const id = this._connection.nextMessageId();
     this._rawSend({ method, params, id });
     return new Promise((resolve, reject) => {
@@ -164,13 +163,17 @@ export class FFSession extends EventEmitter {
         }
       }
     } else {
-      Promise.resolve().then(() => this.emit(object.method!, object.params));
+      Promise.resolve().then(() => (this.emit as any)(object.method, object.params));
     }
   }
 
   dispose() {
     this._disposed = true;
     this._connection._sessions.delete(this._sessionId);
+    this._rejectPendingCallbacks();
+  }
+
+  private _rejectPendingCallbacks() {
     for (const callback of this._callbacks.values()) {
       callback.error.type = this._crashed ? 'crashed' : 'closed';
       callback.error.logs = this._connection._browserDisconnectedLogs;

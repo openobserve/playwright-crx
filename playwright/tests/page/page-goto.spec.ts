@@ -24,9 +24,9 @@ it('should work @smoke', async ({ page, server }) => {
   expect(page.url()).toBe(server.EMPTY_PAGE);
 });
 
-it('should work with file URL', async ({ page, asset, isAndroid, mode }) => {
+it('should work with file URL', async ({ page, asset, isAndroid, mode, channel }) => {
   it.skip(isAndroid, 'No files on Android');
-  it.skip(mode.startsWith('service'));
+  it.skip(channel === 'webkit-wsl', 'separate filesystem on wsl');
 
   const fileurl = url.pathToFileURL(asset('empty.html')).href;
   await page.goto(fileurl);
@@ -34,9 +34,9 @@ it('should work with file URL', async ({ page, asset, isAndroid, mode }) => {
   expect(page.frames().length).toBe(1);
 });
 
-it('should work with file URL with subframes', async ({ page, asset, isAndroid, mode }) => {
+it('should work with file URL with subframes', async ({ page, asset, isAndroid, mode, channel }) => {
   it.skip(isAndroid, 'No files on Android');
-  it.skip(mode.startsWith('service'));
+  it.skip(channel === 'webkit-wsl', 'separate filesystem on wsl');
 
   const fileurl = url.pathToFileURL(asset('frames/two-frames.html')).href;
   await page.goto(fileurl);
@@ -81,7 +81,12 @@ it('should work with cross-process that fails before committing', async ({ page,
 it('should work with Cross-Origin-Opener-Policy', async ({ page, server }) => {
   server.setRoute('/empty.html', (req, res) => {
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-    res.end();
+    // Note: without 'onload', Firefox sometimes does not fire the load event
+    // over the protocol. The reason is unclear.
+    res.end(`
+      <div>Hello there!</div>
+      <script>window.onload = () => console.log('onload')</script>
+    `);
   });
   const requests = new Set();
   const events = [];
@@ -112,7 +117,12 @@ it('should work with Cross-Origin-Opener-Policy', async ({ page, server }) => {
 it('should work with Cross-Origin-Opener-Policy and interception', async ({ page, server }) => {
   server.setRoute('/empty.html', (req, res) => {
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-    res.end();
+    // Note: without 'onload', Firefox sometimes does not fire the load event
+    // over the protocol. The reason is unclear.
+    res.end(`
+      <div>Hello there!</div>
+      <script>window.onload = () => console.log('onload')</script>
+    `);
   });
   const requests = new Set();
   const events = [];
@@ -148,7 +158,12 @@ it('should work with Cross-Origin-Opener-Policy after redirect', async ({ page, 
   server.setRedirect('/redirect', '/empty.html');
   server.setRoute('/empty.html', (req, res) => {
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-    res.end();
+    // Note: without 'onload', Firefox sometimes does not fire the load event
+    // over the protocol. The reason is unclear.
+    res.end(`
+      <div>Hello there!</div>
+      <script>window.onload = () => console.log('onload')</script>
+    `);
   });
   const requests = new Set();
   const events = [];
@@ -290,16 +305,20 @@ it('should work when page calls history API in beforeunload', async ({ page, ser
   expect(response.status()).toBe(200);
 });
 
-it('should fail when navigating to bad url', async ({ mode, page, browserName }) => {
+it('should fail when navigating to bad url', async ({ page, browserName, isBidi }) => {
   let error = null;
   await page.goto('asdfasdf').catch(e => error = e);
-  if (browserName === 'chromium' || browserName === 'webkit')
+  if (browserName === 'chromium' && isBidi)
+    expect(error.message).toContain('Invalid URL');
+  else if (browserName === 'firefox' && isBidi)
+    expect(error.message).toContain('NS_ERROR_MALFORMED_URI');
+  else if (browserName === 'chromium' || browserName === 'webkit')
     expect(error.message).toContain('Cannot navigate to invalid URL');
   else
     expect(error.message).toContain('Invalid url');
 });
 
-it('should fail when navigating to bad SSL', async ({ page, browserName, httpsServer, platform }) => {
+it('should fail when navigating to bad SSL', async ({ page, browserName, httpsServer, platform, channel }) => {
   // Make sure that network events do not emit 'undefined'.
   // @see https://crbug.com/750469
   page.on('request', request => expect(request).toBeTruthy());
@@ -307,15 +326,15 @@ it('should fail when navigating to bad SSL', async ({ page, browserName, httpsSe
   page.on('requestfailed', request => expect(request).toBeTruthy());
   let error = null;
   await page.goto(httpsServer.EMPTY_PAGE).catch(e => error = e);
-  expect(error.message).toMatch(expectedSSLError(browserName, platform));
+  expect(error.message).toMatch(expectedSSLError(browserName, platform, channel));
 });
 
-it('should fail when navigating to bad SSL after redirects', async ({ page, browserName, server, httpsServer, platform }) => {
+it('should fail when navigating to bad SSL after redirects', async ({ page, browserName, server, httpsServer, platform, channel }) => {
   server.setRedirect('/redirect/1.html', '/redirect/2.html');
   server.setRedirect('/redirect/2.html', '/empty.html');
   let error = null;
   await page.goto(httpsServer.PREFIX + '/redirect/1.html').catch(e => error = e);
-  expect(error.message).toMatch(expectedSSLError(browserName, platform));
+  expect(error.message).toMatch(expectedSSLError(browserName, platform, channel));
 });
 
 it('should not crash when navigating to bad SSL after a cross origin navigation', async ({ page, server, httpsServer }) => {
@@ -335,26 +354,18 @@ it('should throw if networkidle2 is passed as an option', async ({ page, server 
   expect(error.message).toContain(`waitUntil: expected one of (load|domcontentloaded|networkidle|commit)`);
 });
 
-it('should fail when main resources failed to load', async ({ page, browserName, isWindows, mode }) => {
+it('should fail when main resources failed to load', async ({ page, browserName, isWindows, mode, channel }) => {
+  it.skip(channel === 'webkit-wsl', 'Networking mode mirrored ends up stalling connections rather than terminating them, see https://github.com/microsoft/WSL/issues/10855.');
   let error = null;
   await page.goto('http://localhost:44123/non-existing-url').catch(e => error = e);
-  if (browserName === 'chromium') {
-    if (mode === 'service2')
-      expect(error.message).toContain('net::ERR_SOCKS_CONNECTION_FAILED');
-    else
-      expect(error.message).toContain('net::ERR_CONNECTION_REFUSED');
-  } else if (browserName === 'webkit' && isWindows && mode === 'service2') {
-    expect(error.message).toContain(`proxy handshake error`);
-  } else if (browserName === 'webkit' && isWindows) {
+  if (browserName === 'chromium')
+    expect(error.message).toContain('net::ERR_CONNECTION_REFUSED');
+  else if (browserName === 'webkit' && isWindows && channel !== 'webkit-wsl')
     expect(error.message).toContain(`Could not connect to server`);
-  } else if (browserName === 'webkit') {
-    if (mode === 'service2')
-      expect(error.message).toContain('Connection refused');
-    else
-      expect(error.message).toContain('Could not connect');
-  } else {
+  else if (browserName === 'webkit')
+    expect(error.message).toContain('Could not connect');
+  else
     expect(error.message).toContain('NS_ERROR_CONNECTION_REFUSED');
-  }
 });
 
 it('should fail when exceeding maximum navigation timeout', async ({ page, server, playwright }) => {
@@ -367,8 +378,8 @@ it('should fail when exceeding maximum navigation timeout', async ({ page, serve
   expect(error).toBeInstanceOf(playwright.errors.TimeoutError);
 });
 
-it('should fail when exceeding default maximum navigation timeout', async ({ page, server, playwright, isAndroid }) => {
-  it.skip(isAndroid, 'No context per test');
+it('should fail when exceeding default maximum navigation timeout', async ({ page, server, playwright, isAndroid, isElectron }) => {
+  it.skip(isAndroid || isElectron, 'No context per test');
 
   // Hang for request to the empty.html
   server.setRoute('/empty.html', (req, res) => { });
@@ -381,8 +392,8 @@ it('should fail when exceeding default maximum navigation timeout', async ({ pag
   expect(error).toBeInstanceOf(playwright.errors.TimeoutError);
 });
 
-it('should fail when exceeding browser context navigation timeout', async ({ page, server, playwright, isAndroid }) => {
-  it.skip(isAndroid, 'No context per test');
+it('should fail when exceeding browser context navigation timeout', async ({ page, server, playwright, isAndroid, isElectron }) => {
+  it.skip(isAndroid || isElectron, 'No context per test');
 
   // Hang for request to the empty.html
   server.setRoute('/empty.html', (req, res) => { });
@@ -394,8 +405,8 @@ it('should fail when exceeding browser context navigation timeout', async ({ pag
   expect(error).toBeInstanceOf(playwright.errors.TimeoutError);
 });
 
-it('should fail when exceeding default maximum timeout', async ({ page, server, playwright, isAndroid }) => {
-  it.skip(isAndroid, 'No context per test');
+it('should fail when exceeding default maximum timeout', async ({ page, server, playwright, isAndroid, isElectron }) => {
+  it.skip(isAndroid || isElectron, 'No context per test');
 
   // Hang for request to the empty.html
   server.setRoute('/empty.html', (req, res) => { });
@@ -410,8 +421,8 @@ it('should fail when exceeding default maximum timeout', async ({ page, server, 
   expect(error).toBeInstanceOf(playwright.errors.TimeoutError);
 });
 
-it('should fail when exceeding browser context timeout', async ({ page, server, playwright, isAndroid }) => {
-  it.skip(isAndroid, 'No context per test');
+it('should fail when exceeding browser context timeout', async ({ page, server, playwright, isAndroid, isElectron }) => {
+  it.skip(isAndroid || isElectron, 'No context per test');
 
   // Hang for request to the empty.html
   server.setRoute('/empty.html', (req, res) => { });
@@ -446,7 +457,7 @@ it('should disable timeout when its set to 0', async ({ page, server }) => {
   expect(loaded).toBe(true);
 });
 
-it('should fail when replaced by another navigation', async ({ page, server, browserName }) => {
+it('should fail when replaced by another navigation', async ({ page, server, browserName, isBidi }) => {
   let anotherPromise;
   server.setRoute('/empty.html', (req, res) => {
     anotherPromise = page.goto(server.PREFIX + '/one-style.html');
@@ -459,8 +470,11 @@ it('should fail when replaced by another navigation', async ({ page, server, bro
   } else if (browserName === 'webkit') {
     expect(error.message).toContain(`page.goto: Navigation to "${server.PREFIX + '/empty.html'}" is interrupted by another navigation to "${server.PREFIX + '/one-style.html'}"`);
   } else if (browserName === 'firefox') {
-    // Firefox might yield either NS_BINDING_ABORTED or 'navigation interrupted by another one'
-    expect(error.message.includes(`page.goto: Navigation to "${server.PREFIX + '/empty.html'}" is interrupted by another navigation to "${server.PREFIX + '/one-style.html'}"`) || error.message.includes('NS_BINDING_ABORTED')).toBe(true);
+    if (isBidi)
+      expect(error.message).toContain('page.goto: Protocol error (browsingContext.navigate): unknown error');
+    else
+      // Firefox might yield either NS_BINDING_ABORTED or 'navigation interrupted by another one'
+      expect(error.message.includes(`page.goto: Navigation to "${server.PREFIX + '/empty.html'}" is interrupted by another navigation to "${server.PREFIX + '/one-style.html'}"`) || error.message.includes('NS_BINDING_ABORTED')).toBe(true);
   }
 });
 
@@ -728,9 +742,9 @@ it('should work with lazy loading iframes', async ({ page, server, isAndroid }) 
   expect(page.frames().length).toBe(2);
 });
 
-it('should report raw buffer for main resource', async ({ page, server, browserName, platform }) => {
+it('should report raw buffer for main resource', async ({ page, server, browserName, platform, channel }) => {
   it.fail(browserName === 'chromium', 'Chromium sends main resource as text');
-  it.fail(browserName === 'webkit' && platform === 'win32', 'Same here');
+  it.fail(browserName === 'webkit' && platform === 'win32' && channel !== 'webkit-wsl', 'Same here');
 
   server.setRoute('/empty.html', (req, res) => {
     res.statusCode = 200;
@@ -787,8 +801,8 @@ it('should properly wait for load', async ({ page, server, browserName }) => {
   ]);
 });
 
-it('should not resolve goto upon window.stop()', async ({ browserName, page, server }) => {
-  it.fixme(browserName === 'firefox', 'load/domcontentloaded events are flaky');
+it('should not resolve goto upon window.stop()', async ({ browserName, page, server, isBidi }) => {
+  it.fixme(browserName === 'firefox' && !isBidi, 'load/domcontentloaded events are flaky');
   it.skip(process.env.PW_CLOCK === 'frozen');
 
   let response;

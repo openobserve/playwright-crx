@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-import { stripVTControlCharacters } from 'node:util';
 import { stripAnsi } from '../config/utils';
 import { test, expect } from './pageTest';
 
@@ -68,7 +67,12 @@ test.describe('toHaveCount', () => {
     await page.setContent('<div><span></span></div>');
     const locator = page.locator('span');
     const error = await expect(locator).toHaveCount(0, { timeout: 1000 }).catch(e => e);
-    expect(stripAnsi(error.message)).toContain(`Timed out 1000ms waiting for expect(locator).toHaveCount(expected)`);
+    expect(stripAnsi(error.message)).toContain(`expect(locator).toHaveCount(expected) failed
+
+Locator:  locator('span')
+Expected: 0
+Received: 1
+Timeout:  1000ms`);
     expect(stripAnsi(error.message)).toContain(`- Expect "toHaveCount" with timeout 1000ms`);
   });
 
@@ -76,7 +80,12 @@ test.describe('toHaveCount', () => {
     await page.setContent('<div><span></span></div>');
     const locator = page.locator('span');
     const error = await expect(locator).not.toHaveCount(1, { timeout: 1000 }).catch(e => e);
-    expect(stripAnsi(error.message)).toContain(`Timed out 1000ms waiting for expect(locator).not.toHaveCount(expected)`);
+    expect(stripAnsi(error.message)).toContain(`expect(locator).not.toHaveCount(expected) failed
+
+Locator:  locator('span')
+Expected: not 1
+Received: 1
+Timeout:  1000ms`);
     expect(stripAnsi(error.message)).toContain(`- Expect "not toHaveCount" with timeout 1000ms`);
   });
 });
@@ -109,7 +118,12 @@ test.describe('toHaveJSProperty', () => {
     await page.$eval('div', e => (e as any).foo = 'string');
     const locator = page.locator('div');
     const error = await expect(locator).toHaveJSProperty('foo', 'error', { timeout: 200 }).catch(e => e);
-    expect(stripAnsi(error.message)).toContain(`Timed out 200ms waiting for expect(locator).toHaveJSProperty(expected)`);
+    expect(stripAnsi(error.message)).toContain(`expect(locator).toHaveJSProperty(expected) failed
+
+Locator:  locator('div')
+Expected: "error"
+Received: "string"
+Timeout:  200ms`);
     expect(stripAnsi(error.message)).toContain(`- Expect "toHaveJSProperty" with timeout 200ms`);
   });
 
@@ -125,7 +139,12 @@ test.describe('toHaveJSProperty', () => {
     await page.$eval('div', e => (e as any).foo = 2021);
     const locator = page.locator('div');
     const error = await expect(locator).toHaveJSProperty('foo', 1, { timeout: 200 }).catch(e => e);
-    expect(stripAnsi(error.message)).toContain(`Timed out 200ms waiting for expect(locator).toHaveJSProperty(expected)`);
+    expect(stripAnsi(error.message)).toContain(`expect(locator).toHaveJSProperty(expected) failed
+
+Locator:  locator('div')
+Expected: 1
+Received: 2021
+Timeout:  200ms`);
     expect(stripAnsi(error.message)).toContain(`- Expect "toHaveJSProperty" with timeout 200ms`);
   });
 
@@ -141,7 +160,12 @@ test.describe('toHaveJSProperty', () => {
     await page.$eval('div', e => (e as any).foo = false);
     const locator = page.locator('div');
     const error = await expect(locator).toHaveJSProperty('foo', true, { timeout: 200 }).catch(e => e);
-    expect(stripAnsi(error.message)).toContain(`Timed out 200ms waiting for expect(locator).toHaveJSProperty(expected)`);
+    expect(stripAnsi(error.message)).toContain(`expect(locator).toHaveJSProperty(expected) failed
+
+Locator:  locator('div')
+Expected: true
+Received: false
+Timeout:  200ms`);
     expect(stripAnsi(error.message)).toContain(`- Expect "toHaveJSProperty" with timeout 200ms`);
   });
 
@@ -157,7 +181,12 @@ test.describe('toHaveJSProperty', () => {
     await page.$eval('div', e => (e as any).foo = false);
     const locator = page.locator('div');
     const error = await expect(locator).toHaveJSProperty('foo', true, { timeout: 200 }).catch(e => e);
-    expect(stripAnsi(error.message)).toContain(`Timed out 200ms waiting for expect(locator).toHaveJSProperty(expected)`);
+    expect(stripAnsi(error.message)).toContain(`expect(locator).toHaveJSProperty(expected) failed
+
+Locator:  locator('div')
+Expected: true
+Received: false
+Timeout:  200ms`);
     expect(stripAnsi(error.message)).toContain(`- Expect "toHaveJSProperty" with timeout 200ms`);
   });
 
@@ -211,7 +240,15 @@ test.describe('toHaveClass', () => {
     await page.setContent('<div class="bar baz"></div>');
     const locator = page.locator('div');
     const error = await expect(locator).toHaveClass('foo bar baz', { timeout: 1000 }).catch(e => e);
-    expect(stripAnsi(error.message)).toContain(`Timed out 1000ms waiting for expect(locator).toHaveClass(expected)`);
+    expect(stripAnsi(error.message)).toContain(`expect(locator).toHaveClass(expected) failed
+
+Locator:  locator('div')
+Expected: "foo bar baz"
+Received: "bar baz"
+Timeout:  1000ms
+
+Call log:
+`);
     expect(stripAnsi(error.message)).toContain(`- Expect "toHaveClass" with timeout 1000ms`);
   });
 
@@ -225,7 +262,8 @@ test.describe('toHaveClass', () => {
     await page.setContent('<div class="foo"></div><div class="bar"></div><div class="bar"></div>');
     const locator = page.locator('div');
     const error = await expect(locator).toHaveClass(['foo', 'bar', /[a-z]az/], { timeout: 1000 }).catch(e => e);
-    expect(stripAnsi(error.message)).toContain(`Timed out 1000ms waiting for expect(locator).toHaveClass(expected)`);
+    expect(stripAnsi(error.message)).toContain(`expect(locator).toHaveClass(expected) failed`);
+    expect(stripAnsi(error.message)).toContain(`Timeout: 1000ms`);
     expect(stripAnsi(error.message)).toContain(`- Expect "toHaveClass" with timeout 1000ms`);
   });
 });
@@ -251,7 +289,15 @@ test.describe('toContainClass', () => {
     await page.setContent('<div class="bar baz"></div>');
     const locator = page.locator('div');
     const error = await expect(locator).toContainClass('does-not-exist', { timeout: 1000 }).catch(e => e);
-    expect(stripAnsi(error.message)).toContain(`Timed out 1000ms waiting for expect(locator).toContainClass(expected)`);
+    expect(stripAnsi(error.message)).toContain(`expect(locator).toContainClass(expected) failed
+
+Locator:  locator('div')
+Expected: "does-not-exist"
+Received: "bar baz"
+Timeout:  1000ms
+
+Call log:
+`);
     expect(stripAnsi(error.message)).toContain(`- Expect "toContainClass" with timeout 1000ms`);
   });
 
@@ -268,7 +314,8 @@ test.describe('toContainClass', () => {
     await page.setContent('<div class="foo"></div><div class="bar"></div><div class="bar"></div>');
     const locator = page.locator('div');
     const error = await expect(locator).toContainClass(['foo', 'bar', 'baz'], { timeout: 1000 }).catch(e => e);
-    expect(stripAnsi(error.message)).toContain(`Timed out 1000ms waiting for expect(locator).toContainClass(expected)`);
+    expect(stripAnsi(error.message)).toContain(`expect(locator).toContainClass(expected) failed`);
+    expect(stripAnsi(error.message)).toContain(`Timeout: 1000ms`);
     expect(stripAnsi(error.message)).toContain(`- Expect "toContainClass" with timeout 1000ms`);
   });
 });
@@ -282,7 +329,14 @@ test.describe('toHaveTitle', () => {
   test('fail', async ({ page }) => {
     await page.setContent('<title>Bye</title>');
     const error = await expect(page).toHaveTitle('Hello', { timeout: 1000 }).catch(e => e);
-    expect(stripAnsi(error.message)).toContain(`Timed out 1000ms waiting for expect(page).toHaveTitle(expected)`);
+    expect(stripAnsi(error.message)).toContain(`expect(page).toHaveTitle(expected) failed
+
+Expected: "Hello"
+Received: "Bye"
+Timeout:  1000ms
+
+Call log:
+`);
     expect(stripAnsi(error.message)).toContain(`- Expect "toHaveTitle" with timeout 1000ms`);
   });
 });
@@ -296,30 +350,48 @@ test.describe('toHaveURL', () => {
   test('fail string', async ({ page }) => {
     await page.goto('data:text/html,<div>A</div>');
     const error = await expect(page).toHaveURL('wrong', { timeout: 1000 }).catch(e => e);
-    expect(stripVTControlCharacters(error.message)).toContain('Timed out 1000ms waiting for expect(locator).toHaveURL(expected)');
-    expect(stripVTControlCharacters(error.message)).toContain('Expected string: "wrong"\nReceived string: "data:text/html,<div>A</div>"');
+    expect(stripAnsi(error.message)).toContain(`expect(page).toHaveURL(expected) failed
+
+Expected: "wrong"
+Received: "data:text/html,<div>A</div>"
+Timeout:  1000ms
+
+Call log:
+`);
   });
 
   test('fail with invalid argument', async ({ page }) => {
     await page.goto('data:text/html,<div>A</div>');
     // @ts-expect-error
     const error = await expect(page).toHaveURL({}).catch(e => e);
-    expect(stripVTControlCharacters(error.message)).toContain(`expect(locator(':root')).toHaveURL([object Object])`);
-    expect(stripVTControlCharacters(error.message)).toContain('Expected has type:  object\nExpected has value: {}');
+    expect(stripAnsi(error.message)).toContain(`expect(page).toHaveURL(expected) failed
+
+Error: expected value must be a string or regular expression
+Expected has type:  object
+Expected has value: {}
+`);
   });
 
   test('fail with positive predicate', async ({ page }) => {
     await page.goto('data:text/html,<div>A</div>');
     const error = await expect(page).toHaveURL(_url => false).catch(e => e);
-    expect(stripVTControlCharacters(error.message)).toContain('expect(page).toHaveURL(expected)');
-    expect(stripVTControlCharacters(error.message)).toContain('Expected predicate to succeed\nReceived string: "data:text/html,<div>A</div>"');
+    expect(stripAnsi(error.message)).toContain(`expect(page).toHaveURL(expected) failed
+
+Expected: predicate to succeed
+Received: "data:text/html,<div>A</div>"
+Timeout:  10000ms
+`);
   });
 
   test('fail with negative predicate', async ({ page }) => {
     await page.goto('data:text/html,<div>A</div>');
     const error = await expect(page).not.toHaveURL(_url => true).catch(e => e);
-    expect(stripVTControlCharacters(error.message)).toContain('expect(page).not.toHaveURL(expected)');
-    expect(stripVTControlCharacters(error.message)).toContain('Expected predicate to fail\nReceived string: "data:text/html,<div>A</div>"');
+    expect(stripAnsi(error.message)).toContain(`expect(page).not.toHaveURL(expected) failed
+
+Expected: predicate to fail
+Received: "data:text/html,<div>A</div>"
+Timeout:  10000ms
+`);
   });
 
   test('resolve predicate on initial call', async ({ page }) => {
@@ -338,6 +410,15 @@ test.describe('toHaveURL', () => {
     await page.goto('data:text/html,<div>A</div>');
     await expect(page).toHaveURL('DATA:teXT/HTml,<div>a</div>', { ignoreCase: true });
   });
+
+  test('support URLPattern', async ({ page }) => {
+    test.skip(globalThis.URLPattern === undefined, 'URLPattern is not supported in this environment');
+    await page.goto('data:text/html,<div>A</div>');
+    // @ts-ignore URLPattern is not in @types/node yet
+    await expect(page).toHaveURL(new URLPattern({ protocol: 'data' }));
+    // @ts-ignore
+    await expect(page).not.toHaveURL(new URLPattern({ protocol: 'http' }));
+  });
 });
 
 test.describe('toHaveAttribute', () => {
@@ -352,12 +433,28 @@ test.describe('toHaveAttribute', () => {
     const locator = page.locator('#node');
     {
       const error = await expect(locator).toHaveAttribute('disabled', '', { timeout: 1000 }).catch(e => e);
-      expect(stripAnsi(error.message)).toContain(`Timed out 1000ms waiting for expect(locator).toHaveAttribute(expected)`);
+      expect(stripAnsi(error.message)).toContain(`expect(locator).toHaveAttribute(expected) failed
+
+Locator:  locator('#node')
+Expected: ""
+Received: serializes to the same string
+Timeout:  1000ms
+
+Call log:
+`);
       expect(stripAnsi(error.message)).toContain(`- Expect "toHaveAttribute" with timeout 1000ms`);
     }
     {
       const error = await expect(locator).toHaveAttribute('disabled', /.*/, { timeout: 1000 }).catch(e => e);
-      expect(stripAnsi(error.message)).toContain(`Timed out 1000ms waiting for expect(locator).toHaveAttribute(expected)`);
+      expect(stripAnsi(error.message)).toContain(`expect(locator).toHaveAttribute(expected) failed
+
+Locator: locator('#node')
+Expected pattern: /.*/
+Received string:  ""
+Timeout: 1000ms
+
+Call log:
+`);
       expect(stripAnsi(error.message)).toContain(`- Expect "toHaveAttribute" with timeout 1000ms`);
     }
     await expect(locator).not.toHaveAttribute('disabled', '');
@@ -371,12 +468,25 @@ test.describe('toHaveAttribute', () => {
     await expect(locator).toHaveAttribute('checked', /.*/);
     {
       const error = await expect(locator).not.toHaveAttribute('checked', '', { timeout: 1000 }).catch(e => e);
-      expect(stripAnsi(error.message)).toContain(`Timed out 1000ms waiting for expect(locator).not.toHaveAttribute(expected)`);
+      expect(stripAnsi(error.message)).toContain(`expect(locator).not.toHaveAttribute(expected) failed
+
+Locator:  locator('#node')
+Expected: not ""
+Received: ""
+Timeout:  1000ms
+
+Call log:
+`);
       expect(stripAnsi(error.message)).toContain(`- Expect "not toHaveAttribute" with timeout 1000ms`);
     }
     {
       const error = await expect(locator).not.toHaveAttribute('checked', /.*/, { timeout: 1000 }).catch(e => e);
-      expect(stripAnsi(error.message)).toContain(`Timed out 1000ms waiting for expect(locator).not.toHaveAttribute(expected)`);
+      expect(stripAnsi(error.message)).toContain(`expect(locator).not.toHaveAttribute(expected) failed
+
+Locator: locator('#node')
+Expected pattern: not /.*/
+Received string: ""
+Timeout: 1000ms`);
       expect(stripAnsi(error.message)).toContain(`- Expect "not toHaveAttribute" with timeout 1000ms`);
     }
   });
@@ -410,6 +520,20 @@ test.describe('toHaveCSS', () => {
     await page.setContent('<div id=node style="color: rgb(255, 0, 0)">Text content</div>');
     const locator = page.locator('#node');
     await expect(locator).toHaveCSS('color', 'rgb(255, 0, 0)');
+  });
+
+  test('should support pseudo element', async ({ page }) => {
+    await page.setContent(`
+      <style>
+        #node::before {
+          color: rgb(255, 0, 0);
+          content: "Text content";
+        }
+      </style>
+      <div id=node></div>
+    `);
+    const locator = page.locator('#node');
+    await expect(locator).toHaveCSS('color', 'rgb(255, 0, 0)', { pseudo: 'before' });
   });
 
   test('custom css properties', async ({ page }) => {
@@ -464,7 +588,7 @@ test.describe('toBeInViewport', () => {
   test('should have good stack', async ({ page }) => {
     let error;
     try {
-      await expect(page.locator('body')).not.toBeInViewport({ timeout: 100 });
+      await expect(page.locator('body')).not.toBeInViewport({ timeout: 3000 });
     } catch (e) {
       error = e;
     }
@@ -511,4 +635,43 @@ test('toHaveText that does not match should not produce logs twice', async ({ pa
   expect(error.message).toContain(waitingForMessage);
   expect(error.message).not.toContain('locator resolved to');
   expect(error.message.replace(waitingForMessage, '<redacted>')).not.toContain(waitingForMessage);
+});
+
+test('strict mode violation error format', async ({ page }) => {
+  await page.setContent('<div>a</div><div>b</div>');
+  const error = await expect(page.locator('div')).toHaveText('foo').catch(e => e);
+  expect(stripAnsi(error.message)).toContain(`expect(locator).toHaveText(expected) failed
+
+Locator: locator('div')
+Expected: "foo"
+Error: strict mode violation: locator('div') resolved to 2 elements:
+    1) <div>a</div> aka getByText('a')
+    2) <div>b</div> aka getByText('b')
+
+Call log:
+`);
+});
+
+test('invalid selector error format', async ({ page }) => {
+  await page.setContent('<div>a</div><div>b</div>');
+  const error = await expect(page.locator('##')).toBeVisible().catch(e => e);
+  expect(stripAnsi(error.message)).toContain(`expect(locator).toBeVisible() failed
+
+Locator: ##
+Expected: visible
+Error: Unexpected token "#" while parsing css selector "##". Did you mean to CSS.escape it?
+
+Call log:
+`);
+});
+
+test('should report expect error details when page closes during expect', async ({ page }) => {
+  await page.setContent(`<div>hello</div>`);
+  const promise = expect(page.locator('div')).toHaveText('world', { timeout: 10000 }).catch((e: Error) => e);
+  await page.waitForTimeout(1000);
+  await page.close();
+  const error = await promise as Error;
+  expect(stripAnsi(error.message)).toContain('expect(locator).toHaveText(expected) failed');
+  expect(stripAnsi(error.message)).toContain('Expected: "world"');
+  expect(stripAnsi(error.message)).toContain('Received: "hello"');
 });

@@ -3,7 +3,7 @@ using System;
 using System.Threading.Tasks;
 
 using var playwright = await Playwright.CreateAsync();
-await using var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+await using var browser = await playwright.Chromium.LaunchAsync(new()
 {
     Headless = false,
 });

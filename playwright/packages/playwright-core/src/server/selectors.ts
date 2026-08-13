@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-import { createGuid } from './utils/crypto';
-import { InvalidSelectorError,  parseSelector, stringifySelector, visitAllSelectorParts } from '../utils/isomorphic/selectorParser';
+import { InvalidSelectorError,  parseSelector, stringifySelector, visitAllSelectorParts } from '@isomorphic/selectorParser';
+import { createGuid } from '@utils/crypto';
 
-import type { ParsedSelector } from '../utils/isomorphic/selectorParser';
-import type * as channels from '@protocol/channels';
+import type { ParsedSelector } from '@isomorphic/selectorParser';
+import type * as channels from './channels';
 
 export class Selectors {
   private readonly _builtinEngines: Set<string>;

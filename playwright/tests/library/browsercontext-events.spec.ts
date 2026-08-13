@@ -29,9 +29,9 @@ test('console event should work @smoke', async ({ page }) => {
 
 test('console event should work with element handles', async ({ page }) => {
   await page.setContent('<body>hello</body>');
-  const [, message] = await Promise.all([
-    page.evaluate(() => console.log(document.body)),
+  const [message] = await Promise.all([
     page.context().waitForEvent('console'),
+    page.evaluate(() => console.log(document.body)),
   ]);
   const body = message.args()[0];
   expect(await body.evaluate(x => x.nodeName)).toBe('BODY');
@@ -52,8 +52,8 @@ test('console event should work in popup', async ({ page }) => {
   expect(message.page()).toBe(popup);
 });
 
-test('console event should work in popup 2', async ({ page, browserName }) => {
-  test.fixme(browserName === 'firefox', 'console message from javascript: url is not reported at all');
+test('console event should work in popup 2', async ({ page, browserName, isBidi }) => {
+  test.fixme(browserName === 'firefox' && !isBidi, 'console message from javascript: url is not reported at all');
 
   const [, message, popup] = await Promise.all([
     page.evaluate(async () => {
@@ -69,8 +69,8 @@ test('console event should work in popup 2', async ({ page, browserName }) => {
   expect(message.page()).toBe(popup);
 });
 
-test('console event should work in immediately closed popup', async ({ page, browserName }) => {
-  test.fixme(browserName === 'firefox', 'console message is not reported at all');
+test('console event should work in immediately closed popup', async ({ page, browserName, isBidi }) => {
+  test.fixme(browserName === 'firefox' && !isBidi, 'console message is not reported at all');
 
   const [, message, popup] = await Promise.all([
     page.evaluate(async () => {
@@ -180,4 +180,101 @@ test('weberror event should work', async ({ page }) => {
   ]);
   expect(webError.page()).toBe(page);
   expect(webError.error().stack).toContain('boom');
+});
+
+test('weberror event should include location', async ({ page, server }) => {
+  server.setRoute('/error.js', (req, res) => {
+    res.setHeader('content-type', 'application/javascript');
+    res.end(`
+      function foo() {
+        throw new Error('boom');
+      }
+      foo();
+    `);
+  });
+
+  server.setRoute('/error.html', (req, res) => {
+    res.setHeader('content-type', 'text/html');
+    res.end('<script src="/error.js"></script>');
+  });
+
+  const [webError] = await Promise.all([
+    page.context().waitForEvent('weberror'),
+    page.goto(server.PREFIX + '/error.html'),
+  ]);
+
+  const location = webError.location();
+  expect(location.url).toBe(`${server.PREFIX}/error.js`);
+  expect(location.line).toBe(2);
+  expect(location.column).toBeGreaterThan(0); // column is not consistent across browsers
+});
+
+test('pageload event should work @smoke', async ({ page, server }) => {
+  const [eventPage] = await Promise.all([
+    page.context().waitForEvent('pageload'),
+    page.goto(server.EMPTY_PAGE),
+  ]);
+  expect(eventPage).toBe(page);
+});
+
+test('framenavigated event should work @smoke', async ({ page, server }) => {
+  const [frame] = await Promise.all([
+    page.context().waitForEvent('framenavigated'),
+    page.goto(server.EMPTY_PAGE),
+  ]);
+  expect(frame).toBe(page.mainFrame());
+  expect(frame.url()).toBe(server.EMPTY_PAGE);
+});
+
+test('pageclose event should work @smoke', async ({ context }) => {
+  const page = await context.newPage();
+  const [closed] = await Promise.all([
+    context.waitForEvent('pageclose'),
+    page.close(),
+  ]);
+  expect(closed).toBe(page);
+});
+
+test('frameattached event should work @smoke', async ({ page, server }) => {
+  await page.goto(server.EMPTY_PAGE);
+  const [frame] = await Promise.all([
+    page.context().waitForEvent('frameattached'),
+    page.evaluate(() => {
+      const iframe = document.createElement('iframe');
+      iframe.src = 'about:blank';
+      document.body.appendChild(iframe);
+    }),
+  ]);
+  expect(frame.parentFrame()).toBe(page.mainFrame());
+});
+
+test('framedetached event should work @smoke', async ({ page, server }) => {
+  await page.goto(server.EMPTY_PAGE);
+  await page.evaluate(() => {
+    const iframe = document.createElement('iframe');
+    iframe.id = 'x';
+    iframe.src = 'about:blank';
+    document.body.appendChild(iframe);
+  });
+  await page.waitForSelector('iframe');
+  const [frame] = await Promise.all([
+    page.context().waitForEvent('framedetached'),
+    page.evaluate(() => document.getElementById('x')!.remove()),
+  ]);
+  expect(frame.parentFrame()).toBe(page.mainFrame());
+});
+
+test('download event should work @smoke', async ({ page, server }) => {
+  server.setRoute('/download', (req, res) => {
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'attachment; filename=file.txt');
+    res.end('Hello world');
+  });
+  await page.setContent(`<a href="${server.PREFIX}/download">download</a>`);
+  const [download] = await Promise.all([
+    page.context().waitForEvent('download'),
+    page.click('a'),
+  ]);
+  expect(download.suggestedFilename()).toBe('file.txt');
+  expect(download.page()).toBe(page);
 });

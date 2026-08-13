@@ -16,9 +16,10 @@
 
 import type { Fixtures, FrameLocator, Locator, Page, Browser, BrowserContext } from '@playwright/test';
 import { step } from './baseTest';
-import { runTraceViewerApp } from '../../packages/playwright-core/lib/server';
+import path from 'path';
+import { CommonFixtures, TestChildProcess } from './commonFixtures';
 
-type BaseTestFixtures = {
+type BaseTestFixtures = CommonFixtures & {
   context: BrowserContext;
 };
 
@@ -30,7 +31,7 @@ type BaseWorkerFixtures = {
 };
 
 export type TraceViewerFixtures = {
-  showTraceViewer: (trace: string[], options?: {host?: string, port?: number}) => Promise<TraceViewerPage>;
+  showTraceViewer: (trace: string | undefined, options?: {host?: string, port?: number, stdin?: boolean, cwd?: string}) => Promise<TraceViewerPage>;
   runAndTrace: (body: () => Promise<void>, optsOverrides?: Parameters<BrowserContext['tracing']['start']>[0]) => Promise<TraceViewerPage>;
 };
 
@@ -43,88 +44,100 @@ class TraceViewerPage {
   errorMessages: Locator;
   consoleLineMessages: Locator;
   consoleStacks: Locator;
-  stackFrames: Locator;
   networkRequests: Locator;
   metadataTab: Locator;
   snapshotContainer: Locator;
   sourceCodeTab: Locator;
+  networkTab: Locator;
 
   settingsDialog: Locator;
-  darkModeSetting: Locator;
+  themeSetting: Locator;
   displayCanvasContentSetting: Locator;
 
-  constructor(public page: Page) {
+  constructor(public page: Page, public process: TestChildProcess) {
     this.actionTitles = page.locator('.action-title');
     this.actionsTree = page.getByTestId('actions-tree');
     this.callLines = page.locator('.call-tab .call-line');
-    this.logLines = page.getByTestId('log-list').locator('.list-view-entry');
-    this.consoleLines = page.locator('.console-line');
+    this.logLines = page.getByRole('listbox', { name: 'Log entries' }).getByRole('option');
+    this.consoleLines = page.getByRole('tabpanel', { name: 'Console' }).getByRole('option');
     this.consoleLineMessages = page.locator('.console-line-message');
     this.errorMessages = page.locator('.error-message');
     this.consoleStacks = page.locator('.console-stack');
-    this.stackFrames = page.getByTestId('stack-trace-list').locator('.list-view-entry');
-    this.networkRequests = page.getByTestId('network-list').locator('.list-view-entry');
+    this.networkRequests = page.getByRole('listbox', { name: 'Network requests' }).getByRole('option');
     this.snapshotContainer = page.locator('.snapshot-container iframe.snapshot-visible[name=snapshot]');
-    this.metadataTab = page.getByTestId('metadata-view');
-    this.sourceCodeTab = page.getByTestId('source-code');
+    this.metadataTab = page.getByRole('tabpanel', { name: 'Metadata' });
+    this.sourceCodeTab = page.getByRole('tabpanel', { name: 'Source' });
+    this.networkTab = page.getByRole('tabpanel', { name: 'Network' });
 
     this.settingsDialog = page.getByTestId('settings-toolbar-dialog');
-    this.darkModeSetting = page.locator('.setting').getByText('Dark mode');
+    this.themeSetting = this.settingsDialog.getByRole('combobox', { name: 'Theme' });
     this.displayCanvasContentSetting = page.locator('.setting').getByText('Display canvas content');
   }
 
-  async actionIconsText(action: string) {
-    const entry = await this.page.waitForSelector(`.tree-view-entry:has-text("${action}")`);
-    await entry.waitForSelector('.action-icon-value:visible');
-    return await entry.$$eval('.action-icon-value:visible', ee => ee.map(e => e.textContent));
+  @step
+  async showAllActions() {
+    await this.page.getByRole('button', { name: 'Filter actions' }).click();
+    await this.page.locator('.setting').getByText('Network routes').click();
+    await this.page.locator('.setting').getByText('Getters').click();
+    await this.page.locator('.setting').getByText('Configuration').click();
+    await this.page.getByRole('button', { name: 'Filter actions' }).click();
   }
 
-  async actionIcons(action: string) {
-    return await this.page.waitForSelector(`.tree-view-entry:has-text("${action}") .action-icons`);
+  stackFrames(options: { selected?: boolean } = {}) {
+    return this.page.getByRole('listbox', { name: 'Stack trace' }).getByRole('option', options);
+  }
+
+  actionIconsText(action: string) {
+    const entry = this.actionsTree.getByRole('treeitem', { name: action });
+    return entry.locator('.action-icon-value').filter({ visible: true });
+  }
+
+  actionIcons(action: string) {
+    return this.actionsTree.getByRole('treeitem', { name: action }).locator('.action-icons').filter({ visible: true });
   }
 
   @step
-  async expandAction(title: string, ordinal: number = 0) {
-    await this.actionsTree.locator('.tree-view-entry', { hasText: title }).nth(ordinal).locator('.codicon-chevron-right').click();
+  async expandAction(title: string) {
+    await this.actionsTree.getByRole('treeitem', { name: title }).locator('.codicon-chevron-right').click();
   }
 
   @step
   async selectAction(title: string, ordinal: number = 0) {
-    await this.page.locator(`.action-title:has-text("${title}")`).nth(ordinal).click();
+    await this.actionsTree.getByTitle(title).nth(ordinal).click();
   }
 
   @step
   async hoverAction(title: string, ordinal: number = 0) {
-    await this.page.locator(`.action-title:has-text("${title}")`).nth(ordinal).hover();
+    await this.actionsTree.getByRole('treeitem', { name: title }).nth(ordinal).hover();
   }
 
   @step
   async selectSnapshot(name: string) {
-    await this.page.click(`.snapshot-tab .tabbed-pane-tab-label:has-text("${name}")`);
+    await this.page.getByRole('tab', { name }).click();
   }
 
   async showErrorsTab() {
-    await this.page.click('text="Errors"');
+    await this.page.getByRole('tab', { name: 'Errors' }).click();
   }
 
   async showConsoleTab() {
-    await this.page.click('text="Console"');
+    await this.page.getByRole('tab', { name: 'Console' }).click();
   }
 
   async showSourceTab() {
-    await this.page.click('text="Source"');
+    await this.page.getByRole('tab', { name: 'Source' }).click();
   }
 
   async showNetworkTab() {
-    await this.page.click('text="Network"');
+    await this.page.getByRole('tab', { name: 'Network' }).click();
   }
 
   async showMetadataTab() {
-    await this.page.click('text="Metadata"');
+    await this.page.getByRole('tab', { name: 'Metadata' }).click();
   }
 
   async showSettings() {
-    await this.page.locator('.settings-gear').click();
+    await this.page.getByRole('button', { name: 'Settings' }).click();
   }
 
   @step
@@ -137,21 +150,46 @@ class TraceViewerPage {
 }
 
 export const traceViewerFixtures: Fixtures<TraceViewerFixtures, {}, BaseTestFixtures, BaseWorkerFixtures> = {
-  showTraceViewer: async ({ playwright, browserName, headless }, use, testInfo) => {
+  showTraceViewer: async ({ playwright, childProcess, browserName }, use, testInfo) => {
     const browsers: Browser[] = [];
-    const contextImpls: any[] = [];
-    await use(async (traces: string[], { host, port } = {}) => {
-      const pageImpl = await runTraceViewerApp(traces, browserName, { headless, host, port });
-      const contextImpl = pageImpl.browserContext;
-      const browser = await playwright.chromium.connectOverCDP(contextImpl._browser.options.wsEndpoint);
+    const tracings: any[] = [];
+    await use(async (trace: string | undefined, { host, port, stdin, cwd } = {}) => {
+      const command = [
+        'node',
+        path.join(__dirname, '../../packages/playwright-core/cli.js'),
+        'show-trace',
+        '--port', '' + (port ?? '0'),
+      ];
+      if (host)
+        command.push('--host', host);
+      if (stdin)
+        command.push('--stdin');
+      if (trace)
+        command.push(trace);
+      const cp = childProcess({ command, cwd });
+      await cp.waitForOutput('Listening on');
+      const browser = await playwright.chromium.launch({
+        ...(browserName === 'chromium' ? {} : { channel: 'chromium' }),
+        executablePath: process.env.CRPATH, // without this, setting FFPATH makes us launch Firefox with Chromium args
+      });
       browsers.push(browser);
-      contextImpls.push(contextImpl);
-      return new TraceViewerPage(browser.contexts()[0].pages()[0]);
+      const page = await browser.newPage();
+      if (process.env.PWTEST_DEBUG_TRACE_VIEWER) {
+        const tracing = page.context().tracing;
+        await tracing.start({ snapshots: true, screenshots: true });
+        tracings.push(tracing);
+      }
+      const url = cp.output.match(/Listening on (http:\/\/[^\s]+)/)![1];
+      await page.goto(url);
+      return new TraceViewerPage(page, cp);
     });
+    for (const [index, tracing] of tracings.entries()) {
+      const path = testInfo.outputPath(`viewer-trace-${index}.zip`);
+      await tracing.stop({ path });
+      await testInfo.attach(`viewer-trace-${index}.zip`, { path, contentType: 'application/zip' });
+    }
     for (const browser of browsers)
       await browser.close();
-    for (const contextImpl of contextImpls)
-      await contextImpl._browser.close({ reason: 'Trace viewer closed' });
   },
 
   runAndTrace: async ({ context, showTraceViewer }, use, testInfo) => {
@@ -160,7 +198,9 @@ export const traceViewerFixtures: Fixtures<TraceViewerFixtures, {}, BaseTestFixt
       await context.tracing.start({ snapshots: true, screenshots: true, sources: true, ...optsOverrides });
       await body();
       await context.tracing.stop({ path: traceFile });
-      return showTraceViewer([traceFile]);
+      if (process.env.PWTEST_DEBUG_TRACE_VIEWER)
+        await testInfo.attach('recorded-trace.zip', { path: traceFile, contentType: 'application/zip' });
+      return showTraceViewer(traceFile);
     });
   },
 };

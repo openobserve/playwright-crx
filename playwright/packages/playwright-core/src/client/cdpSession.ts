@@ -15,10 +15,11 @@
  */
 
 import { ChannelOwner } from './channelOwner';
+import { kNoTimeout } from './timeoutSettings';
 
 import type * as api from '../../types/types';
 import type { Protocol } from '../server/chromium/protocol';
-import type * as channels from '@protocol/channels';
+import type * as channels from './channels';
 
 export class CDPSession extends ChannelOwner<channels.CDPSessionChannel> implements api.CDPSession {
   static from(cdpSession: channels.CDPSessionChannel): CDPSession {
@@ -28,8 +29,13 @@ export class CDPSession extends ChannelOwner<channels.CDPSessionChannel> impleme
   constructor(parent: ChannelOwner, type: string, guid: string, initializer: channels.CDPSessionInitializer) {
     super(parent, type, guid, initializer);
 
-    this._channel.on('event', ({ method, params }) => {
-      this.emit(method, params);
+    this._channel.on('event', event => {
+      this.emit(event.method, event.params);
+      this.emit('event', event);
+    });
+
+    this._channel.on('close', () => {
+      this.emit('close', this);
     });
 
     this.on = super.on;
@@ -43,11 +49,11 @@ export class CDPSession extends ChannelOwner<channels.CDPSessionChannel> impleme
     method: T,
     params?: Protocol.CommandParameters[T]
   ): Promise<Protocol.CommandReturnValues[T]> {
-    const result = await this._channel.send({ method, params });
+    const result = await this._channel.send({ method, params }, kNoTimeout);
     return result.result as Protocol.CommandReturnValues[T];
   }
 
   async detach() {
-    return await this._channel.detach();
+    return await this._channel.detach({}, kNoTimeout);
   }
 }

@@ -85,16 +85,6 @@ it('should click on a span with an inline element inside', async ({ page }) => {
   expect(await page.evaluate('CLICKED')).toBe(42);
 });
 
-it('should not throw UnhandledPromiseRejection when page closes', async ({ page, isWebView2, browserName, isWindows }) => {
-  it.skip(isWebView2, 'Page.close() is not supported in WebView2');
-  it.fixme(browserName === 'firefox' && isWindows, 'makes the next test to always timeout');
-
-  await Promise.all([
-    page.close(),
-    page.mouse.click(1, 2),
-  ]).catch(e => {});
-});
-
 it('should click the aligned 1x1 div', async ({ page }) => {
   await page.setContent(`<div style="width: 1px; height: 1px;" onclick="window.__clicked = true"></div>`);
   await page.click('div');
@@ -258,12 +248,15 @@ it('should click wrapped links', async ({ page, server }) => {
   expect(await page.evaluate('__clicked')).toBe(true);
 });
 
-it('should click on checkbox input and toggle', async ({ page, server }) => {
+it('should click on checkbox input and toggle', async ({ page, server, headless }) => {
   await page.goto(server.PREFIX + '/input/checkbox.html');
   expect(await page.evaluate(() => window['result'].check)).toBe(null);
   await page.click('input#agree');
   expect(await page.evaluate(() => window['result'].check)).toBe(true);
-  expect(await page.evaluate(() => window['result'].events)).toEqual([
+  let events: string[] = await page.evaluate(() => window['result'].events);
+  if (!headless)
+    events = events.filter(e => e !== 'mouseout' && e !== 'mouseleave');
+  expect(events).toEqual([
     'mouseover',
     'mouseenter',
     'mousemove',
@@ -303,7 +296,7 @@ it('should scroll and click the button with smooth scroll behavior', async ({ pa
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/12370' });
   await page.goto(server.PREFIX + '/input/scrollable.html');
   await page.addStyleTag({ content: 'html { scroll-behavior: smooth; }' });
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 5; i++) {
     await page.click('#button-80');
     expect(await page.evaluate(() => document.querySelector('#button-80').textContent)).toBe('clicked');
     await page.click('#button-20');
@@ -419,41 +412,93 @@ it('should click the button behind sticky header', async ({ page }) => {
   expect(await page.evaluate(() => window['__clicked'])).toBe(true);
 });
 
-it('should click the button with px border with offset', async ({ page, server, browserName }) => {
+it('should click the button behind position:absolute header', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36339' },
+}, async ({ page }) => {
+  await page.setViewportSize({ width: 500, height: 240 });
+  await page.setContent(`
+    <style>
+    * {
+      padding: 0;
+      margin: 0;
+    }
+    li {
+      height: 80px;
+      border: 1px solid black;
+    }
+    ol {
+      height: 100vh;
+      overflow: scroll;
+      padding-top: 160px;
+    }
+    body {
+      position: relative;
+    }
+    div.fixed {
+      position: absolute;
+      top: 0;
+      z-index: 1001;
+      width: 100%;
+      background: red;
+      height: 160px;
+    }
+    </style>
+
+    <ol>
+    <li>hi1</li><li>hi2</li><li>hi3</li><li>hi4</li><li>hi5</li><li>hi6</li><li>hi7</li><li>hi8</li>
+    <li id=target onclick="window.__clicked = true">hi9</li>
+    <li>hi10</li><li>hi11</li><li>hi12</li><li>hi13</li><li id=li14>hi14</li>
+    </ol>
+
+    <div class=fixed>Overlay</div>
+  `);
+  await page.$eval('ol', e => {
+    const target = document.querySelector('#target') as HTMLElement;
+    e.scrollTo({ top: target.offsetTop, behavior: 'instant' });
+  });
+  await page.click('#target');
+  expect(await page.evaluate(() => window['__clicked'])).toBe(true);
+});
+
+it('should click the button with px border with offset', async ({ page, server, isFrozenWebkit }) => {
+  it.skip(isFrozenWebkit, 'needs recent webkit');
   await page.goto(server.PREFIX + '/input/button.html');
   await page.$eval('button', button => button.style.borderWidth = '8px');
   await page.click('button', { position: { x: 20, y: 10 } });
   expect(await page.evaluate('result')).toBe('Clicked');
   // Safari reports border-relative offsetX/offsetY.
-  expect(await page.evaluate('offsetX')).toBe(browserName === 'webkit' ? 20 + 8 : 20);
-  expect(await page.evaluate('offsetY')).toBe(browserName === 'webkit' ? 10 + 8 : 10);
+  expect(await page.evaluate('offsetX')).toBe(20);
+  expect(await page.evaluate('offsetY')).toBe(10);
 });
 
-it('should click the button with em border with offset', async ({ page, server, browserName }) => {
+it('should click the button with em border with offset', async ({ page, server, isFrozenWebkit }) => {
+  it.skip(isFrozenWebkit, 'needs recent webkit');
   await page.goto(server.PREFIX + '/input/button.html');
   await page.$eval('button', button => button.style.borderWidth = '2em');
   await page.$eval('button', button => button.style.fontSize = '12px');
   await page.click('button', { position: { x: 20, y: 10 } });
   expect(await page.evaluate('result')).toBe('Clicked');
   // Safari reports border-relative offsetX/offsetY.
-  expect(await page.evaluate('offsetX')).toBe(browserName === 'webkit' ? 12 * 2 + 20 : 20);
-  expect(await page.evaluate('offsetY')).toBe(browserName === 'webkit' ? 12 * 2 + 10 : 10);
+  expect(await page.evaluate('offsetX')).toBe(20);
+  expect(await page.evaluate('offsetY')).toBe(10);
 });
 
-it('should click a very large button with offset', async ({ page, server, browserName, isAndroid }) => {
+it('should click a very large button with offset', async ({ page, server, isFrozenWebkit, isAndroid }) => {
   it.fixme(isAndroid, 'Failed to scroll to a particular point');
+  it.skip(isFrozenWebkit, 'needs recent webkit');
   await page.goto(server.PREFIX + '/input/button.html');
   await page.$eval('button', button => button.style.borderWidth = '8px');
   await page.$eval('button', button => button.style.height = button.style.width = '2000px');
   await page.click('button', { position: { x: 1900, y: 1910 } });
   expect(await page.evaluate(() => window['result'])).toBe('Clicked');
   // Safari reports border-relative offsetX/offsetY.
-  expect(await page.evaluate('offsetX')).toBe(browserName === 'webkit' ? 1900 + 8 : 1900);
-  expect(await page.evaluate('offsetY')).toBe(browserName === 'webkit' ? 1910 + 8 : 1910);
+  expect(await page.evaluate('offsetX')).toBe(1900);
+  expect(await page.evaluate('offsetY')).toBe(1910);
 });
 
-it('should click a button in scrolling container with offset', async ({ page, server, browserName, isAndroid }) => {
+it('should click a button in scrolling container with offset', async ({ page, server, isFrozenWebkit, isAndroid }) => {
   it.fixme(isAndroid, 'Failed to scroll to a particular point');
+  it.skip(isFrozenWebkit, 'needs recent webkit');
   await page.goto(server.PREFIX + '/input/button.html');
   await page.$eval('button', button => {
     const container = document.createElement('div');
@@ -469,8 +514,8 @@ it('should click a button in scrolling container with offset', async ({ page, se
   await page.click('button', { position: { x: 1900, y: 1910 } });
   expect(await page.evaluate(() => window['result'])).toBe('Clicked');
   // Safari reports border-relative offsetX/offsetY.
-  expect(await page.evaluate('offsetX')).toBe(browserName === 'webkit' ? 1900 + 8 : 1900);
-  expect(await page.evaluate('offsetY')).toBe(browserName === 'webkit' ? 1910 + 8 : 1910);
+  expect(await page.evaluate('offsetX')).toBe(1900);
+  expect(await page.evaluate('offsetY')).toBe(1910);
 });
 
 it('should wait for stable position', async ({ page, server }) => {
@@ -1038,7 +1083,7 @@ it('should click a button that is overlaid by a permission popup', async ({ page
     navigator.geolocation.getCurrentPosition(position => { });
   });
   // If popup blocks the click, then some of the `page.click` calls below will hang.
-  for (let i = 0; i < 100; ++i)
+  for (let i = 0; i < 30; ++i)
     await page.click(`text=${i}`);
 });
 
@@ -1155,10 +1200,8 @@ it('should click if opened select covers the button', async ({ page }) => {
   expect(await page.evaluate('window.__CLICKED')).toBe(42);
 });
 
-it('should fire contextmenu event on right click in correct order', async ({ page, server, browserName }) => {
+it('should fire contextmenu event on right click in correct order', async ({ page, server, browserName, isWindows }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/26515' });
-  it.fixme(browserName === 'chromium', 'mouseup is fired');
-  it.fixme(browserName === 'firefox', 'mouseup is fired');
   await page.goto(server.EMPTY_PAGE);
   await page.setContent(`
     <button id="target">Click me</button>
@@ -1172,15 +1215,27 @@ it('should fire contextmenu event on right click in correct order', async ({ pag
   const entries = [];
   page.on('console', message => entries.push(message.text()));
   await page.getByRole('button', { name: 'Click me' }).click({ button: 'right' });
-  await expect.poll(() => entries).toEqual([
-    'mousedown',
-    'contextmenu',
-  ]);
+  if (browserName === 'chromium' && isWindows)
+    await expect.poll(() => entries).toEqual(['mousedown', 'mouseup', 'contextmenu']);
+  else
+    await expect.poll(() => entries).toEqual(['mousedown', 'contextmenu', 'mouseup']);
+});
+
+it('should click after a right click', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/39246' } }, async ({ page }) => {
+  await page.setContent(`
+    <button>Click me</button>
+    <script>
+      const button = document.querySelector('button');
+      button.addEventListener('click', () => button.textContent = 'Clicked!');
+    </script>
+  `);
+  await page.getByRole('button').click({ button: 'right' });
+  await page.getByRole('button').click();
+  await expect(page.getByRole('button')).toHaveText('Clicked!');
 });
 
 it('should set PointerEvent.pressure on pointerdown', async ({ page, isLinux, headless }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/35844' });
-  it.fixme(isLinux && !headless, 'Stray mouse events on Linux headed mess up the tests.');
   await page.setContent(`
     <button id="target">Click me</button>
     <script>
@@ -1190,16 +1245,14 @@ it('should set PointerEvent.pressure on pointerdown', async ({ page, isLinux, he
     </script>
   `);
   await page.click('button');
-  expect(await page.evaluate(() => window['pressures'])).toEqual([
+  expect(await page.evaluate(() => window['pressures'])).toEqual(expect.arrayContaining([
     ['pointerdown', 0.5],
     ['pointerup', 0],
-  ]);
+  ]));
 });
 
 it('should set PointerEvent.pressure on pointermove', async ({ page, isLinux, headless, isWindows, browserName, isAndroid }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/35844' });
-  it.fixme(isLinux && !headless, 'Stray mouse events on Linux headed mess up the tests.');
-  it.fixme(isWindows && !headless && browserName === 'webkit', 'WebKit win also send stray mouse events.');
   it.fixme(isAndroid, 'Android coordinates seem to have rounding issues.');
   await page.setContent(`
     <body style="margin: 0; padding: 0;">
@@ -1216,10 +1269,143 @@ it('should set PointerEvent.pressure on pointermove', async ({ page, isLinux, he
   await page.mouse.move(250, 250);
   await page.mouse.up();
   await page.mouse.move(50, 50);
-  expect(await page.evaluate(() => window['pressures'])).toEqual([
+  expect(await page.evaluate(() => window['pressures'])).toEqual(expect.arrayContaining([
     [0, 250, 250],
     [0, 10, 10],
     [0.5, 250, 250],
     [0, 50, 50],
+  ]));
+});
+
+it('should click into shadow root with slotted div', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/37768' } }, async ({ page }) => {
+  await page.setContent(`
+    <my-button>
+      <template shadowrootmode="open">
+        <button><slot></slot></button>
+      </template>
+      <div>Foo</div>
+    </my-button>
+  `);
+
+  await page.getByRole('button', { name: 'Foo' }).click();
+});
+
+it('should click shadow root button', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/37768' } }, async ({ page }) => {
+  await page.setContent(`
+    <my-button>
+      <template shadowrootmode="open">
+        <button><slot></slot></button>
+      </template>
+      <div>Foo</div>
+    </my-button>
+  `);
+
+  await page.locator('my-button').click();
+});
+
+it('should click with tweened mouse movement', async ({ page, browserName, isAndroid, headless }) => {
+  it.skip(isAndroid, 'Bad rounding');
+  it.skip(!headless, 'System cursor tends to interfere with this test');
+
+  await page.setContent(`
+    <body style="margin: 0; padding: 0; height: 500px; width: 500px;">
+      <div style="position: relative; top: 280px; left: 150px; width: 100px; height: 40px">Click me</div>
+    </body>
+  `);
+
+  // The test becomes flaky on WebKit without next line.
+  if (browserName === 'webkit')
+    await page.evaluate(() => new Promise(requestAnimationFrame));
+  await page.mouse.move(100, 100);
+  await page.evaluate(() => {
+    window['result'] = [];
+    document.addEventListener('mousemove', event => {
+      window['result'].push([event.clientX, event.clientY]);
+    });
+  });
+  // Centerpoint at 150 + 100/2, 280 + 40/2 = 200, 300
+  await page.locator('div').click({ steps: 5 });
+  expect(await page.evaluate('result')).toEqual([
+    [120, 140],
+    [140, 180],
+    [160, 220],
+    [180, 260],
+    [200, 300]
   ]);
+});
+
+it('should not wait with noAutoWaiting', async ({ page }) => {
+  await page.setContent(`<button>click me</button>`);
+  const error = await page.locator('#target').click({ __testHookNoAutoWaiting: true } as any).catch(e => e);
+  expect(error.message).toContain('locator.click: Element(s) not found');
+});
+
+it('should not wait with noAutoWaiting 2', async ({ page }) => {
+  await page.setContent(`
+    <style>
+      div:hover button {
+        margin-left: 200px;
+      }
+    </style>
+    <div>
+      <button>click me</button>
+    </div>
+  `);
+  const error = await page.locator('button').click({ __testHookNoAutoWaiting: true } as any).catch(e => e);
+  expect(error.message).toContain('locator.click: <div>…</div> intercepts pointer events');
+});
+
+it('should not wait with noAutoWaiting 3', async ({ page }) => {
+  await page.setContent(`<button disabled>click me</button>`);
+  const error = await page.locator('button').click({ __testHookNoAutoWaiting: true } as any).catch(e => e);
+  expect(error.message).toContain('locator.click: Element is not enabled');
+});
+
+it('should abort via signal', async ({ page }) => {
+  await page.setContent(`<button style="display:none">click me</button>`);
+  const controller = new AbortController();
+  const promise = page.locator('button').click({ signal: controller.signal, timeout: 0 }).catch(e => e);
+  // Give the action time to start and emit call log entries before aborting.
+  await page.waitForTimeout(500);
+
+  const reason = new Error('foo bar');
+  controller.abort(reason);
+  const error = await promise;
+  expect(error.message).toContain('locator.click: foo bar');
+  expect(error.message).toMatch(/Call log:[\s\S]*operation was aborted: foo bar/);
+  expect(error.name).toBe('AbortError');
+  expect(error.cause).toBe(reason);
+});
+
+it('should throw an Error when aborted in-flight with a string reason', async ({ page }) => {
+  await page.setContent(`<button style="display:none">click me</button>`);
+  const controller = new AbortController();
+  const promise = page.locator('button').click({ signal: controller.signal, timeout: 0 });
+  controller.abort('aborted by user');
+  const error = await promise.catch(e => e);
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message).toContain('locator.click: aborted by user');
+  expect(error.name).toBe('AbortError');
+  expect(error.cause).toBe('aborted by user');
+});
+
+it('should abort via already-aborted signal', async ({ page }) => {
+  await page.setContent(`<button>click me</button>`);
+  const controller = new AbortController();
+  const reason = new Error('Already aborted');
+  controller.abort(reason);
+  const error = await page.locator('button').click({ signal: controller.signal }).catch(e => e);
+  expect(error.message).toContain('The operation was aborted');
+  expect(error.name).toBe('AbortError');
+  expect(error.cause).toBe(reason);
+});
+
+it('should throw an Error when aborted via an already-aborted signal with a string reason', async ({ page }) => {
+  await page.setContent(`<button>click me</button>`);
+  const controller = new AbortController();
+  controller.abort('already aborted');
+  const error = await page.locator('button').click({ signal: controller.signal }).catch(e => e);
+  expect(error).toBeInstanceOf(Error);
+  expect(error.name).toBe('AbortError');
+  expect(error.cause).toBe('already aborted');
 });

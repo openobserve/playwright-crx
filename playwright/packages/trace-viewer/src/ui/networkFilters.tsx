@@ -16,15 +16,15 @@
 
 import './networkFilters.css';
 
-const resourceTypes = ['All', 'Fetch', 'HTML', 'JS', 'CSS', 'Font', 'Image'] as const;
+const resourceTypes = ['Fetch', 'HTML', 'JS', 'CSS', 'Font', 'Image', 'WS'] as const;
 export type ResourceType = typeof resourceTypes[number];
 
 export type FilterState = {
   searchValue: string;
-  resourceType: ResourceType;
+  resourceTypes: Set<ResourceType>;
 };
 
-export const defaultFilterState: FilterState = { searchValue: '', resourceType: 'All' };
+export const defaultFilterState: FilterState = { searchValue: '', resourceTypes: new Set() };
 
 export const NetworkFilters = ({ filterState, onFilterStateChange }: {
   filterState: FilterState,
@@ -40,16 +40,36 @@ export const NetworkFilters = ({ filterState, onFilterStateChange }: {
         onChange={e => onFilterStateChange({ ...filterState, searchValue: e.target.value })}
       />
 
-      <div className='network-filters-resource-types'>
+      <div className='network-filters-resource-types' role='tablist' aria-multiselectable='true'>
+        <button
+          title='All'
+          onClick={() => onFilterStateChange({ ...filterState, resourceTypes: new Set() })}
+          className={`network-filters-resource-type ${filterState.resourceTypes.size === 0 ? 'selected' : ''}`}
+          role='tab'
+          aria-selected={filterState.resourceTypes.size === 0}
+        >
+          All
+        </button>
+
         {resourceTypes.map(resourceType => (
-          <div
+          <button
             key={resourceType}
             title={resourceType}
-            onClick={() => onFilterStateChange({ ...filterState, resourceType })}
-            className={`network-filters-resource-type ${filterState.resourceType === resourceType ? 'selected' : ''}`}
+            onClick={event => {
+              let newType;
+              if (event.ctrlKey || event.metaKey)
+                newType = filterState.resourceTypes.symmetricDifference(new Set([resourceType]));
+              else
+                newType = new Set([resourceType]);
+
+              onFilterStateChange({ ...filterState, resourceTypes: newType });
+            }}
+            className={`network-filters-resource-type ${filterState.resourceTypes.has(resourceType) ? 'selected' : ''}`}
+            role='tab'
+            aria-selected={filterState.resourceTypes.has(resourceType)}
           >
             {resourceType}
-          </div>
+          </button>
         ))}
       </div>
     </div>

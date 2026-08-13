@@ -16,11 +16,11 @@
 
 import { EventEmitter } from 'events';
 
-import { debugLogger } from '../utils/debugLogger';
+import { debugLogger } from '@utils/debugLogger';
 import { helper } from '../helper';
 import { ProtocolError } from '../protocolError';
 
-import type { RecentLogsCollector } from '../utils/debugLogger';
+import type { RecentLogsCollector } from '@utils/debugLogger';
 import type { ConnectionTransport, ProtocolRequest, ProtocolResponse } from '../transport';
 import type { ProtocolLogger } from '../types';
 import type * as bidiCommands from './third_party/bidiCommands';
@@ -28,7 +28,8 @@ import type * as bidi from './third_party/bidiProtocol';
 
 // BidiPlaywright uses this special id to issue Browser.close command which we
 // should ignore.
-export const kBrowserCloseMessageId = 0;
+export const kBrowserCloseMessageId = Number.MAX_SAFE_INTEGER - 1;
+export const kShutdownSessionNewMessageId = kBrowserCloseMessageId - 1;
 
 export class BidiConnection {
   private readonly _transport: ConnectionTransport;
@@ -40,6 +41,9 @@ export class BidiConnection {
   private _closed = false;
   readonly browserSession: BidiSession;
   readonly _browsingContextToSession = new Map<string, BidiSession>();
+  readonly _realmToBrowsingContext = new Map<string, string>();
+  // TODO: shared/service workers might have multiple owner realms.
+  readonly _realmToOwnerRealm = new Map<string, string>();
 
   constructor(transport: ConnectionTransport, onDisconnect: () => void, protocolLogger: ProtocolLogger, browserLogsCollector: RecentLogsCollector) {
     this._transport = transport;
@@ -69,12 +73,35 @@ export class BidiConnection {
     // Bidi messages do not have a common session identifier, so we
     // route them based on BrowsingContext.
     if (object.type === 'event') {
+      // Track realms to context as well as realm ownership to later resolve
+      // non-window realms to a browsing context.
+      if (object.method === 'script.realmCreated') {
+        if ('context' in object.params)
+          this._realmToBrowsingContext.set(object.params.realm, object.params.context);
+        if (object.params.type === 'dedicated-worker')
+          this._realmToOwnerRealm.set(object.params.realm, object.params.owners[0]);
+      } else if (object.method === 'script.realmDestroyed') {
+        this._realmToBrowsingContext.delete(object.params.realm);
+        this._realmToOwnerRealm.delete(object.params.realm);
+      }
       // Route page events to the right session.
       let context;
-      if ('context' in object.params)
+      let realm;
+      if ('context' in object.params) {
         context = object.params.context;
-      else if (object.method === 'log.entryAdded' || object.method === 'script.message')
+      } else if (object.method === 'log.entryAdded' || object.method === 'script.message') {
         context = object.params.source?.context;
+        realm = object.params.source?.realm;
+      } else if (object.method === 'script.realmCreated' && object.params.type === 'dedicated-worker') {
+        realm = object.params.owners[0];
+      }
+      if (!context && realm) {
+        // Find parent realm and its browing context if it is a window realm.
+        while (this._realmToOwnerRealm.get(realm))
+          realm = this._realmToOwnerRealm.get(realm)!;
+        context = this._realmToBrowsingContext.get(realm);
+      }
+
       if (context) {
         const session = this._browsingContextToSession.get(context);
         if (session) {
@@ -112,9 +139,10 @@ export class BidiConnection {
       this._transport.close();
   }
 
-  createMainFrameBrowsingContextSession(bowsingContextId: bidi.BrowsingContext.BrowsingContext): BidiSession {
-    const result = new BidiSession(this, bowsingContextId, message => this.rawSend(message));
-    this._browsingContextToSession.set(bowsingContextId, result);
+  createMainFrameBrowsingContextSession(browsingContextId: bidi.BrowsingContext.BrowsingContext): BidiSession {
+    const result = new BidiSession(this, browsingContextId, message => this.rawSend(message));
+    this.browserSession._browsingContexts.add(browsingContextId);
+    this._browsingContextToSession.set(browsingContextId, result);
     return result;
   }
 }
@@ -131,7 +159,7 @@ export class BidiSession extends EventEmitter {
   private readonly _rawSend: (message: any) => void;
   private readonly _callbacks = new Map<number, { resolve: (o: any) => void, reject: (e: ProtocolError) => void, error: ProtocolError }>();
   private _crashed: boolean = false;
-  private readonly _browsingContexts = new Set<string>();
+  readonly _browsingContexts = new Set<string>();
 
   override on: <T extends keyof BidiEvents | symbol>(event: T, listener: (payload: T extends symbol ? any : BidiEvents[T extends keyof BidiEvents ? T : never]['params']) => void) => this;
   override addListener: <T extends keyof BidiEvents | symbol>(event: T, listener: (payload: T extends symbol ? any : BidiEvents[T extends keyof BidiEvents ? T : never]['params']) => void) => this;
@@ -190,13 +218,18 @@ export class BidiSession extends EventEmitter {
   }
 
   dispose() {
+    if (this._disposed)
+      return;
     this._disposed = true;
     this.connection._browsingContextToSession.delete(this.sessionId);
-    for (const context of this._browsingContexts)
+    for (const context of this._browsingContexts) {
+      this.connection._browsingContextToSession.get(context)?.dispose();
       this.connection._browsingContextToSession.delete(context);
+    }
     this._browsingContexts.clear();
     for (const callback of this._callbacks.values()) {
       callback.error.type = this._crashed ? 'crashed' : 'closed';
+      callback.error.setMessage(`Internal server error, session ${callback.error.type}.`);
       callback.error.logs = this.connection._browserDisconnectedLogs;
       callback.reject(callback.error);
     }
@@ -209,7 +242,7 @@ export class BidiSession extends EventEmitter {
 
   dispatchMessage(message: any) {
     const object = message as bidi.Message;
-    if (object.id === kBrowserCloseMessageId)
+    if (object.id === kBrowserCloseMessageId || object.id === kShutdownSessionNewMessageId)
       return;
     if (object.id && this._callbacks.has(object.id)) {
       const callback = this._callbacks.get(object.id)!;

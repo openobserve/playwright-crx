@@ -69,6 +69,40 @@ it('should be able to click across browser contexts', async function({ browser }
   await page2.close();
 });
 
+it('should be able to hover across browser contexts in parallel', async function({ browser, browserName, headless }) {
+  it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/40562' });
+  it.fixme(browserName === 'firefox' && !headless, 'Hover is flaky in headed Firefox');
+
+  const html = `
+    <style>
+      [role="tooltip"] { display: none; }
+      [role="tooltip"].visible { display: block; }
+    </style>
+    <button>Hover me</button>
+    <div role="tooltip">Tooltip content</div>
+    <script>
+      const button = document.querySelector('button');
+      const tooltip = document.querySelector('[role="tooltip"]');
+      button.addEventListener('pointerenter', () => tooltip.classList.add('visible'));
+      button.addEventListener('pointerleave', () => tooltip.classList.remove('visible'));
+    </script>
+  `;
+
+  const pages: Page[] = await Promise.all([1, 2, 3, 4, 5].map(async () => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(html);
+    return page;
+  }));
+
+  await Promise.all(pages.map(async (page, index) => {
+    await page.getByRole('button', { name: 'Hover me' }).hover();
+    await expect.soft(page.getByRole('tooltip'), `Tooltip for page ${index + 1} should be visible`).toBeVisible();
+  }));
+
+  await Promise.all(pages.map(page => page.context().close()));
+});
+
 it('window.open should use parent tab context', async function({ browser, server }) {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -255,8 +289,8 @@ it('should be able to navigate after disabling javascript', async ({ browser, se
   await context.close();
 });
 
-it('should not hang on promises after disabling javascript', async ({ browserName, contextFactory }) => {
-  it.fixme(browserName === 'firefox');
+it('should not hang on promises after disabling javascript', async ({ browserName, contextFactory, isBidi }) => {
+  it.fixme(browserName === 'firefox' && !isBidi);
   const context = await contextFactory({ javaScriptEnabled: false });
   const page = await context.newPage();
   expect(await page.evaluate(() => 1)).toBe(1);
@@ -329,6 +363,22 @@ it('should emulate navigator.onLine', async ({ browser, server }) => {
   expect(await page.evaluate(() => window.navigator.onLine)).toBe(false);
   await context.setOffline(false);
   expect(await page.evaluate(() => window.navigator.onLine)).toBe(true);
+  await context.close();
+});
+
+it('should emulate offline event', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/37295' } }, async ({ browser }) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const events = await page.evaluateHandle(() => {
+    const events = [];
+    window.addEventListener('offline', () => events.push('offline'));
+    window.addEventListener('online', () => events.push('online'));
+    return events;
+  });
+  await context.setOffline(true);
+  await expect.poll(() => events.jsonValue()).toEqual(['offline']);
+  await context.setOffline(false);
+  await expect.poll(() => events.jsonValue()).toEqual(['offline', 'online']);
   await context.close();
 });
 

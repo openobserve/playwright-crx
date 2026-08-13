@@ -322,3 +322,32 @@ test('render text attachment with multiple lines', async ({ runInlineTest }) => 
   expect(text).toContain('    ────────────────────────────────────────────────────────────────────────────────────────────────');
   expect(result.exitCode).toBe(1);
 });
+
+test('attaching inside boxed fixture should not log error', { annotation: [{ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/37147' }, { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/37747' }] }, async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.test.ts': `
+      import { test as base } from '@playwright/test';
+
+      const test = base.extend<{ myFixture: void }>({
+        myFixture: [async ({}, use, testInfo) => {
+          await testInfo.attach('my attachment', {
+            body: 'foo',
+            contentType: 'text/plain',
+          });
+          testInfo.attachments.push({
+            name: 'my attachment 2',
+            body: Buffer.from('bar'),
+            contentType: 'text/plain',
+          });
+          await use();
+        }, { box: true }],
+      });
+
+      test('my test', ({ myFixture }) => {
+        expect(1).toBe(0);
+      });
+    `,
+  }, { reporter: 'line' }, {});
+  expect(result.output).not.toContain('step id not found');
+  expect(result.exitCode).toBe(1);
+});

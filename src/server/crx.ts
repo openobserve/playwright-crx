@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-import type * as channels from '@protocol/channels';
-import { RecentLogsCollector } from 'playwright-core/lib/server/utils/debugLogger';
+import type { EventEmitter } from 'events';
+import type * as channels from 'playwright-core/lib/server/channels';
+import { RecentLogsCollector } from '@utils/debugLogger';
 import type { BrowserOptions, BrowserProcess } from 'playwright-core/lib/server/browser';
 import { CRBrowser, CRBrowserContext } from 'playwright-core/lib/server/chromium/crBrowser';
 import type { CRPage } from 'playwright-core/lib/server/chromium/crPage';
@@ -25,28 +26,34 @@ import type { InstrumentationListener } from 'playwright-core/lib/server/instrum
 import { Page } from 'playwright-core/lib/server/page';
 import type { Playwright } from 'playwright-core/lib/server/playwright';
 import { Recorder } from 'playwright-core/lib/server/recorder';
-import { assert } from 'playwright-core/lib/utils';
+import { assert } from '@isomorphic/assert';
+import { nullProgress } from 'playwright-core/lib/server/progress';
 import type * as crxchannels from '../protocol/channels';
 import { CrxRecorderApp } from './recorder/crxRecorderApp';
 import { CrxTransport } from './transport/crxTransport';
 import { BrowserContext } from 'playwright-core/lib/server/browserContext';
-import type { IRecorder, IRecorderApp, IRecorderAppFactory } from 'playwright-core/lib/server/recorder/recorderFrontend';
 import type { Mode } from '@recorder/recorderTypes';
 import CrxPlayer from './recorder/crxPlayer';
 import { createTab } from './utils';
 import { parse } from './recorder/parser';
-import { generateCode } from 'playwright-core/lib/server/codegen/language';
-import { languageSet } from 'playwright-core/lib/server/codegen/languages';
-import { deviceDescriptors } from 'playwright-core/lib/server/deviceDescriptors';
+import { generateCode } from '@isomorphic/codegen/language';
+import { languageSet } from '@isomorphic/codegen/languages';
+import { deviceDescriptors } from '@isomorphic/deviceDescriptors';
 import type { DeviceDescriptor } from 'playwright-core/lib/server/types';
-import { EmptyRecorderApp, RecorderApp } from 'playwright-core/lib/server/recorder/recorderApp';
-import type { LanguageGeneratorOptions } from 'playwright-core/lib/server/codegen/types';
+import type { LanguageGeneratorOptions } from '@isomorphic/codegen/types';
 
-// The recorder app used by CrxApplication. Extends Playwright's IRecorderApp with
-// the crx-specific surface that CrxApplication drives directly (open/_recorder/load).
-export interface ICrxRecorderApp extends IRecorderApp {
+// The recorder app used by CrxApplication.
+//
+// Playwright 1.54 deleted `IRecorderApp`/`recorderFrontend` and reversed the
+// Recorder <-> RecorderApp dependency (microsoft/playwright#36544): the app now
+// subscribes to `RecorderEvent`s rather than implementing an interface the
+// recorder calls into. So this is a plain crx-owned contract — exactly the
+// surface CrxApplication drives — instead of an extension of an upstream type.
+export interface ICrxRecorderApp extends EventEmitter {
   readonly _recorder: Recorder;
   open(options?: crxchannels.CrxApplicationShowRecorderParams): Promise<void>;
+  close(): Promise<void>;
+  uninstall(page: Page): Promise<void>;
   load?(code: string): void;
 }
 
@@ -95,7 +102,8 @@ export class Crx extends SdkObject {
       };
       const browserOptions: BrowserOptions = {
         name: 'chromium',
-        isChromium: true,
+        // 1.59 replaced the isChromium boolean with a browserType discriminant.
+        browserType: 'chromium',
         headful: true,
         persistent: newContextOptions,
         browserProcess,
@@ -136,16 +144,9 @@ export class Crx extends SdkObject {
       this._browserPromise = undefined;
       this._transport = undefined;
     });
-    // override factory otherwise it will fail because the default factory tries to launch a new playwright app
-    // _createRecorderApp honors Crx.recorderAppFactoryOverride, so both entry points stay consistent.
-    RecorderApp.factory = (): IRecorderAppFactory => {
-      return async recorder => {
-        if (recorder instanceof Recorder && recorder._context === context)
-          return await crxApp._createRecorderApp(recorder);
-        else
-          return new EmptyRecorderApp();
-      };
-    };
+    // Playwright 1.54 removed `RecorderApp.factory`; the recorder no longer
+    // constructs its own app, so there is nothing to override here. The crx app is
+    // created explicitly in `showRecorder()` after `Recorder.forContext()`.
     return crxApp;
   }
 
@@ -173,7 +174,8 @@ export class Crx extends SdkObject {
       // ensure we create and initialize the new context before the Target.attachedToTarget event is emitted
       assert(browserContextId);
       context = new CRBrowserContext(browser, browserContextId, options ?? {});
-      await context._initialize();
+      // 1.60 made BrowserContext._initialize public as initialize().
+      await context.initialize();
       browser._contexts.set(browserContextId, context);
     });
     context.on(BrowserContext.Events.Close, () => {
@@ -279,16 +281,23 @@ export class CrxApplication extends SdkObject {
 
   async showRecorder(options?: crxchannels.CrxApplicationShowRecorderParams) {
     if (!this._recorderApp) {
-      const { mode, ...otherOptions } = options ?? {};
       const recorderParams = {
+        ...options,
         language: options?.language ?? 'playwright-test',
-        mode: mode === 'none' ? undefined : mode,
-        ...otherOptions
+        // Deliberately left undefined. In 1.54 the Recorder takes its initial mode
+        // straight from these params, but the `_enabled` flag that gates
+        // RecorderEvent.ActionAdded is only ever set inside setMode() — which
+        // early-returns when the mode already matches. Seeding 'recording' here
+        // produced a recorder that believed it was recording while emitting nothing.
+        // Starting at 'none' makes the recorder app's own setMode() a real transition.
+        mode: undefined,
       };
-      // Must await: the recorder-app factory (_createRecorderApp) may be async — e.g. when
-      // Crx.recorderAppFactoryOverride returns a promise — so this._recorderApp is only set once
-      // Recorder.show resolves. Without the await, this._recorderApp is still undefined below.
-      await Recorder.show(this._context, recorder => this._createRecorderApp(recorder), recorderParams);
+      // 1.54: `Recorder.show(context, factory, params)` became `Recorder.forContext(context, params)`,
+      // and the app is attached by the caller instead of being built by a factory the recorder invokes.
+      // Both awaits matter: `_createRecorderApp` may be async (Crx.recorderAppFactoryOverride can
+      // return a promise), so `this._recorderApp` is only set once it resolves.
+      const recorder = await Recorder.forContext(this._context, recorderParams);
+      await this._createRecorderApp(recorder);
     }
 
     await this._recorderApp!.open(options);
@@ -370,7 +379,8 @@ export class CrxApplication extends SdkObject {
       await Promise.all(this._crPages().map(crPage => options?.closePages ? crPage.closePage(false) : this._doDetach(crPage._targetId)));
     }
 
-    await this._context.close({});
+    // 1.60 made BrowserContext.close take a Progress.
+    await this._context.close(nullProgress, {});
   }
 
   list(code: string) {
@@ -405,11 +415,11 @@ export class CrxApplication extends SdkObject {
     return { actions, options, code };
   }
 
-  async _createRecorderApp(recorder: IRecorder) {
+  async _createRecorderApp(recorder: Recorder) {
     if (!this._recorderApp) {
       this._recorderApp = Crx.recorderAppFactoryOverride
-        ? await Crx.recorderAppFactoryOverride(this._crx, recorder as Recorder, this._context)
-        : new CrxRecorderApp(this._crx, recorder as Recorder);
+        ? await Crx.recorderAppFactoryOverride(this._crx, recorder, this._context)
+        : new CrxRecorderApp(this._crx, recorder);
       this._recorderApp.on('show', () => this.emit(CrxApplication.Events.RecorderShow));
       this._recorderApp.on('hide', () => this.emit(CrxApplication.Events.RecorderHide));
       this._recorderApp.on('modeChanged', event => {
@@ -449,7 +459,9 @@ export class CrxApplication extends SdkObject {
       this._recorderApp?.uninstall(pageOrError),
       pageOrError.hideHighlight(),
     ]);
-    const closed = new Promise(x => pageOrError.once(Page.Events.Close, x));
+    // 1.58 typed the event listeners, so the resolve function can no longer be passed
+    // straight through — it takes an argument the listener signature does not offer.
+    const closed = new Promise<void>(resolve => pageOrError.once(Page.Events.Close, () => resolve()));
     await this._transport.detach(targetId);
     await closed;
   }

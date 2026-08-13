@@ -18,28 +18,22 @@ import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
 
-import { removeFolders, sanitizeForFilePath } from 'playwright-core/lib/utils';
-import { ManualPromise, calculateSha1, createGuid, getUserAgent } from 'playwright-core/lib/utils';
-import { mime } from 'playwright-core/lib/utilsBundle';
-import { yazl } from 'playwright-core/lib/zipBundle';
+import mime from 'mime';
+import * as yazl from 'yazl';
+import { ManualPromise } from '@isomorphic/manualPromise';
+import { calculateSha1, createGuid } from '@utils/crypto';
+import { removeFolders, sanitizeForFilePath } from '@utils/fileUtils';
+import { getUserAgent } from 'playwright-core/lib/coreBundle';
 
 import { resolveOutputFile, CommonReporterOptions } from './base';
 import { TeleReporterEmitter } from './teleEmitter';
 
 import type { BlobReporterOptions } from '../../types/test';
-import type { FullConfig, FullResult, TestResult } from '../../types/testReporter';
-import type { JsonAttachment, JsonEvent } from '../isomorphic/teleReceiver';
+import type { FullConfig, FullResult, TestCase, TestResult } from '../../types/testReporter';
+import type { BlobReportMetadata, JsonAttachment, JsonEvent } from '../isomorphic/teleReceiver';
 import type { EventEmitter } from 'events';
 
 export const currentBlobReportVersion = 2;
-
-export type BlobReportMetadata = {
-  version: number;
-  userAgent: string;
-  name?: string;
-  shard?: { total: number, current: number };
-  pathSeparator?: string;
-};
 
 export class BlobReporter extends TeleReporterEmitter {
   private readonly _messages: JsonEvent[] = [];
@@ -60,6 +54,7 @@ export class BlobReporter extends TeleReporterEmitter {
     const metadata: BlobReportMetadata = {
       version: currentBlobReportVersion,
       userAgent: getUserAgent(),
+      // TODO: remove after some time, recommend config.tag instead.
       name: process.env.PWTEST_BOT_NAME,
       shard: config.shard ?? undefined,
       pathSeparator: path.sep,
@@ -71,6 +66,11 @@ export class BlobReporter extends TeleReporterEmitter {
 
     this._config = config;
     super.onConfigure(config);
+  }
+
+  override async onTestPaused(test: TestCase, result: TestResult) {
+    // onTestPaused is only relevant for interactive use, not for blob replays.
+    // merge-reports still gets onStepBegin/onStepEnd for pausing, but not the interactive part, so this is a no-op.
   }
 
   override async onEnd(result: FullResult): Promise<void> {

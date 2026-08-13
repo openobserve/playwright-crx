@@ -16,22 +16,26 @@
 
 import path from 'path';
 import readline from 'readline';
-import { EventEmitter } from 'stream';
+import { EventEmitter } from 'events';
 
-import { PlaywrightServer } from 'playwright-core/lib/remote/playwrightServer';
-import { ManualPromise, createGuid, eventsHelper, getPackageManagerExecCommand } from 'playwright-core/lib/utils';
-import { colors } from 'playwright-core/lib/utils';
+import { remote } from 'playwright-core/lib/coreBundle';
+import colors from 'colors/safe';
+import enquirer from 'enquirer';
+import { ManualPromise } from '@isomorphic/manualPromise';
+import { createGuid } from '@utils/crypto';
+import { getPackageManagerExecCommand } from '@utils/env';
+import { eventsHelper } from '@utils/eventsHelper';
 
 import { separator, terminalScreen } from '../reporters/base';
-import { enquirer } from '../utilsBundle';
 import { TestServerDispatcher } from './testServer';
 import { TeleSuiteUpdater } from '../isomorphic/teleSuiteUpdater';
 import { TestServerConnection  } from '../isomorphic/testServerConnection';
 
-import type { FullResult } from '../../types/testReporter';
-import type { ConfigLocation } from '../common/config';
+import type * as reporterTypes from '../../types/testReporter';
+import type { ConfigLocation } from '../common';
 import type { TestServerTransport } from '../isomorphic/testServerConnection';
 
+/* eslint-disable no-restricted-properties */
 
 class InMemoryTransport extends EventEmitter implements TestServerTransport {
   public readonly _send: (data: string) => void;
@@ -72,7 +76,7 @@ interface WatchModeOptions {
   grep?: string;
 }
 
-export async function runWatchModeLoop(configLocation: ConfigLocation, initialOptions: WatchModeOptions): Promise<FullResult['status']> {
+export async function runWatchModeLoop(configLocation: ConfigLocation, initialOptions: WatchModeOptions): Promise<reporterTypes.FullResult['status']> {
   const options: WatchModeOptions = { ...initialOptions };
   let bufferMode = false;
 
@@ -128,7 +132,11 @@ export async function runWatchModeLoop(configLocation: ConfigLocation, initialOp
   });
   testServerConnection.onReport(report => teleSuiteUpdater.processTestReportEvent(report));
 
-  await testServerConnection.initialize({ interceptStdio: false, watchTestDirs: true, populateDependenciesOnList: true });
+  await testServerConnection.initialize({
+    interceptStdio: false,
+    watchTestDirs: true,
+    populateDependenciesOnList: true,
+  });
   await testServerConnection.runGlobalSetup({});
 
   const { report } = await testServerConnection.listTests({});
@@ -137,7 +145,7 @@ export async function runWatchModeLoop(configLocation: ConfigLocation, initialOp
   const projectNames = teleSuiteUpdater.rootSuite!.suites.map(s => s.title);
 
   let lastRun: { type: 'changed' | 'regular' | 'failed', failedTestIds?: string[], dirtyTestIds?: string[] } = { type: 'regular' };
-  let result: FullResult['status'] = 'passed';
+  let result: reporterTypes.FullResult['status'] = 'passed';
 
   while (true) {
     if (bufferMode)
@@ -296,9 +304,9 @@ function readKeyPress<T extends string>(handler: (text: string, key: any) => T |
 const isInterrupt = (text: string, key: any) => text === '\x03' || text === '\x1B' || (key && key.name === 'escape') || (key && key.ctrl && key.name === 'c');
 
 async function runTests(watchOptions: WatchModeOptions, testServerConnection: TestServerConnection, options?: {
-    title?: string,
-    testIds?: string[],
-  }) {
+  title?: string,
+  testIds?: string[],
+}) {
   printConfiguration(watchOptions, options?.title);
 
   const waitForDone = readKeyPress((text: string, key: any) => {
@@ -311,7 +319,7 @@ async function runTests(watchOptions: WatchModeOptions, testServerConnection: Te
   await testServerConnection.runTests({
     grep: watchOptions.grep,
     testIds: options?.testIds,
-    locations: watchOptions?.files,
+    locations: watchOptions?.files ?? [], // TODO: always collect locations based on knowledge about tree, so that we don't have to load all tests
     projects: watchOptions.projects,
     connectWsEndpoint,
     reuseContext: connectWsEndpoint ? true : undefined,
@@ -363,7 +371,7 @@ Change settings
   });
 }
 
-let showBrowserServer: PlaywrightServer | undefined;
+let showBrowserServer: remote.PlaywrightServer | undefined;
 let connectWsEndpoint: string | undefined = undefined;
 let seq = 1;
 
@@ -414,7 +422,7 @@ ${colors.dim('Waiting for file changes. Press')} ${colors.bold('enter')} ${color
 
 async function toggleShowBrowser() {
   if (!showBrowserServer) {
-    showBrowserServer = new PlaywrightServer({ mode: 'extension', path: '/' + createGuid(), maxConnections: 1 });
+    showBrowserServer = new remote.PlaywrightServer({ mode: 'extension', path: '/' + createGuid(), maxConnections: 1 });
     connectWsEndpoint = await showBrowserServer.listen();
     process.stdout.write(`${colors.dim('Show & reuse browser:')} ${colors.bold('on')}\n`);
   } else {

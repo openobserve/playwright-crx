@@ -171,6 +171,32 @@ it('should report correct buttons property', async ({ page }) => {
   ]);
 });
 
+it('should report correct pointerType property', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/38376' },
+}, async ({ page }) => {
+  await page.mouse.move(50, 60);
+  await page.evaluate(() => {
+    (window as any).__EVENTS = [];
+    const handler = event => {
+      (window as any).__EVENTS.push({
+        type: event.type,
+        pointerType: event.pointerType,
+      });
+    };
+    window.addEventListener('pointerdown', handler, false);
+    window.addEventListener('pointermove', handler, false);
+    window.addEventListener('pointerup', handler, false);
+  });
+  await page.mouse.move(60, 50);
+  await page.mouse.down();
+  await page.mouse.up();
+  expect(await page.evaluate(() => (window as any).__EVENTS)).toEqual([
+    { type: 'pointermove', pointerType: 'mouse' },
+    { type: 'pointerdown', pointerType: 'mouse' },
+    { type: 'pointerup', pointerType: 'mouse' },
+  ]);
+});
+
 it('should select the text with mouse', async ({ page, server }) => {
   await page.goto(server.PREFIX + '/input/textarea.html');
   await page.focus('textarea');
@@ -241,8 +267,9 @@ it('should set modifier keys on click', async ({ page, server, browserName, isMa
   }
 });
 
-it('should tween mouse movement', async ({ page, browserName, isAndroid }) => {
+it('should tween mouse movement', async ({ page, browserName, isAndroid, headless }) => {
   it.skip(isAndroid, 'Bad rounding');
+  it.skip(!headless, 'actual mouse interferes with the exact mousemove events');
 
   // The test becomes flaky on WebKit without next line.
   if (browserName === 'webkit')
@@ -295,7 +322,8 @@ it('should dispatch mouse move after context menu was opened', async ({ page, br
       window.addEventListener('contextmenu', x, false);
     });
   });
-  const CX = 100, CY = 100;
+  const CX = 100;
+  const CY = 100;
   await page.mouse.move(CX, CY);
   await page.mouse.down({ button: 'right' });
   await page.evaluate(() => window['contextMenuPromise']);
@@ -308,4 +336,50 @@ it('should dispatch mouse move after context menu was opened', async ({ page, br
       await page.mouse.move(x, y);
     }
   }
+});
+
+it('should track hover across iframe boundaries', async ({ page, headless }) => {
+  it.skip(!headless, 'headed messes up with hover');
+
+  await page.setContent(`
+    <style>
+      body, html { margin: 0; padding: 0; }
+      #parentBox { position: absolute; left: 10px; top: 10px; width: 100px; height: 100px; }
+      iframe { position: absolute; left: 200px; top: 10px; width: 200px; height: 200px; border: none; }
+    </style>
+    <div id="parentBox"></div>
+    <iframe srcdoc="
+      <style>body, html { margin: 0; padding: 0; } #childBox { width: 180px; height: 180px; }</style>
+      <div id='childBox'></div>
+      <script>
+        const box = document.querySelector('#childBox');
+        box.addEventListener('mouseenter', () => window.top.__log.push('child:enter'));
+        box.addEventListener('mouseleave', () => window.top.__log.push('child:leave'));
+      </script>
+    "></iframe>
+    <script>
+      window.__log = [];
+      const box = document.querySelector('#parentBox');
+      box.addEventListener('mouseenter', () => window.__log.push('parent:enter'));
+      box.addEventListener('mouseleave', () => window.__log.push('parent:leave'));
+    </script>
+  `);
+  await page.waitForSelector('iframe');
+  await page.frames()[1].waitForSelector('#childBox');
+  const log = () => page.evaluate(() => window['__log']);
+  const parentBox = (await page.locator('#parentBox').boundingBox())!;
+  const iframeBox = (await page.locator('iframe').boundingBox())!;
+  const parentCenter = { x: parentBox.x + parentBox.width / 2, y: parentBox.y + parentBox.height / 2 };
+  const childCenter = { x: iframeBox.x + 90, y: iframeBox.y + 90 };
+
+  await page.mouse.move(parentCenter.x, parentCenter.y);
+  await expect.poll(log).toEqual(['parent:enter']);
+
+  // Crossing into the iframe leaves the parent element and enters the child.
+  await page.mouse.move(childCenter.x, childCenter.y);
+  await expect.poll(log).toEqual(['parent:enter', 'parent:leave', 'child:enter']);
+
+  // Crossing back out leaves the child element and re-enters the parent.
+  await page.mouse.move(parentCenter.x, parentCenter.y);
+  await expect.poll(log).toEqual(['parent:enter', 'parent:leave', 'child:enter', 'child:leave', 'parent:enter']);
 });

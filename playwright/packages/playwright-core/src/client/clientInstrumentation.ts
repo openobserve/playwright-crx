@@ -15,8 +15,10 @@
  */
 
 import type { BrowserContext } from './browserContext';
-import type { APIRequestContext } from './fetch';
-import type { StackFrame } from '@protocol/channels';
+import type { APIRequestContext, NewContextOptions } from './fetch';
+import type { StackFrame } from './channels';
+import type { Page } from './page';
+import type { BrowserContextOptions } from './types';
 
 // Instrumentation can mutate the data, for example change apiName or stepId.
 export interface ApiCallData {
@@ -33,9 +35,12 @@ export interface ClientInstrumentation {
   removeListener(listener: ClientInstrumentationListener): void;
   removeAllListeners(): void;
   onApiCallBegin(apiCall: ApiCallData, channel: { type: string, method: string, params?: Record<string, any> }): void;
-  onApiCallEnd(apiCal: ApiCallData): void;
+  onApiCallEnd(apiCall: ApiCallData): void;
   onWillPause(options: { keepTestTimeout: boolean }): void;
+  onPage(page: Page): void;
 
+  runBeforeCreateBrowserContext(options: BrowserContextOptions): Promise<void>;
+  runBeforeCreateRequestContext(options: NewContextOptions): Promise<void>;
   runAfterCreateBrowserContext(context: BrowserContext): Promise<void>;
   runAfterCreateRequestContext(context: APIRequestContext): Promise<void>;
   runBeforeCloseBrowserContext(context: BrowserContext): Promise<void>;
@@ -46,7 +51,9 @@ export interface ClientInstrumentationListener {
   onApiCallBegin?(apiCall: ApiCallData, channel: { type: string, method: string, params?: Record<string, any>  }): void;
   onApiCallEnd?(apiCall: ApiCallData): void;
   onWillPause?(options: { keepTestTimeout: boolean }): void;
-
+  onPage?(page: Page): void;
+  runBeforeCreateBrowserContext?(options: BrowserContextOptions): Promise<void>;
+  runBeforeCreateRequestContext?(options: NewContextOptions): Promise<void>;
   runAfterCreateBrowserContext?(context: BrowserContext): Promise<void>;
   runAfterCreateRequestContext?(context: APIRequestContext): Promise<void>;
   runBeforeCloseBrowserContext?(context: BrowserContext): Promise<void>;

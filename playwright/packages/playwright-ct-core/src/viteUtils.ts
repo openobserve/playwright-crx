@@ -17,8 +17,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import { getUserData } from 'playwright/lib/transform/compilationCache';
-import { resolveHook } from 'playwright/lib/transform/transform';
+import { cc, transform } from 'playwright/lib/common';
 import { debug } from 'playwright-core/lib/utilsBundle';
 
 import type { ImportInfo } from './tsxTransform';
@@ -100,7 +99,7 @@ export async function createConfig(dirs: ComponentDirs, config: FullConfig, fram
   };
 
   // Vite 5 refuses to support CJS.
-  const { mergeConfig } = await import('vite');
+  const { mergeConfig, transformWithOxc } = await import('vite');
 
   // Apply user config on top of the base config. This could have changed root and build.outDir.
   const userConfig = typeof use.ctViteConfig === 'function' ? await use.ctViteConfig() : (use.ctViteConfig || {});
@@ -109,20 +108,24 @@ export async function createConfig(dirs: ComponentDirs, config: FullConfig, fram
   const frameworkOverrides: UserConfig = { plugins: [] };
 
   // React heuristic. If we see a component in a file with .js extension,
-  // consider it a potential JSX-in-JS scenario and enable JSX loader for all
-  // .js files.
+  // consider it a potential JSX-in-JS scenario and parse JSX in all .js files.
+  // Vite's default transform (oxc) infers the language from the file extension
+  // and rejects JSX in .js files, so we lower it ahead of time with an explicit
+  // `lang: 'jsx'` and the automatic runtime (no `import React` required).
+  const jsxInJsPlugins: Plugin[] = [];
   if (supportJsxInJs) {
     log('jsx-in-js detected');
-    frameworkOverrides.esbuild = {
-      loader: 'jsx',
-      include: /.*\.jsx?$/,
-      exclude: [],
-    };
-    frameworkOverrides.optimizeDeps = {
-      esbuildOptions: {
-        loader: { '.js': 'jsx' },
-      }
-    };
+    jsxInJsPlugins.push({
+      name: 'playwright:jsx-in-js',
+      enforce: 'pre',
+      async transform(code: string, id: string) {
+        const file = id.split(/[?#]/)[0];
+        if (!file.endsWith('.js') || file.includes(`${path.sep}node_modules${path.sep}`))
+          return null;
+        const result = await transformWithOxc(code, file, { lang: 'jsx', jsx: { runtime: 'automatic' } } as any);
+        return { code: result.code, map: result.map as any };
+      },
+    });
   }
 
   frameworkOverrides.build = {
@@ -139,24 +142,26 @@ export async function createConfig(dirs: ComponentDirs, config: FullConfig, fram
 
   // We assume that any non-empty plugin list includes `vite-react` or similar.
   if (frameworkPluginFactory && !baseAndUserConfig.plugins?.length)
-    frameworkOverrides.plugins = [await frameworkPluginFactory()];
+    frameworkOverrides.plugins = [...jsxInJsPlugins, await frameworkPluginFactory()];
+  else
+    frameworkOverrides.plugins = [...(frameworkOverrides.plugins || []), ...jsxInJsPlugins];
 
   return mergeConfig(baseAndUserConfig, frameworkOverrides);
 }
 
 export async function populateComponentsFromTests(componentRegistry: ComponentRegistry, componentsByImportingFile?: Map<string, string[]>) {
-  const importInfos: Map<string, ImportInfo[]> = await getUserData('playwright-ct-core');
+  const importInfos: Map<string, ImportInfo[]> = await cc.getUserData('playwright-ct-core');
   for (const [file, importList] of importInfos) {
     for (const importInfo of importList)
       componentRegistry.set(importInfo.id, importInfo);
     if (componentsByImportingFile)
-      componentsByImportingFile.set(file, importList.map(i => resolveHook(i.filename, i.importSource)).filter(Boolean) as string[]);
+      componentsByImportingFile.set(file, importList.map(i => transform.resolveHook(i.filename, i.importSource)).filter(Boolean) as string[]);
   }
 }
 
 export function hasJSComponents(components: ImportInfo[]): boolean {
   for (const component of components) {
-    const importPath = resolveHook(component.filename, component.importSource);
+    const importPath = transform.resolveHook(component.filename, component.importSource);
     const extname = importPath ? path.extname(importPath) : '';
     if (extname === '.js' || (importPath && !extname && fs.existsSync(importPath + '.js')))
       return true;
@@ -164,12 +169,15 @@ export function hasJSComponents(components: ImportInfo[]): boolean {
   return false;
 }
 
-const importReactRE = /(^|\n|;)import\s+(\*\s+as\s+)?React(,|\s+)/;
+const importReactRE = /(^|[\n;}\])])import\s+(\*\s+as\s+)?React(,|\s+)/;
 const compiledReactRE = /(const|var)\s+React\s*=/;
+const runtimeImportRequire = /import\(['"`]react['"`]\)|require\(['"`]react['"`]\)/i;
 
 export function transformIndexFile(id: string, content: string, templateDir: string, registerSource: string, importInfos: Map<string, ImportInfo>): TransformResult  | null {
   // Vite React plugin will do this for .jsx files, but not .js files.
-  if (id.endsWith('.js') && content.includes('React.createElement') && !content.match(importReactRE) && !content.match(compiledReactRE)) {
+  // `__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED` check is to avoid modifying React itself (such as react.development.js)
+  if (id.endsWith('.js') && content.includes('React.createElement') && !content.includes('__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED') && !content.match(importReactRE)
+    && !content.match(compiledReactRE) && !content.match(runtimeImportRequire)) {
     const code = `import React from 'react';\n${content}`;
     return { code, map: { mappings: '' } };
   }
@@ -186,7 +194,7 @@ export function transformIndexFile(id: string, content: string, templateDir: str
   lines.push(registerSource);
 
   for (const value of importInfos.values()) {
-    const importPath = resolveHook(value.filename, value.importSource) || value.importSource;
+    const importPath = transform.resolveHook(value.filename, value.importSource) || value.importSource;
     lines.push(`const ${value.id} = () => import('${importPath?.replaceAll(path.sep, '/')}').then((mod) => mod.${value.remoteName || 'default'});`);
   }
 

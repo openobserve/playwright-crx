@@ -28,6 +28,8 @@ const zipjs = zipImport as typeof zip;
 
 import logo from '@web/assets/playwright-logo.svg';
 import { SearchParamsProvider } from './links';
+import { applyTheme } from '@web/theme';
+
 const link = document.createElement('link');
 link.rel = 'shortcut icon';
 link.href = logo;
@@ -36,48 +38,29 @@ document.head.appendChild(link);
 const ReportLoader: React.FC = () => {
   const [report, setReport] = React.useState<LoadedReport | undefined>();
   React.useEffect(() => {
-    if (report)
-      return;
     const zipReport = new ZipReport();
-    zipReport.load().then(() => setReport(zipReport));
-  }, [report]);
+    zipReport.load().then(() => {
+      // Drop node after consumption
+      document.getElementById('playwrightReportBase64')?.remove();
+      setReport(zipReport);
+    });
+  }, []);
   return <SearchParamsProvider>
     <ReportView report={report} />
   </SearchParamsProvider>;
 };
 
 window.onload = () => {
+  applyTheme();
   ReactDOM.createRoot(document.querySelector('#root')!).render(<ReportLoader />);
 };
-
-const kPlaywrightReportStorageForHMR = 'playwrightReportStorageForHMR';
 
 class ZipReport implements LoadedReport {
   private _entries = new Map<string, zip.Entry>();
   private _json!: HTMLReport;
 
   async load() {
-    const zipURI = await new Promise<string>(resolve => {
-      if (window.playwrightReportBase64)
-        return resolve(window.playwrightReportBase64);
-      if (window.opener) {
-        const listener = (event: MessageEvent) => {
-          if (event.source === window.opener) {
-            localStorage.setItem(kPlaywrightReportStorageForHMR, event.data);
-            resolve(event.data);
-            window.removeEventListener('message', listener);
-          }
-        };
-        window.addEventListener('message', listener);
-        window.opener.postMessage('ready', '*');
-      } else {
-        const oldReport = localStorage.getItem(kPlaywrightReportStorageForHMR);
-        if (oldReport)
-          return resolve(oldReport);
-        alert('couldnt find report, something with HMR is broken');
-      }
-    });
-
+    const zipURI = (document.getElementById('playwrightReportBase64') as HTMLTemplateElement).content.textContent;
     const zipReader = new zipjs.ZipReader(new zipjs.Data64URIReader(zipURI), { useWebWorkers: false });
     for (const entry of await zipReader.getEntries())
       this._entries.set(entry.filename, entry);

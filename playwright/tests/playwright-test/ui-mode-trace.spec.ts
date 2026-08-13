@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+
 import { createImage } from './playwright-test-fixtures';
 import { test, expect, retries } from './ui-mode-fixtures';
 
@@ -39,13 +43,42 @@ test('should merge trace events', async ({ runUITest }) => {
       listItem,
       'action list'
   ).toHaveText([
-    /Before Hooks[\d.]+m?s/,
+    /Before Hooks/,
     /Set content/,
     /Expect "toBe"/,
     /Click.*getByRole/,
     /Expect "toBe"/,
-    /After Hooks[\d.]+m?s/,
+    /After Hooks/,
   ]);
+});
+
+test('should work with non-existing rootDir and testDir outside of it', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/38367' },
+}, async ({ runUITest }) => {
+  const { page } = await runUITest({
+    'playwright.config.ts': `
+      import { defineConfig } from '@playwright/test';
+      export default defineConfig({
+        testDir: './nothingness',
+        projects: [
+          { name: 'main', testDir: './tests' },
+        ],
+      });
+    `,
+    'tests/a.test.ts': `
+      import { test, expect } from '@playwright/test';
+      test('example test', async ({ page }) => {
+        await page.setContent('<button>Submit</button>');
+      });
+    `,
+  });
+
+  await page.getByText('example test').dblclick();
+  await expect(page).toMatchAriaSnapshot(`
+    - treeitem /Before Hooks/
+    - treeitem /Set content/ [selected]
+    - treeitem /After Hooks/
+  `);
 });
 
 test('should merge web assertion events', async ({  runUITest }, testInfo) => {
@@ -66,10 +99,10 @@ test('should merge web assertion events', async ({  runUITest }, testInfo) => {
       listItem,
       'action list'
   ).toHaveText([
-    /Before Hooks[\d.]+m?s/,
+    /Before Hooks/,
     /Set content/,
     /Expect "toBeVisible".*locator/,
-    /After Hooks[\d.]+m?s/,
+    /After Hooks/,
   ]);
 });
 
@@ -91,12 +124,12 @@ test('should merge screenshot assertions', async ({ runUITest }) => {
       listItem,
       'action list'
   ).toHaveText([
-    /Before Hooks[\d.]+m?s/,
+    /Before Hooks/,
     /Set content/,
-    /Expect "toHaveScreenshot"[\d.]+m?s/,
-    /After Hooks[\d.]+m?s/,
+    /Expect "toHaveScreenshot"/,
+    /After Hooks/,
     /Attach "error-context"/,
-    /Worker Cleanup[\d.]+m?s/,
+    /Worker Cleanup/,
   ]);
 });
 
@@ -111,6 +144,8 @@ test('should locate sync assertions in source', async ({ runUITest }) => {
   });
 
   await page.getByText('trace test').dblclick();
+  await expect(page.getByTestId('workbench-run-status')).toContainText('Passed');
+
   await page.getByText('Expect "toBe"').click();
 
   await expect(
@@ -138,11 +173,11 @@ test('should show snapshots for sync assertions', async ({ runUITest }) => {
       listItem,
       'action list'
   ).toHaveText([
-    /Before Hooks[\d.]+m?s/,
+    /Before Hooks/,
     /Set content/,
     /Click.*getByRole/,
     /Expect "toBe"/,
-    /After Hooks[\d.]+m?s/,
+    /After Hooks/,
   ]);
 
   await expect(
@@ -176,13 +211,13 @@ test('should show snapshots for steps', {
 
   await page.getByText('steps test').dblclick();
 
-  await expect(page.getByTestId('actions-tree')).toMatchAriaSnapshot(`
+  await expect(page).toMatchAriaSnapshot(`
     - tree:
-      - treeitem /Before Hooks \\d+[hmsp]+/
-      - treeitem /first \\d+[hmsp]+/
-      - treeitem /middle \\d+[hmsp]+/
-      - treeitem /last \\d+[hmsp]+/
-      - treeitem /After Hooks \\d+[hmsp]+/
+      - treeitem /Before Hooks/
+      - treeitem /first/
+      - treeitem /middle/
+      - treeitem /last/
+      - treeitem /After Hooks/
   `);
 
   await page.getByTestId('actions-tree').getByText('first').click();
@@ -224,6 +259,8 @@ test('should show image diff', async ({ runUITest }) => {
   });
 
   await page.getByText('vrt test').dblclick();
+  await expect(page.getByTestId('workbench-run-status')).toContainText('Failed');
+
   await page.getByText(/Attachments/).click();
   await expect(page.getByText('Diff', { exact: true })).toBeVisible();
   await expect(page.getByText('Actual', { exact: true })).toBeVisible();
@@ -274,11 +311,10 @@ test('should not fail on internal page logs', async ({ runUITest, server }) => {
       listItem,
       'action list'
   ).toHaveText([
-    /Before Hooks[\d.]+m?s/,
+    /Before Hooks/,
     /Create context/,
     /Create page/,
     /Navigate to "\/empty.html"/,
-    /Get storage state/,
     /After Hooks/,
   ]);
 });
@@ -301,7 +337,7 @@ test('should not show caught errors in the errors tab', async ({ runUITest }, te
       listItem,
       'action list'
   ).toHaveText([
-    /Before Hooks[\d.]+m?s/,
+    /Before Hooks/,
     /Set content/,
     /Expect "toBeChecked".*locator/,
     /After Hooks/,
@@ -340,6 +376,8 @@ test('should show errors with causes in the error tab', async ({ runUITest }) =>
   });
 
   await page.getByText('pass').dblclick();
+  await expect(page.getByTestId('workbench-run-status')).toContainText('Failed');
+
   await page.getByText('Errors', { exact: true }).click();
   await expect(page.locator('.tab-errors')).toContainText(`Error: wrapper-message
 [cause]: Error: outer-message
@@ -382,16 +420,29 @@ test('should show request source context id', async ({ runUITest, server }) => {
         const page2 = await context.newPage();
         await page2.goto('${server.EMPTY_PAGE}');
         await request.get('${server.EMPTY_PAGE}');
+        console.log('log from node');
+        console.error('error from node');
+        await page.evaluate(() => console.log('here from page1'));
+        await page2.evaluate(() => console.log('here from page2'));
       });
     `,
   });
 
   await page.getByText('pass').dblclick();
+  await expect(page.getByTestId('workbench-run-status')).toContainText('Passed');
+
   await page.getByText('Network', { exact: true }).click();
   await expect(page.locator('span').filter({ hasText: 'Source' })).toBeVisible();
   await expect(page.getByText('page#1')).toBeVisible();
   await expect(page.getByText('page#2')).toBeVisible();
   await expect(page.getByText('api#1')).toBeVisible();
+
+  await page.getByText('Console', { exact: true }).click();
+  const consoleLines = page.getByRole('tabpanel', { name: 'Console' }).getByRole('option');
+  await expect(consoleLines.filter({ hasText: 'log from node' }).locator('.console-source')).toHaveText('test');
+  await expect(consoleLines.filter({ hasText: 'error from node' }).locator('.console-source')).toHaveText('test');
+  await expect(consoleLines.filter({ hasText: 'here from page1' }).locator('.console-source')).toHaveText('page#1');
+  await expect(consoleLines.filter({ hasText: 'here from page2' }).locator('.console-source')).toHaveText('page#2');
 });
 
 test('should work behind reverse proxy', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/33705' } }, async ({ runUITest, proxyServer: reverseProxy }) => {
@@ -407,18 +458,18 @@ test('should work behind reverse proxy', { annotation: { type: 'issue', descript
   });
 
   const uiModeUrl = new URL(page.url());
-  reverseProxy.forwardTo(+uiModeUrl.port, { prefix: '/subdir', preserveHostname: true });
+  reverseProxy.forwardTo(+uiModeUrl.port, { removePrefix: '/subdir', preserveHostname: true });
   await page.goto(`${reverseProxy.URL}/subdir${uiModeUrl.pathname}?${uiModeUrl.searchParams}`);
 
   await page.getByText('trace test').dblclick();
 
-  await expect(page.getByTestId('actions-tree')).toMatchAriaSnapshot(`
+  await expect(page).toMatchAriaSnapshot(`
     - tree:
-      - treeitem /Before Hooks \\d+[hmsp]+/
-      - treeitem /Set content \\d+[hmsp]+/
+      - treeitem /Before Hooks/
+      - treeitem /Set content/
       - treeitem /Click.*getByRole/
       - treeitem /Expect "toBe"/
-      - treeitem /After Hooks \\d+[hmsp]+/
+      - treeitem /After Hooks/
   `);
 
   await expect(
@@ -473,11 +524,83 @@ test('should show custom fixture titles in actions tree', async ({ runUITest }) 
   await page.getByText('fixture test').dblclick();
   const listItem = page.getByTestId('actions-tree').getByRole('treeitem');
   await expect(listItem, 'action list').toHaveText([
-    /Before Hooks[\d.]+m?s/,
-    /Fixture "My Custom Fixture"[\d.]+m?s/,
-    /Fixture "fixture2"[\d.]+m?s/,
-    /After Hooks[\d.]+m?s/,
+    /Before Hooks/,
+    /Fixture "My Custom Fixture"/,
+    /Fixture "fixture2"/,
+    /After Hooks/,
   ]);
+});
+
+test('should collapse log entries to a single line', async ({ runUITest }) => {
+  const { page } = await runUITest({
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+
+      test('multiline test', async ({ page }) => {
+        await page.keyboard.type(\`line1
+line2\`);
+      });
+    `,
+  });
+
+  await page.getByText('multiline test').dblclick();
+  const listItem = page.getByTestId('actions-tree').getByRole('treeitem');
+  await expect(listItem, 'action list').toHaveText([
+    /Before Hooks/,
+    /Type "line1\\nline2"/,
+    /After Hooks/,
+  ]);
+});
+
+
+test('should hide boxed fixtures and contents, reveal upon show all actions setting', async ({ runUITest }) => {
+  const { page } = await runUITest({
+    'a.test.ts': `
+      import { test as base, expect } from '@playwright/test';
+
+      const test = base.extend({
+        fixture: [async ({ page }, use) => {
+          await page.setContent('<div>hello</div>');
+          await use();
+        }, { auto: true, boxed: true }],
+      });
+
+      test('example', async ({ page }) => {
+        await expect(page.locator('body')).toBeVisible();
+      });
+    `,
+  });
+
+  await page.getByText('example').dblclick();
+  await expect(page).toMatchAriaSnapshot(`
+    - tree:
+      - treeitem /Before Hooks/
+      - treeitem /Expect "toBeVisible"/
+      - treeitem /After Hooks/
+  `);
+
+  await page.getByRole('button', { name: 'Filter actions' }).click();
+  await page.locator('.setting').getByText('Network routes').click();
+  await page.locator('.setting').getByText('Getters').click();
+  await page.locator('.setting').getByText('Configuration').click();
+  await page.getByRole('button', { name: 'Filter actions' }).click();
+
+  await page.getByTestId('actions-tree').getByRole('treeitem', { name: 'Before Hooks' }).locator('.codicon-chevron-right').click();
+  await page.getByTestId('actions-tree').getByRole('treeitem', { name: 'Fixture "fixture"' }).locator('.codicon-chevron-right').click();
+
+  await expect(page).toMatchAriaSnapshot(`
+    - tree:
+      - treeitem /Before Hooks/:
+        - group:
+          - treeitem /Fixture "browser"/
+          - treeitem /Fixture "context"/
+          - treeitem /Fixture "page"/
+          - treeitem /Fixture "fixture"/:
+            - group:
+              - treeitem /Set content/
+      - treeitem /Expect "toBeVisible"/
+      - treeitem /After Hooks/
+  `);
 });
 
 test('attachments tab shows all but top-level .push attachments', async ({ runUITest }) => {
@@ -506,10 +629,12 @@ test('attachments tab shows all but top-level .push attachments', async ({ runUI
   });
 
   await page.getByRole('treeitem', { name: 'attachment test' }).dblclick();
+  await expect(page.getByTestId('workbench-run-status')).toContainText('Passed');
+
   const actionsTree = page.getByTestId('actions-tree');
   await actionsTree.getByRole('treeitem', { name: 'step' }).click();
   await page.keyboard.press('ArrowRight');
-  await expect(actionsTree, 'attach() and top-level attachments.push calls are shown as actions').toMatchAriaSnapshot(`
+  await expect(page, 'attach() and top-level attachments.push calls are shown as actions').toMatchAriaSnapshot(`
     - tree:
       - treeitem /step/:
         - group:
@@ -540,10 +665,12 @@ test('skipped steps should have an indicator', async ({ runUITest }) => {
   });
 
   await page.getByRole('treeitem', { name: 'test with steps' }).dblclick();
+  await expect(page.getByTestId('workbench-run-status')).toContainText('Passed');
+
   const actionsTree = page.getByTestId('actions-tree');
   await actionsTree.getByRole('treeitem', { name: 'outer' }).click();
   await page.keyboard.press('ArrowRight');
-  await expect(actionsTree).toMatchAriaSnapshot(`
+  await expect(page).toMatchAriaSnapshot(`
     - tree:
       - treeitem /outer/ [expanded]:
         - group:
@@ -567,6 +694,7 @@ test('fails', async ({ page }) => {
   });
 
   await page.getByText('fails').dblclick();
+  await expect(page.getByTestId('workbench-run-status')).toContainText('Failed');
 
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.getByText('Errors', { exact: true }).click();
@@ -584,13 +712,14 @@ test('fails', async ({ page }) => {
     `.trim());
 });
 
-test('should indicate current test status', async ({ runUITest }) => {
+test('should indicate current test status', async ({ runUITest, createLatch }) => {
+  const latch = createLatch();
   const { page } = await runUITest({
     'a.spec.ts': `
 import { test, expect } from '@playwright/test';
 test('basic pass', async ({ page }) => {
   await page.setContent('<button>Submit</button>');
-  await new Promise(resolve => setTimeout(resolve, 1000));
+  ${latch.blockingCode}
   expect(1).toBe(1);
 });
 test('basic fail', async ({ page }) => {
@@ -601,9 +730,162 @@ test('basic fail', async ({ page }) => {
   });
 
   await page.getByTestId('test-tree').getByText('basic pass').dblclick();
-  await expect(page.getByRole('tabpanel', { name: 'Actions' })).toContainText('Running');
-  await expect(page.getByRole('tabpanel', { name: 'Actions' })).toContainText('Passed');
+  await expect(page.getByTestId('workbench-run-status')).toContainText('Running');
+  latch.open();
+  await expect(page.getByTestId('workbench-run-status')).toContainText('Passed');
 
   await page.getByTestId('test-tree').getByText('basic fail').dblclick();
-  await expect(page.getByRole('tabpanel', { name: 'Actions' })).toContainText('Failed');
+  await expect(page.getByTestId('workbench-run-status')).toContainText('Failed');
+});
+
+test('should be able to create and dispose APIRequestContext inside Promise.all', async ({ runUITest }) => {
+  const { page } = await runUITest({
+    'a.test.ts': `
+      import { test, request } from '@playwright/test';
+      test('create api request contexts', async ({ }) => {
+        await Promise.all(Array.from({ length: 100 }).map(async () => {
+          let delay = Math.floor(Math.random() * 501);
+          await new Promise(res => setTimeout(res, delay));
+
+          const apiContext = await request.newContext();
+          delay = Math.floor(Math.random() * 501);
+          await new Promise(res => setTimeout(res, delay));
+          await apiContext.dispose();
+        }));
+      });
+    `,
+  });
+
+  await page.getByText('create api request contexts').dblclick();
+  await expect(page.getByTestId('workbench-run-status')).toContainText('Passed');
+
+  await expect(page.getByTestId('status-line')).toHaveText('1/1 (100%) — 1 passed');
+
+  await page.getByText('Errors', { exact: true }).click();
+  await expect(page.locator('.tab-errors')).toHaveText('No errors');
+
+  const listItem = page.getByTestId('actions-tree').getByRole('treeitem');
+  await expect(
+      listItem,
+      'action list'
+  ).toHaveText([
+    /Before Hooks/,
+    ...Array.from({ length: 100 }).map(() => /Create request context/),
+    /After Hooks/,
+  ]);
+});
+
+test('should partition action tree state by test', async ({ runUITest }) => {
+  const { page } = await runUITest({
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+      test('test1', async ({ page }) => {
+        await page.setContent('<button>Submit</button>');
+        await page.evaluate('1+1');
+      });
+      test('test2', async ({ page }) => {
+        await page.setContent('<button>Submit</button>');
+        await page.evaluate('1+1');
+      });
+    `,
+  });
+
+  await page.getByTitle('Run all').click();
+  await page.getByTestId('test-tree').getByText('test1').click();
+  await expect(page.getByTestId('workbench-run-status')).toContainText('Passed');
+
+  const actionsTree = page.getByTestId('actions-tree');
+  await actionsTree.getByRole('treeitem', { name: 'After Hooks' }).click();
+  await page.keyboard.press('ArrowRight');
+
+  await expect(page).toMatchAriaSnapshot(`
+    - treeitem /After Hooks/ [expanded] [selected]:
+      - group:
+        - treeitem /Fixture \"page\"/
+        - treeitem /Fixture \"context\"/
+  `);
+
+  await page.getByTestId('test-tree').getByText('test2').click();
+
+  await expect(page).toMatchAriaSnapshot(`
+    - treeitem /Evaluate/ [selected]
+    - treeitem /After Hooks/ [expanded=false]:
+      - /children: equal
+  `);
+
+  await page.getByTestId('test-tree').getByText('test1').click();
+
+  await expect(page).toMatchAriaSnapshot(`
+    - treeitem /Evaluate/ [selected=false]
+    - treeitem /After Hooks/ [expanded] [selected]:
+      - group:
+        - treeitem /Fixture \"page\"/
+        - treeitem /Fixture \"context\"/
+  `);
+});
+
+test('should update state on subsequent run', async ({ runUITest, writeFiles }) => {
+  const { page } = await runUITest({
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+      test('test1', async ({ page }) => {
+        await page.evaluate('1+1');
+      });
+    `,
+  });
+  await page.getByTestId('test-tree').getByText('test1').click();
+  await page.keyboard.press('Enter');
+
+  await expect(page).toMatchAriaSnapshot(`
+    - treeitem /Evaluate/ [selected]
+  `);
+
+  await writeFiles({
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+      test('test1', async ({ page }) => {
+        expect(1).toBe(2);
+        await page.evaluate('1+1');
+      });
+    `,
+  });
+
+  await page.keyboard.press('Enter');
+
+  await expect(page).toMatchAriaSnapshot(`
+    - treeitem /Expect \"toBe\"/
+  `);
+});
+
+test('should load trace when outputDir is outside cwd', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/40950' },
+}, async ({ runUITest }) => {
+  const outputDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'pw-outputdir-'));
+  try {
+    const { page } = await runUITest({
+      'playwright.config.ts': `
+        import { defineConfig } from '@playwright/test';
+        export default defineConfig({
+          outputDir: ${JSON.stringify(outputDir)},
+        });
+      `,
+      'a.test.ts': `
+        import { test, expect } from '@playwright/test';
+        test('trace test', async ({ page }) => {
+          await page.setContent('<button>Submit</button>');
+        });
+      `,
+    });
+
+    await page.getByText('trace test').dblclick();
+
+    const listItem = page.getByTestId('actions-tree').getByRole('treeitem');
+    await expect(listItem, 'action list').toHaveText([
+      /Before Hooks/,
+      /Set content/,
+      /After Hooks/,
+    ]);
+  } finally {
+    await fs.promises.rm(outputDir, { recursive: true, force: true });
+  }
 });

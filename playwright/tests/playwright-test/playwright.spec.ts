@@ -18,9 +18,9 @@ import { test, expect, parseTestRunnerOutput } from './playwright-test-fixtures'
 import fs from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
-import { registry } from '../../packages/playwright-core/lib/server';
+import { registry } from '../../packages/playwright-core/lib/coreBundle';
 
-const ffmpeg = registry.findExecutable('ffmpeg')!.executablePath();
+const ffmpeg = registry.registry.findExecutable('ffmpeg')!.executablePath();
 
 export class VideoPlayer {
   videoWidth: number;
@@ -525,6 +525,98 @@ test('should work with video: on-first-retry', async ({ runInlineTest }) => {
   }, errorPrompt]);
 });
 
+test('should work with video: on-all-retries', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'playwright.config.ts': `
+      module.exports = { use: { video: 'on-all-retries' }, retries: 2, name: 'chromium' };
+    `,
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+      test('fail', async ({ page }) => {
+        await page.setContent('<div>FAIL</div>');
+        await page.waitForTimeout(1000);
+        test.expect(1 + 1).toBe(1);
+      });
+    `,
+  }, { workers: 1 });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.failed).toBe(1);
+
+  const dirFail = test.info().outputPath('test-results', 'a-fail-chromium');
+  expect(fs.readdirSync(dirFail).find(file => file.endsWith('webm'))).toBeFalsy();
+
+  const dirRetry1 = test.info().outputPath('test-results', 'a-fail-chromium-retry1');
+  expect(fs.readdirSync(dirRetry1).find(file => file.endsWith('webm'))).toBeTruthy();
+
+  const dirRetry2 = test.info().outputPath('test-results', 'a-fail-chromium-retry2');
+  expect(fs.readdirSync(dirRetry2).find(file => file.endsWith('webm'))).toBeTruthy();
+});
+
+test('should work with video: retain-on-first-failure', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'playwright.config.ts': `
+      module.exports = { use: { video: 'retain-on-first-failure' }, retries: 1, name: 'chromium' };
+    `,
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+      test('pass', async ({ page }) => {
+        await page.setContent('<div>PASS</div>');
+        await page.waitForTimeout(1000);
+        test.expect(1 + 1).toBe(2);
+      });
+      test('fail', async ({ page }) => {
+        await page.setContent('<div>FAIL</div>');
+        await page.waitForTimeout(1000);
+        test.expect(1 + 1).toBe(1);
+      });
+    `,
+  }, { workers: 1 });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.passed).toBe(1);
+  expect(result.failed).toBe(1);
+
+  const dirPass = test.info().outputPath('test-results', 'a-pass-chromium');
+  const videoPass = fs.existsSync(dirPass) ? fs.readdirSync(dirPass).find(file => file.endsWith('webm')) : undefined;
+  expect(videoPass).toBeFalsy();
+
+  // First run failed, so the video is retained.
+  const dirFail = test.info().outputPath('test-results', 'a-fail-chromium');
+  expect(fs.readdirSync(dirFail).find(file => file.endsWith('webm'))).toBeTruthy();
+
+  // No video is captured on retries.
+  const dirRetry = test.info().outputPath('test-results', 'a-fail-chromium-retry1');
+  expect(fs.readdirSync(dirRetry).find(file => file.endsWith('webm'))).toBeFalsy();
+});
+
+test('should work with video: retain-on-failure-and-retries', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'playwright.config.ts': `
+      module.exports = { use: { video: 'retain-on-failure-and-retries' }, retries: 1, name: 'chromium' };
+    `,
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+      test('flaky', async ({ page }) => {
+        await page.setContent('<div>FLAKY</div>');
+        await page.waitForTimeout(1000);
+        test.expect(test.info().retry).toBe(1);
+      });
+    `,
+  }, { workers: 1 });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.flaky).toBe(1);
+
+  // First attempt failed, video retained.
+  const dirFail = test.info().outputPath('test-results', 'a-flaky-chromium');
+  expect(fs.readdirSync(dirFail).find(file => file.endsWith('webm'))).toBeTruthy();
+
+  // Retry passed, but all videos are retained once the test was retried.
+  const dirRetry = test.info().outputPath('test-results', 'a-flaky-chromium-retry1');
+  expect(fs.readdirSync(dirRetry).find(file => file.endsWith('webm'))).toBeTruthy();
+});
+
 test('should work with video size', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'playwright.config.js': `
@@ -760,15 +852,15 @@ test('should use actionTimeout for APIRequestContext', async ({ runInlineTest, s
     'a.test.ts': `
       import { test, expect } from '@playwright/test';
       test('default APIRequestContext fixture', async ({ request }) => {
-        await expect(request.get('/stall')).rejects.toThrow('apiRequestContext.get: Request timed out after 1111ms');
+        await expect(request.get('/stall')).rejects.toThrow('apiRequestContext.get: Timeout 1111ms exceeded');
       });
       test('newly created APIRequestContext without options', async ({ playwright }) => {
         const apiRequestContext = await playwright.request.newContext();
-        await expect(apiRequestContext.get('/stall')).rejects.toThrow('apiRequestContext.get: Request timed out after 1111ms');
+        await expect(apiRequestContext.get('/stall')).rejects.toThrow('apiRequestContext.get: Timeout 1111ms exceeded');
       });
       test('newly created APIRequestContext with options', async ({ playwright }) => {
         const apiRequestContextWithOptions = await playwright.request.newContext({ httpCredentials: { username: 'user', password: 'pass' } });
-        await expect(apiRequestContextWithOptions.get('/stall')).rejects.toThrow('apiRequestContext.get: Request timed out after 1111ms');
+        await expect(apiRequestContextWithOptions.get('/stall')).rejects.toThrow('apiRequestContext.get: Timeout 1111ms exceeded');
       });
     `,
   }, { workers: 1 });
@@ -880,18 +972,105 @@ test('page.pause() should disable test timeout', async ({ runInlineTest }) => {
       import { test, expect } from '@playwright/test';
 
       test('test', async ({ page }) => {
-        test.setTimeout(2000);
+        test.setTimeout(4000);
 
         await Promise.race([
           page.pause(),
-          new Promise(f => setTimeout(f, 3000)),
+          new Promise(f => setTimeout(f, 5000)),
         ]);
 
         console.log('success!');
       });
     `,
-  }, { headed: true });
+  }, { headed: true });  // This needs to be headed otherwise entire worker is gone.
   expect(result.exitCode).toBe(0);
   expect(result.passed).toBe(1);
   expect(result.output).toContain('success!');
+});
+
+test('window.playwright should be undefined by default', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+
+      test('test', async ({ page }) => {
+        await page.setContent('<body></body>');
+        expect(await page.evaluate(() => window.playwright)).toBeUndefined();
+      });
+    `,
+  }, {}, {});
+  expect(result.exitCode).toBe(0);
+  expect(result.passed).toBe(1);
+});
+
+test('window.playwright should not override existing property', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+
+      test('test', async ({ page }) => {
+        await page.setContent('<script>window.playwright = "foo"</script>');
+        expect(await page.evaluate(() => window.playwright)).toBe('foo');
+      });
+    `,
+  }, {}, { PWDEBUG: 'console' });
+  expect(result.exitCode).toBe(0);
+  expect(result.passed).toBe(1);
+});
+
+test('PWDEBUG=console should opt-in to exposing window.playwright', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+
+      test('test', async ({ page }) => {
+        await page.setContent('<body></body>');
+        expect(await page.evaluate(() => window.playwright)).toBeDefined();
+      });
+    `,
+  }, {}, { PWDEBUG: 'console' });
+  expect(result.exitCode).toBe(0);
+  expect(result.passed).toBe(1);
+});
+
+test('init script should not observe playwright internals', async ({ server, runInlineTest }) => {
+  test.skip(!!process.env.PW_CLOCK, 'clock installs globalThis.__pwClock');
+  const result = await runInlineTest({
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+
+      test('test', async ({ page }) => {
+        await page.addInitScript(() => {
+          window['check'] = () => {
+            const keys = Reflect.ownKeys(globalThis).map(k => k.toString());
+            return keys.find(name => name.includes('playwright') || name.includes('_pw')) || 'none';
+          };
+          window['found'] = window['check']();
+        });
+        await page.goto("${server.EMPTY_PAGE}");
+        expect(await page.evaluate(() => window['found'])).toBe('none');
+        expect(await page.evaluate(() => window['check']())).toBe('none');
+      });
+    `,
+  }, {}, { PWDEBUG: '0' });
+  expect(result.exitCode).toBe(0);
+});
+
+test('should pause test timeout while on pause', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+
+      test('test', async ({ page, context }) => {
+        await context.debugger.requestPause();
+        const paused = new Promise(f => context.debugger.once('pausedstatechanged', f));
+        const contentPromise = page.setContent('<div>hello</div>');
+        await paused;
+        await new Promise(f => setTimeout(f, 5000));
+        await context.debugger.resume();
+        await contentPromise;
+      });
+    `,
+  }, { timeout: 3000 });
+  expect(result.exitCode).toBe(0);
 });

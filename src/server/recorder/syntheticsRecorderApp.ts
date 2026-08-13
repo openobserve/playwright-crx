@@ -22,19 +22,22 @@
 import { EventEmitter } from 'events';
 import type { CallLog, ElementInfo, Mode, Source } from '@recorder/recorderTypes';
 import type { Page } from 'playwright-core/lib/server/page';
-import type { Recorder } from 'playwright-core/lib/server/recorder';
-import type { IRecorderApp } from 'playwright-core/lib/server/recorder/recorderFrontend';
-import type { ActionInContext } from '@recorder/actions';
+import { Recorder, RecorderEvent } from 'playwright-core/lib/server/recorder';
+import type { ActionInContext } from '@isomorphic/codegen/actions';
+import type * as actions from '@isomorphic/codegen/actions';
+import { generateCode } from '@isomorphic/codegen/language';
+import { languageSet } from '@isomorphic/codegen/languages';
+import { collapseActions } from 'playwright-core/lib/server/recorder/recorderUtils';
+import type { LanguageGeneratorOptions } from '@isomorphic/codegen/types';
 import type * as channels from '../../protocol/channels';
 import type { Crx } from '../crx';
 import { HeadlessRecorderWindow } from './headlessRecorderWindow';
 import type { RecorderEventData, RecorderMessage, RecorderWindow } from './crxRecorderApp';
 import { mapActionsToBrowserSteps } from './actionMapper';
 import type { BrowserStep } from './actionMapper';
-import { serverSideCallMetadata } from 'playwright-core/lib/server';
 import { BrowserContext } from 'playwright-core/lib/server/browserContext';
 import type { Response } from 'playwright-core/lib/server/network';
-import { monotonicTime } from 'playwright-core/lib/utils';
+import { monotonicTime } from '@isomorphic/time';
 import { NetworkRecorder, buildSettlePatterns, captureWindows } from './networkCapture';
 
 
@@ -64,24 +67,24 @@ export type StepResultData = {
 
 export type SyntheticsForwardMessage =
   | (RecorderMessage & {
-      browserSteps?: BrowserStep[];
-      generatedCode?: string;
-      generatedLanguage?: string;
-    })
+    browserSteps?: BrowserStep[];
+    generatedCode?: string;
+    generatedLanguage?: string;
+  })
   | {
-      type: 'recorder';
-      method: 'stepReplayStarted';
-      stepStarted: StepStartedData;
-    }
+    type: 'recorder';
+    method: 'stepReplayStarted';
+    stepStarted: StepStartedData;
+  }
   | {
-      type: 'recorder';
-      method: 'stepReplayResult';
-      stepResult: StepResultData;
-    };
+    type: 'recorder';
+    method: 'stepReplayResult';
+    stepResult: StepResultData;
+  };
 
 export type SyntheticsForwardCallback = (msg: SyntheticsForwardMessage) => void;
 
-export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp {
+export class SyntheticsRecorderApp extends EventEmitter {
   readonly wsEndpointForTest: string | undefined;
   readonly _recorder: Recorder;
   private _crx: Crx;
@@ -94,6 +97,10 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
   private _network = new NetworkRecorder();
   /** Whether the network buffer is live, so the final rebuild runs exactly once. */
   private _collecting = false;
+  /** The in-flight final rebuild, shared so every setMode('none') caller awaits it. */
+  private _finalRebuild?: Promise<void>;
+  /** Kept so the journey origin can be recovered when no navigate action was recorded. */
+  private _context?: BrowserContext;
 
   constructor(
     crx: Crx,
@@ -105,6 +112,7 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
     this._crx = crx;
     this._recorder = recorder;
     this._forwardCallback = forwardCallback;
+    this._context = context;
 
     // P4.1.1 — the source is the extension's real Playwright context, not raw
     // CDP. It is the same API the probe waits on, so one matcher serves both
@@ -151,6 +159,68 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
         stepResult: result,
       });
     });
+
+    // 1.54 reversed the Recorder <-> RecorderApp dependency (microsoft/playwright#36544).
+    // The recorder now streams actions and signals instead of calling setActions() on us,
+    // so the accumulation the deleted RecorderCollection did happens here. The BrowserStep
+    // mapping and the network-evidence rebuild below are unchanged — they just run off
+    // this list instead of a pushed one.
+    recorder.on(RecorderEvent.ActionAdded, (action: actions.ActionInContext) => {
+      this._recordedActions.push(action);
+      this._regenerate();
+    });
+    // The navigation-signal patch in recorderSignalProcessor.ts is what makes this fire
+    // for navigations caused by a click/press/fill. It is the evidence that turns a
+    // recorded hard sleep into a wait condition, so it must land on the causing action.
+    recorder.on(RecorderEvent.SignalAdded, (signal: actions.SignalInContext) => {
+      const lastAction = this._recordedActions.findLast(a => a.pageGuid === signal.pageGuid);
+      if (lastAction)
+        lastAction.action.signals.push(signal.signal);
+      this._regenerate();
+    });
+    recorder.on(RecorderEvent.ModeChanged, (mode: Mode) => {
+      this.setMode(mode).catch(() => {});
+    });
+    recorder.on(RecorderEvent.ElementPicked, (elementInfo: ElementInfo, userGesture?: boolean) => {
+      this.elementPicked(elementInfo, userGesture).catch(() => {});
+    });
+    recorder.on(RecorderEvent.CallLogsUpdated, (callLogs: CallLog[]) => {
+      this.updateCallLogs(callLogs).catch(() => {});
+    });
+  }
+
+  // Renders the recorded actions through the playwright-test generator so the
+  // "eject to code" path keeps working, then runs the BrowserStep mapping.
+  private _regenerate() {
+    const collapsed = collapseActions(this._recordedActions);
+    const options: LanguageGeneratorOptions = {
+      browserName: 'chromium',
+      // headless:false matches what upstream's RecorderApp passes; without it the
+      // standalone (non-test-runner) generators emit `launch()` instead of
+      // `launch({ headless: false })`, changing the code shown and saved.
+      launchOptions: { headless: false },
+      contextOptions: {},
+    };
+    const sources: Source[] = [];
+    for (const languageGenerator of languageSet()) {
+      const { header, footer, actionTexts, text } = generateCode(collapsed, languageGenerator, options);
+      sources.push({
+        // `isPrimary`/`timestamp` left with Source in 1.55. They only ever mattered to the
+        // recorder UI's file picker, which the synthetics recorder does not run — its
+        // consumer is the web app, and that selects by `id`.
+        isRecorded: true,
+        label: languageGenerator.name,
+        group: languageGenerator.groupName,
+        id: languageGenerator.id,
+        text,
+        header,
+        footer,
+        actions: actionTexts,
+        language: languageGenerator.highlighter,
+        highlight: [],
+      });
+    }
+    this.setActions(this._recordedActions, sources).catch(() => {});
   }
 
   async open(options?: channels.CrxApplicationShowRecorderParams) {
@@ -172,6 +242,18 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
     // setOutput would restart() the action collection and destroy the
     // initial openPage step that install() just generated.
     this._recorder.setMode(mode);
+
+    // Seed the journey's opening navigation.
+    //
+    // The recorder emits an `openPage` for already-open pages while installing, but that
+    // emission is gated on `_enabled`, which is only set by setMode() — which runs *after*
+    // install. So the opening action was dropped, and because the extension opens the
+    // recording tab already AT the target URL (prepareRecordingWindow) there is no later
+    // navigation signal to recover it: journeys reached the web app with no navigate step
+    // and replay had nowhere to start. clear() re-signals navigation for every open page,
+    // which the signal processor turns into the `navigate` action.
+    if (this._recorder._isRecording())
+      this._recorder.clear();
 
     this.emit('show');
     this.setMode(mode);
@@ -220,10 +302,18 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
       //
       // Recording stops here, so this is the last moment the whole recording is
       // visible. `disable()` clears the buffer, so the order matters.
+      //
+      // The rebuild promise is remembered because since 1.54 setMode('none') arrives
+      // TWICE: once from our own RecorderEvent.ModeChanged subscription (not awaited)
+      // and once from the awaited call in _hide(). Without sharing the promise, the
+      // `_collecting` guard would let the awaited call return before the rebuild the
+      // event-driven call started had finished — which is exactly the "caller reads the
+      // step list before the rebuild lands" bug this await exists to prevent.
       if (this._collecting) {
         this._collecting = false;
-        await this.setActions(this._recordedActions, this._sources ?? []);
+        this._finalRebuild = this.setActions(this._recordedActions, this._sources ?? []);
       }
+      await this._finalRebuild;
       this._network.disable();
     }
 
@@ -237,6 +327,41 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
       this.emit('modeChanged', { mode });
     }
     this._sendMessage({ type: 'recorder', method: 'setMode', mode });
+  }
+
+  /**
+   * Drop everything the action collection has accumulated so far, so the next
+   * recorded action is step one.
+   *
+   * This is the counterpart of the note in `open()`: setOutput restarts the
+   * collection and destroys the initial `openPage` that install() generated. For a
+   * fresh recording that step IS the journey's first navigate, which is why open()
+   * must not call it. For a restore-then-record session the opposite is true — the
+   * prefix has already navigated, and the `openPage`/`closePage` entries the
+   * collection logs past its own `_enabled` guard (recorderCollection.addRecordedAction)
+   * are artifacts of the restore that would otherwise be handed back as the author's
+   * first recorded step.
+   *
+   * Deliberately a reset rather than a count of what to skip: the artifacts are not
+   * distinguishable from a real first action once they are in the list, so the boundary
+   * has to be drawn at the moment the restore finishes.
+   *
+   * Reimplemented for 1.62. This used to call `Recorder.setOutput('playwright-test',
+   * undefined)`, whose side effect was restarting the recorder-side collection — but
+   * 1.54 removed `setOutput` (it became `setLanguage`), and by 1.62 there is no
+   * recorder-side collection left to restart: the Recorder emits `ActionAdded` and *this
+   * app* is the collection, accumulating into `_recordedActions`. So the reset is a
+   * direct one, which is also what it always meant.
+   *
+   * The network buffer goes with it. The restore replays the prefix steps, and the
+   * traffic that generates is in the buffer with timestamps that fall before the
+   * author's first real action — close enough to land in its window and be handed back
+   * as that step's settle evidence. Keeping it would attribute the restore's requests to
+   * the author's first click.
+   */
+  resetCapture() {
+    this._recordedActions = [];
+    this._network.clear();
   }
 
   async setRunningFile() {
@@ -294,7 +419,18 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
       if (a.action.name === 'navigate' || a.action.name === 'openPage')
         return a.action.url;
     }
-    return undefined;
+    // Fall back to the page being recorded.
+    //
+    // A recorded navigate/openPage is not guaranteed to exist: the extension opens the
+    // recording tab *already at* the target URL (prepareRecordingWindow), so the journey can
+    // legitimately begin with a click. Since 1.54 it is also never guaranteed —
+    // Recorder.forContext() installs the recorder, and emits the initial openPage, before the
+    // app has subscribed to ActionAdded, so that action is gone before anyone can hear it.
+    // (In 1.53 Recorder.show() built the app through a factory while installing.)
+    //
+    // Without an origin, every step bails out of settle computation and a journey records no
+    // wait conditions at all — the silent failure this fallback exists to prevent.
+    return this._context?.pages()[0]?.mainFrame().url() || undefined;
   }
 
   async setActions(actions: ActionInContext[], sources: Source[]) {
@@ -344,7 +480,7 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
       const incognitoCrxApp = await this._crx.get({ incognito });
       await incognitoCrxApp?.close({ closeWindows: true });
     }
-    const crxApp = await this._crx.get({ incognito }) ?? await this._crx.start({ incognito }, serverSideCallMetadata());
+    const crxApp = await this._crx.get({ incognito }) ?? await this._crx.start({ incognito });
     await this._crx.player.run(crxApp._context, this._recordedActions);
   }
 
@@ -369,6 +505,11 @@ export class SyntheticsRecorderApp extends EventEmitter implements IRecorderApp 
           break;
         case 'setMode':
           const { mode } = params;
+          // Drive the recorder: until 1.54 the Recorder subscribed to this app's
+          // 'event' emission and called setMode on itself (recorder.ts:104). That
+          // listener was deleted with the IRecorderApp interface, so a mode change
+          // requested from the UI side would otherwise never reach the recorder.
+          this._recorder.setMode(mode);
           if (this._mode !== mode) {
             this._mode = mode;
             this.emit('modeChanged', { mode });

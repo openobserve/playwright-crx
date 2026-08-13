@@ -15,7 +15,8 @@
  * limitations under the License.
  */
 
-import { assert, headersArrayToObject, headersObjectToArray } from '../../utils';
+import { assert } from '@isomorphic/assert';
+import { headersArrayToObject, headersObjectToArray } from '@isomorphic/headers';
 import * as network from '../network';
 
 import type * as frames from '../frames';
@@ -41,6 +42,8 @@ const errorReasons: { [reason: string]: Protocol.Network.ResourceErrorType } = {
   'failed': 'General',
 };
 
+export const wkSetCookieSeparator = process.platform === 'darwin' ? ',' : 'playwright-set-cookie-separator';
+
 export class WKInterceptableRequest {
   private _session: WKSession;
   private _requestId: string;
@@ -51,14 +54,14 @@ export class WKInterceptableRequest {
   constructor(session: WKSession, frame: frames.Frame, event: Protocol.Network.requestWillBeSentPayload, redirectedFrom: WKInterceptableRequest | null, documentId: string | undefined) {
     this._session = session;
     this._requestId = event.requestId;
-    const resourceType = event.type ? event.type.toLowerCase() : (redirectedFrom ? redirectedFrom.request.resourceType() : 'other');
+    const resourceType = event.type ? toResourceType(event.type) : (redirectedFrom ? redirectedFrom.request.resourceType() : 'other');
     let postDataBuffer = null;
     this._timestamp = event.timestamp;
     this._wallTime = event.walltime * 1000;
     if (event.request.postData)
       postDataBuffer = Buffer.from(event.request.postData, 'base64');
     this.request = new network.Request(frame._page.browserContext, frame, null, redirectedFrom?.request || null, documentId, event.request.url,
-        resourceType, event.request.method, postDataBuffer, headersObjectToArray(event.request.headers));
+        resourceType, event.request.method, postDataBuffer, headersObjectToArray(event.request.headers), this._wallTime);
   }
 
   adoptRequestFromNewProcess(newSession: WKSession, requestId: string) {
@@ -82,8 +85,7 @@ export class WKInterceptableRequest {
       requestStart: timingPayload ? wkMillisToRoundishMillis(timingPayload.requestStart) : -1,
       responseStart: timingPayload ? wkMillisToRoundishMillis(timingPayload.responseStart) : -1,
     };
-    const setCookieSeparator = process.platform === 'darwin' ? ',' : 'playwright-set-cookie-separator';
-    const response = new network.Response(this.request, responsePayload.status, responsePayload.statusText, headersObjectToArray(responsePayload.headers, ',', setCookieSeparator), timing, getResponseBody, responsePayload.source === 'service-worker');
+    const response = new network.Response(this.request, responsePayload.status, responsePayload.statusText, headersObjectToArray(responsePayload.headers, ',', wkSetCookieSeparator), timing, getResponseBody, responsePayload.source === 'service-worker');
 
     // No raw response headers in WebKit, use "provisional" ones.
     response.setRawResponseHeaders(null);
@@ -168,4 +170,21 @@ function wkMillisToRoundishMillis(value: number): number {
   }
 
   return ((value * 1000) | 0) / 1000;
+}
+
+function toResourceType(type: Protocol.Page.ResourceType): network.ResourceType {
+  switch (type) {
+    case 'Document': return 'document';
+    case 'StyleSheet': return 'stylesheet';
+    case 'Image': return 'image';
+    case 'Font': return 'font';
+    case 'Script': return 'script';
+    case 'XHR': return 'xhr';
+    case 'Fetch': return 'fetch';
+    case 'Ping': return 'ping';
+    case 'Beacon': return 'beacon';
+    case 'WebSocket': return 'websocket';
+    case 'EventSource': return 'eventsource';
+    default: return 'other';
+  }
 }

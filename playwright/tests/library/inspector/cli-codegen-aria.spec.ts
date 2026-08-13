@@ -15,11 +15,9 @@
  */
 
 import { test, expect } from './inspectorTest';
-import { roundBox } from '../../page/pageTest';
+import { roundBox } from '../../config/utils';
 
 test.describe(() => {
-  test.skip(({ mode }) => mode !== 'default');
-
   test('should generate aria snapshot', async ({ openRecorder }) => {
     const { recorder } = await openRecorder();
     await recorder.setContentAndWait(`<main><button>Submit</button></main>`);
@@ -58,6 +56,19 @@ test.describe(() => {
       recorder.text('Java')).toContain(`assertThat(page.getByRole(AriaRole.BUTTON)).matchesAriaSnapshot("- button /Submit \\\\d+/");`);
     await expect.poll(() =>
       recorder.text('C#')).toContain(`await Expect(page.GetByRole(AriaRole.Button)).ToMatchAriaSnapshotAsync("- button /Submit \\\\d+/");`);
+  });
+
+  test('should generate regex for uuid in aria snapshot', async ({ openRecorder }) => {
+    const { recorder } = await openRecorder();
+    await recorder.setContentAndWait(`<main><a href="/items/550e8400-e29b-41d4-a716-446655440000">Item 550e8400-e29b-41d4-a716-446655440000</a></main>`);
+
+    await recorder.page.click('x-pw-tool-item.snapshot');
+    await recorder.page.hover('a');
+    await recorder.trustedClick();
+
+    // url still contains full UUID, we can improve here.
+    await expect.poll(() =>
+      recorder.text('JavaScript')).toContain(`- link /Item [0-9a-fA-F-]+/:`);
   });
 
   test('should inspect aria snapshot', async ({ openRecorder }) => {
@@ -137,8 +148,8 @@ test.describe(() => {
 
     await recorder.recorderPage.locator('.tab-aria .CodeMirror').click();
     await recorder.recorderPage.keyboard.press('Backspace');
-    // 3 highlighted tokens.
-    await expect(recorder.recorderPage.locator('.source-line-error-underline')).toHaveCount(3);
+    // 1 highlighted token
+    await expect(recorder.recorderPage.locator('.source-line-error-underline')).toHaveCount(1);
   });
 
   test('should generate valid javascript with multiline snapshot assertion', async ({ openRecorder }) => {

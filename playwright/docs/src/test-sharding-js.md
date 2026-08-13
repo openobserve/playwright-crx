@@ -58,7 +58,7 @@ export default defineConfig({
 });
 ```
 
-Blob report contains information about all the tests that were run and their results as well as all test attachments such as traces and screenshot diffs. Blob reports can be merged and converted to any other Playwright report. By default, blob report will be generated into `blob-report` directory.
+Blob report contains information about all the tests that were run and their results as well as all test attachments such as traces and screenshot diffs. Blob reports can be merged and converted to any other Playwright report. By default, blob report will be generated into `blob-report` directory. You can learn about [blob report options here](./test-reporters.md#blob-reporter).
 
 To merge reports from multiple shards, put the blob report files into a single directory, for example `all-blob-reports`. Blob report names contain shard number, so they will not clash.
 
@@ -101,8 +101,8 @@ jobs:
         shardIndex: [1, 2, 3, 4]
         shardTotal: [4]
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: actions/checkout@v6
+    - uses: actions/setup-node@v6
       with:
         node-version: lts/*
     - name: Install dependencies
@@ -134,15 +134,15 @@ jobs:
 
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: actions/checkout@v6
+    - uses: actions/setup-node@v6
       with:
         node-version: lts/*
     - name: Install dependencies
       run: npm ci
 
     - name: Download blob reports from GitHub Actions Artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         path: all-blob-reports
         pattern: blob-report-*
@@ -161,7 +161,23 @@ jobs:
 
 You can now see the reports have been merged and a combined HTML report is available in the GitHub Actions Artifacts tab.
 
-<img width="875" alt="image" src="https://github.com/microsoft/playwright/assets/9798949/b69dac59-fc19-4b98-8f49-814b1c29ca02" />
+<img height="1610" width="1750" alt="image" src="https://github.com/microsoft/playwright/assets/9798949/b69dac59-fc19-4b98-8f49-814b1c29ca02" />
+
+
+## Merging reports from multiple environments
+
+If you want to run the same tests in multiple environments, as opposed to shard your tests onto multiple machines, you need to differentiate these environments.
+
+In this case, it is useful to specify the [`property: TestConfig.tag`] property, to tag all tests with the environment name. This tag will be automatically picked up by the blob report and later on by the merge tool.
+
+```js title="playwright.config.ts"
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  reporter: process.env.CI ? 'blob' : 'html',
+  tag: process.env.CI_ENVIRONMENT_NAME,  // for example "@APIv2"
+});
+```
 
 
 ## Merge-reports CLI

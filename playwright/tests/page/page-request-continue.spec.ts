@@ -48,27 +48,16 @@ it('should not allow to override unsafe HTTP headers', async ({ page, server, br
   const serverRequestPromise = server.waitForRequest('/empty.html');
   page.goto(server.EMPTY_PAGE).catch(() => {});
   const route = await routePromise;
-  const error = await route.continue({
+  await route.continue({
     headers: {
       ...route.request().headers(),
-      host: 'bar'
+      host: 'bar',
+      trailer: 'baz',
     }
-  }).catch(e => e);
-  if (isElectron) {
-    // Electron doesn't send the request if the host header is overridden,
-    // but doesn't throw an error either.
-    expect(error).toBeFalsy();
-    serverRequestPromise.catch(() => {});
-  } else if (browserName === 'chromium') {
-    expect(error.message).toContain('Unsafe header');
-    serverRequestPromise.catch(() => {});
-  } else {
-    expect(error).toBeFalsy();
-    // These lines just document current behavior in FF and WK,
-    // we don't necessarily want to maintain this behavior.
-    const serverRequest = await serverRequestPromise;
-    expect(serverRequest.headers['host']).toBe('bar');
-  }
+  });
+  const serverRequest = await serverRequestPromise;
+  expect(serverRequest.headers['trailer']).toBe(undefined);
+  expect(serverRequest.headers['host']).toBe(new URL(server.EMPTY_PAGE).host);
 });
 
 it('should delete header with undefined value', async ({ page, server, browserName }) => {
@@ -150,35 +139,10 @@ it('should not allow changing protocol when overriding url', async ({ page, serv
   expect(error.message).toContain('New URL must have same protocol as overridden URL');
 });
 
-it('should not throw when continuing while page is closing', async ({ page, server, isWebView2 }) => {
-  it.skip(isWebView2, 'Page.close() is not supported in WebView2');
-
-  let done;
-  await page.route('**/*', async route => {
-    done = Promise.all([
-      void route.continue(),
-      page.close(),
-    ]);
-  });
-  await page.goto(server.EMPTY_PAGE).catch(e => e);
-  await done;
-});
-
-it('should not throw when continuing after page is closed', async ({ page, server, isWebView2 }) => {
-  it.skip(isWebView2, 'Page.close() is not supported in WebView2');
-
-  let done;
-  await page.route('**/*', async route => {
-    await page.close();
-    done = route.continue();
-  });
-  const error = await page.goto(server.EMPTY_PAGE).catch(e => e);
-  await done;
-  expect(error).toBeInstanceOf(Error);
-});
-
-it('should not throw if request was cancelled by the page', async ({ page, server, browserName }) => {
+it('should not throw if request was cancelled by the page', async ({ page, server, isAndroid }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/28490' });
+  it.fixme(isAndroid, 'net::ERR_CONNECTION_RESET');
+
   let interceptCallback;
   const interceptPromise = new Promise<Route>(f => interceptCallback = f);
   await page.route('**/data.json', route => interceptCallback(route));
@@ -329,7 +293,12 @@ it('should work with Cross-Origin-Opener-Policy', async ({ page, server, browser
     serverRequests.push(req.url);
     serverHeaders ??= req.headers;
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-    res.end();
+    // Note: without 'onload', Firefox sometimes does not fire the load event
+    // over the protocol. The reason is unclear.
+    res.end(`
+      <div>Hello there!</div>
+      <script>window.onload = () => console.log('onload')</script>
+    `);
   });
 
   const intercepted = [];
@@ -374,20 +343,19 @@ it('should work with Cross-Origin-Opener-Policy', async ({ page, server, browser
   expect(response.request().failure()).toBeNull();
 });
 
-it('should delete the origin header', async ({ page, server, isAndroid, browserName }) => {
+it('should not delete the origin header', async ({ page, server, isAndroid }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/13106' });
   it.skip(isAndroid, 'No cross-process on Android');
-  it.fail(browserName === 'webkit', 'Does not delete origin in webkit');
 
   await page.goto(server.PREFIX + '/empty.html');
   server.setRoute('/something', (request, response) => {
     response.writeHead(200, { 'Access-Control-Allow-Origin': '*' });
     response.end('done');
   });
-  let interceptedRequest;
+  let interceptedOrigin;
   await page.route(server.CROSS_PROCESS_PREFIX + '/something', async (route, request) => {
-    interceptedRequest = request;
     const headers = await request.allHeaders();
+    interceptedOrigin = headers.origin;
     delete headers['origin'];
     void route.continue({ headers });
   });
@@ -400,11 +368,11 @@ it('should delete the origin header', async ({ page, server, isAndroid, browserN
     server.waitForRequest('/something')
   ]);
   expect(text).toBe('done');
-  expect(interceptedRequest.headers()['origin']).toEqual(undefined);
-  expect(serverRequest.headers.origin).toBeFalsy();
+  expect(interceptedOrigin).toEqual(server.PREFIX);
+  expect(serverRequest.headers.origin).toBe(server.PREFIX);
 });
 
-it('should continue preload link requests', async ({ page, server, browserName }) => {
+it('should continue preload link requests', async ({ page, server }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/16745' });
   let intercepted = false;
   await page.route('**/one-style.css', route => {
@@ -429,8 +397,7 @@ it('should continue preload link requests', async ({ page, server, browserName }
 
 it('should respect set-cookie in redirect response', {
   annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/35154' }
-}, async ({ page, server, browserName }) => {
-  it.fixme(browserName === 'firefox', 'Firefox does not respect set-cookie in redirect response');
+}, async ({ page, server }) => {
   await page.goto(server.EMPTY_PAGE);
   await page.setContent('<a href="/set-cookie-redirect">Set cookie</a>');
   server.setRoute('/set-cookie-redirect', (request, response) => {
@@ -459,7 +426,6 @@ it('continue should not propagate cookie override to redirects', {
     { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/35168' },
   ]
 }, async ({ page, server, browserName }) => {
-  it.fixme(browserName === 'firefox', 'We currently clear all headers during interception in firefox');
   server.setRoute('/set-cookie', (request, response) => {
     response.writeHead(200, { 'Set-Cookie': 'foo=bar;' });
     response.end();
@@ -509,6 +475,62 @@ it('continue should not override cookie', {
   // Original cookie from the browser's cookie jar should be sent.
   expect(serverRequest.headers['cookie']).toBe('foo=bar');
   expect(serverRequest.headers['custom']).toBe('value');
+});
+
+it('continue with headers should send fresh cookie from the browser cookie store', {
+  annotation: [
+    { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41428' },
+  ]
+}, async ({ page, server }) => {
+  server.setRoute('/set-cookie', (request, response) => {
+    response.writeHead(200, { 'Set-Cookie': 'foo=v1;' });
+    response.end();
+  });
+  await page.goto(server.PREFIX + '/set-cookie');
+  expect(await page.evaluate(() => document.cookie)).toBe('foo=v1');
+
+  await page.route('**/empty.html', async route => {
+    // Cookie store changes between interception and continuation.
+    await page.context().addCookies([{ name: 'foo', value: 'v2', url: server.PREFIX }]);
+    await route.continue({ headers: route.request().headers() });
+  });
+
+  const [serverRequest] = await Promise.all([
+    server.waitForRequest('/empty.html'),
+    page.goto(server.EMPTY_PAGE)
+  ]);
+  // The fresh cookie from the browser cookie store should be sent, not the stale captured value.
+  expect(serverRequest.headers['cookie']).toBe('foo=v2');
+});
+
+it('continue with headers should send fresh cookie after a redirect', {
+  annotation: [
+    { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41428' },
+  ]
+}, async ({ page, server }) => {
+  server.setRoute('/set-cookie', (request, response) => {
+    response.writeHead(200, { 'Set-Cookie': 'foo=v1;' });
+    response.end();
+  });
+  await page.goto(server.PREFIX + '/set-cookie');
+  expect(await page.evaluate(() => document.cookie)).toBe('foo=v1');
+
+  // The redirect updates the cookie before bouncing to the final destination.
+  server.setRoute('/redirect', (request, response) => {
+    response.writeHead(302, { 'Set-Cookie': 'foo=v2;', 'location': server.PREFIX + '/empty.html' });
+    response.end();
+  });
+
+  await page.route('**/redirect', route => {
+    void route.continue({ headers: route.request().headers() });
+  });
+
+  const [serverRequest] = await Promise.all([
+    server.waitForRequest('/empty.html'),
+    page.goto(server.PREFIX + '/redirect')
+  ]);
+  // The redirected request should carry the cookie updated by the redirect, not the stale captured value.
+  expect(serverRequest.headers['cookie']).toBe('foo=v2');
 });
 
 it('redirect after continue should be able to delete cookie', {
@@ -850,6 +872,35 @@ it('propagate headers cross origin redirect after interception', {
   expect.soft(serverRequest.headers['custom']).toBe('foo');
 });
 
+it('continue should pass on 307 cross-origin redirect', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41690' }
+}, async ({ page, server, isAndroid }) => {
+  it.skip(isAndroid, 'No cross-process on Android');
+
+  server.setRoute('/final', (request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html' });
+    response.end('<!doctype html><title>final</title><p>ok</p>');
+  });
+  // Cross-origin 307 redirect that preserves the POST method.
+  server.setRoute('/redirect307', (request, response) => {
+    response.writeHead(307, { location: `${server.PREFIX}/final` });
+    response.end();
+  });
+
+  await page.goto(server.PREFIX + '/empty.html');
+  await page.setContent(`
+    <form id="f" method="POST" action="${server.CROSS_PROCESS_PREFIX}/redirect307">
+      <input type="submit">
+    </form>`);
+
+  await page.route('**/*', route => route.continue());
+  await Promise.all([
+    page.waitForURL(`${server.PREFIX}/final`),
+    page.locator('input').click(),
+  ]);
+  await expect(page.locator('p')).toHaveText('ok');
+});
+
 it('should intercept css variable with background url', async ({ page, server }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/19158' });
 
@@ -921,4 +972,53 @@ it('continue should not change multipart/form-data body', async ({ page, server,
     '------'].join('\r\n');
   expect.soft((await reqBefore.postBody).toString('utf8')).toContain(fileContent);
   expect.soft((await reqAfter.postBody).toString('utf8')).toContain(fileContent);
+});
+
+it('should not forward Host header on cross-origin redirect', {
+  annotation: {
+    type: 'issue',
+    description: 'https://github.com/microsoft/playwright/issues/36719'
+  }
+}, async ({ page, server, browserName }) => {
+  const redirectTargetPath = '/final';
+  const redirectSourcePath = '/redirect';
+
+  let redirectedHost: string | undefined;
+  server.setRoute(redirectTargetPath, (req, res) => {
+    redirectedHost = req.headers['host'];
+    res.end('OK');
+  });
+
+  let firstHost: string | undefined;
+  server.setRoute(redirectSourcePath, (req, res) => {
+    firstHost = req.headers['host'];
+    res.writeHead(302, { location: `${server.CROSS_PROCESS_PREFIX}${redirectTargetPath}` });
+    res.end();
+  });
+
+  await page.route('**/*', async route => {
+    const headers = route.request().headers();
+    if (browserName === 'firefox')
+      expect(headers).toHaveProperty('host');
+    else
+      expect(headers).not.toHaveProperty('host');
+    await route.continue({ headers });
+  });
+
+  const response = await page.goto(server.PREFIX + redirectSourcePath);
+  expect(response.status()).toBe(200);
+  expect(firstHost).toBe(new URL(server.PREFIX).host);
+  expect(redirectedHost).toBe(new URL(server.CROSS_PROCESS_PREFIX).host);
+});
+
+it('postData should return empty string when overriding body with empty string', async ({ page, server }) => {
+  await page.goto(server.EMPTY_PAGE);
+  await page.route('**/*', route => {
+    void route.continue({ postData: '' });
+  });
+  const [request] = await Promise.all([
+    page.waitForRequest('**'),
+    page.evaluate(({ url }) => fetch(url, { method: 'POST', body: 'original' }), { url: server.PREFIX + '/sleep.zzz' }),
+  ]);
+  expect(request.postData()).toBe('');
 });

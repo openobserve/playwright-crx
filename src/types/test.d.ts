@@ -20,10 +20,21 @@ import type { APIRequestContext, Browser, BrowserContext, BrowserContextOptions,
 export * from './types';
 
 export type BlobReporterOptions = { outputDir?: string, fileName?: string };
-export type ListReporterOptions = { printSteps?: boolean };
-export type JUnitReporterOptions = { outputFile?: string, stripANSIControlSequences?: boolean, includeProjectInTestName?: boolean };
+export type ListReporterOptions = { printSteps?: boolean, printFailuresInline?: boolean };
+export type JUnitReporterOptions = { outputFile?: string, stripANSIControlSequences?: boolean, includeProjectInTestName?: boolean, includeRetries?: boolean };
 export type JsonReporterOptions = { outputFile?: string };
-export type HtmlReporterOptions = { outputFolder?: string, open?: 'always' | 'never' | 'on-failure', host?: string, port?: number, attachmentsBaseURL?: string, title?: string };
+export type HtmlReporterOptions = {
+  outputFolder?: string;
+  open?: 'always' | 'never' | 'on-failure';
+  host?: string;
+  port?: number;
+  attachmentsBaseURL?: string;
+  title?: string;
+  noSnippets?: boolean;
+  noCopyPrompt?: boolean;
+  doNotInlineAssets?: boolean;
+  mergeFiles?: boolean;
+};
 
 export type ReporterDescription = Readonly<
   ['blob'] | ['blob', BlobReporterOptions] |
@@ -228,6 +239,13 @@ interface TestProject<TestArgs = {}, WorkerArgs = {}> {
        * for details.
        */
       pathTemplate?: string;
+
+      /**
+       * Default timeout for
+       * [expect(page).toHaveScreenshot(name[, options])](https://playwright.dev/docs/api/class-pageassertions#page-assertions-to-have-screenshot-1)
+       * in milliseconds, defaults to the global expect timeout. Setting to `0` disables the timeout.
+       */
+      timeout?: number;
     };
 
     /**
@@ -242,6 +260,13 @@ interface TestProject<TestArgs = {}, WorkerArgs = {}> {
        * for details.
        */
       pathTemplate?: string;
+
+      /**
+       * Controls how children of the snapshot root are matched against the actual accessibility tree. This is equivalent to
+       * adding a `/children` property at the top of every aria snapshot template. Individual snapshots can override this by
+       * including an explicit `/children` property.
+       */
+      children?: "contain"|"equal"|"deep-equal";
     };
 
     /**
@@ -306,7 +331,7 @@ interface TestProject<TestArgs = {}, WorkerArgs = {}> {
   grep?: RegExp|Array<RegExp>;
 
   /**
-   * Filter to only run tests with a title **not** matching one of the patterns. This is the opposite of
+   * Filter to only run tests with a title **not** matching any of the patterns. This is the opposite of
    * [testProject.grep](https://playwright.dev/docs/api/class-testproject#test-project-grep). Also available globally
    * and in the [command line](https://playwright.dev/docs/test-cli) with the `--grep-invert` option.
    *
@@ -513,6 +538,8 @@ interface TestProject<TestArgs = {}, WorkerArgs = {}> {
    *     config)
    * - `{testFileDir}` - Directories in relative path from `testDir` to **test file**.
    *   - Value: `page`
+   * - `{testFileBaseName}` - Test file name without the last extension.
+   *   - Value: `page-click.spec`
    * - `{testFileName}` - Test file name with extension.
    *   - Value: `page-click.spec.ts`
    * - `{testFilePath}` - Relative path from `testDir` to **test file**.
@@ -757,6 +784,11 @@ export interface FullProject<TestArgs = {}, WorkerArgs = {}> {
   grepInvert: null|RegExp|Array<RegExp>;
 
   /**
+   * See [testProject.ignoreSnapshots](https://playwright.dev/docs/api/class-testproject#test-project-ignore-snapshots).
+   */
+  ignoreSnapshots: boolean;
+
+  /**
    * See [testProject.metadata](https://playwright.dev/docs/api/class-testproject#test-project-metadata).
    */
   metadata: Metadata;
@@ -865,7 +897,9 @@ interface TestConfig<TestArgs = {}, WorkerArgs = {}> {
    * - A module name like `'my-awesome-reporter'`.
    * - A relative path to the reporter like `'./reporters/my-awesome-reporter.js'`.
    *
-   * You can pass options to the reporter in a tuple like `['json', { outputFile: './report.json' }]`.
+   * You can pass options to the reporter in a tuple like `['json', { outputFile: './report.json' }]`. If the property
+   * is not specified, Playwright uses the `'dot'` reporter when the CI environment variable is set, and the `'list'`
+   * reporter otherwise.
    *
    * Learn more in the [reporters guide](https://playwright.dev/docs/test-reporters).
    *
@@ -979,6 +1013,31 @@ interface TestConfig<TestArgs = {}, WorkerArgs = {}> {
    *   use: {
    *     baseURL: 'http://localhost:3000',
    *   },
+   * });
+   * ```
+   *
+   * If your webserver runs on varying ports, use `wait` to capture the port:
+   *
+   * ```js
+   * import { defineConfig } from '@playwright/test';
+   *
+   * export default defineConfig({
+   *   webServer: {
+   *     command: 'npm run start',
+   *     wait: {
+   *       stdout: /Listening on port (?<my_server_port>\d+)/
+   *     },
+   *   },
+   * });
+   * ```
+   *
+   * ```js
+   * import { test, expect } from '@playwright/test';
+   *
+   * test.use({ baseUrl: `http://localhost:${process.env.MY_SERVER_PORT ?? 3000}` });
+   *
+   * test('homepage', async ({ page }) => {
+   *   await page.goto('/');
    * });
    * ```
    *
@@ -1141,6 +1200,13 @@ interface TestConfig<TestArgs = {}, WorkerArgs = {}> {
        * for details.
        */
       pathTemplate?: string;
+
+      /**
+       * Controls how children of the snapshot root are matched against the actual accessibility tree. This is equivalent to
+       * adding a `/children` property at the top of every aria snapshot template. Individual snapshots can override this by
+       * including an explicit `/children` property.
+       */
+      children?: "contain"|"equal"|"deep-equal";
     };
 
     /**
@@ -1389,8 +1455,8 @@ interface TestConfig<TestArgs = {}, WorkerArgs = {}> {
   maxFailures?: number;
 
   /**
-   * Metadata contains key-value pairs to be included in the report. For example, HTML report will display it as
-   * key-value pairs, and JSON report will include metadata serialized as json.
+   * Metadata contains key-value pairs to be included in the report. For example, the JSON report will include metadata
+   * serialized as JSON.
    *
    * **Usage**
    *
@@ -1577,6 +1643,31 @@ interface TestConfig<TestArgs = {}, WorkerArgs = {}> {
   retries?: number;
 
   /**
+   * Controls when failed tests are retried. Defaults to `'immediate'`.
+   * - `'immediate'` - A failed test is retried as soon as a worker is available, interleaved with the rest of the
+   *   run. This is the default.
+   * - `'isolated'` - Retries are run at the end, after all other tests have finished, one by one in a single worker.
+   *   This minimizes the interference between retried tests and the rest of the suite, at the expense of the total
+   *   run time.
+   *
+   * Learn more about [test retries](https://playwright.dev/docs/test-retries#retries).
+   *
+   * **Usage**
+   *
+   * ```js
+   * // playwright.config.ts
+   * import { defineConfig } from '@playwright/test';
+   *
+   * export default defineConfig({
+   *   retries: 2,
+   *   retryStrategy: 'isolated',
+   * });
+   * ```
+   *
+   */
+  retryStrategy?: "immediate"|"isolated";
+
+  /**
    * Shard tests and execute only the selected shard. Specify in the one-based form like `{ total: 5, current: 2 }`.
    *
    * Learn more about [parallelism and sharding](https://playwright.dev/docs/test-parallel) with Playwright Test.
@@ -1715,6 +1806,8 @@ interface TestConfig<TestArgs = {}, WorkerArgs = {}> {
    *     config)
    * - `{testFileDir}` - Directories in relative path from `testDir` to **test file**.
    *   - Value: `page`
+   * - `{testFileBaseName}` - Test file name without the last extension.
+   *   - Value: `page-click.spec`
    * - `{testFileName}` - Test file name with extension.
    *   - Value: `page-click.spec.ts`
    * - `{testFilePath}` - Relative path from `testDir` to **test file**.
@@ -1749,6 +1842,26 @@ interface TestConfig<TestArgs = {}, WorkerArgs = {}> {
    * 1. Forward slashes `"/"` can be used as path separators on any platform.
    */
   snapshotPathTemplate?: string;
+
+  /**
+   * Tag or tags prepended to each test in the report. Useful for tagging your test run to differentiate between
+   * [CI environments](https://playwright.dev/docs/test-sharding#merging-reports-from-multiple-environments).
+   *
+   * Note that each tag must start with `@` symbol. Learn more about [tagging](https://playwright.dev/docs/test-annotations#tag-tests).
+   *
+   * **Usage**
+   *
+   * ```js
+   * // playwright.config.ts
+   * import { defineConfig } from '@playwright/test';
+   *
+   * export default defineConfig({
+   *   tag: process.env.CI_ENVIRONMENT_NAME,  // for example "@APIv2"
+   * });
+   * ```
+   *
+   */
+  tag?: string|Array<string>;
 
   /**
    * Directory that will be recursively scanned for test files. Defaults to the directory of the configuration file.
@@ -1853,7 +1966,7 @@ interface TestConfig<TestArgs = {}, WorkerArgs = {}> {
    * Whether to update expected snapshots with the actual results produced by the test run. Defaults to `'missing'`.
    * - `'all'` - All tests that are executed will update snapshots.
    * - `'changed'` - All tests that are executed will update snapshots that did not match. Matching snapshots will not
-   *   be updated.
+   *   be updated. Also creates missing snapshots.
    * - `'missing'` - Missing snapshots are created, for example when authoring a new test and running it for the first
    *   time. This is the default.
    * - `'none'` - No snapshots are updated.
@@ -1933,9 +2046,23 @@ export interface FullConfig<TestArgs = {}, WorkerArgs = {}> {
    */
   webServer: TestConfigWebServer | null;
   /**
+   * Snapshot of [`process.argv`](https://nodejs.org/api/process.html#processargv) captured in the runner process.
+   * Useful for reading custom command-line arguments — for example, args supplied after the `--` separator (`npx
+   * playwright test -- --build-path=./out`). Playwright does not parse these; consumers are responsible for slicing and
+   * interpreting them with any argument-parsing library.
+   */
+  argv: Array<string>;
+
+  /**
    * Path to the configuration file used to run the tests. The value is an empty string if no config file was used.
    */
   configFile?: string;
+
+  /**
+   * See
+   * [testConfig.failOnFlakyTests](https://playwright.dev/docs/api/class-testconfig#test-config-fail-on-flaky-tests).
+   */
+  failOnFlakyTests: boolean;
 
   /**
    * See [testConfig.forbidOnly](https://playwright.dev/docs/api/class-testconfig#test-config-forbid-only).
@@ -2026,6 +2153,11 @@ export interface FullConfig<TestArgs = {}, WorkerArgs = {}> {
      */
     current: number;
   };
+
+  /**
+   * Resolved global tags. See [testConfig.tag](https://playwright.dev/docs/api/class-testconfig#test-config-tag).
+   */
+  tags: Array<string>;
 
   /**
    * See [testConfig.updateSnapshots](https://playwright.dev/docs/api/class-testconfig#test-config-update-snapshots).
@@ -2326,6 +2458,11 @@ export interface TestInfo {
      * Optional description.
      */
     description?: string;
+
+    /**
+     * Optional location in the source where the annotation is added.
+     */
+    location?: Location;
   }>;
 
   /**
@@ -2576,14 +2713,16 @@ export type TestDetailsAnnotation = {
   description?: string;
 };
 
-export type TestAnnotation = TestDetailsAnnotation;
+export type TestAnnotation = TestDetailsAnnotation & {
+  location?: Location;
+};
 
 export type TestDetails = {
   tag?: string | string[];
   annotation?: TestDetailsAnnotation | TestDetailsAnnotation[];
 }
 
-type TestBody<TestArgs> = (args: TestArgs, testInfo: TestInfo) => Promise<void> | void;
+type TestBody<TestArgs> = (args: TestArgs, testInfo: TestInfo) => Promise<unknown> | unknown;
 type ConditionBody<TestArgs> = (args: TestArgs) => boolean;
 
 /**
@@ -4125,7 +4264,7 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
   /**
    * Skip a test. Playwright will not run the test past the `test.skip()` call.
    *
-   * Skipped tests are not supposed to be ever run. If you intent to fix the test, use
+   * Skipped tests are not supposed to be ever run. If you intend to fix the test, use
    * [test.fixme([title, details, body, condition, callback, description])](https://playwright.dev/docs/api/class-test#test-fixme)
    * instead.
    *
@@ -4180,7 +4319,7 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * });
    * ```
    *
-   * You can also call `test.skip()` without arguments inside the test body to always mark the test as failed. We
+   * You can also call `test.skip()` without arguments inside the test body to always skip the test. However, we
    * recommend using `test.skip(title, body)` instead.
    *
    * ```js
@@ -4197,16 +4336,16 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "skipped" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "skipped", based on test fixtures. Test or tests are marked as "skipped"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   skip(title: string, body: TestBody<TestArgs & WorkerArgs>): void;
   /**
    * Skip a test. Playwright will not run the test past the `test.skip()` call.
    *
-   * Skipped tests are not supposed to be ever run. If you intent to fix the test, use
+   * Skipped tests are not supposed to be ever run. If you intend to fix the test, use
    * [test.fixme([title, details, body, condition, callback, description])](https://playwright.dev/docs/api/class-test#test-fixme)
    * instead.
    *
@@ -4261,7 +4400,7 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * });
    * ```
    *
-   * You can also call `test.skip()` without arguments inside the test body to always mark the test as failed. We
+   * You can also call `test.skip()` without arguments inside the test body to always skip the test. However, we
    * recommend using `test.skip(title, body)` instead.
    *
    * ```js
@@ -4278,16 +4417,16 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "skipped" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "skipped", based on test fixtures. Test or tests are marked as "skipped"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   skip(title: string, details: TestDetails, body: TestBody<TestArgs & WorkerArgs>): void;
   /**
    * Skip a test. Playwright will not run the test past the `test.skip()` call.
    *
-   * Skipped tests are not supposed to be ever run. If you intent to fix the test, use
+   * Skipped tests are not supposed to be ever run. If you intend to fix the test, use
    * [test.fixme([title, details, body, condition, callback, description])](https://playwright.dev/docs/api/class-test#test-fixme)
    * instead.
    *
@@ -4342,7 +4481,7 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * });
    * ```
    *
-   * You can also call `test.skip()` without arguments inside the test body to always mark the test as failed. We
+   * You can also call `test.skip()` without arguments inside the test body to always skip the test. However, we
    * recommend using `test.skip(title, body)` instead.
    *
    * ```js
@@ -4359,16 +4498,16 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "skipped" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "skipped", based on test fixtures. Test or tests are marked as "skipped"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   skip(): void;
   /**
    * Skip a test. Playwright will not run the test past the `test.skip()` call.
    *
-   * Skipped tests are not supposed to be ever run. If you intent to fix the test, use
+   * Skipped tests are not supposed to be ever run. If you intend to fix the test, use
    * [test.fixme([title, details, body, condition, callback, description])](https://playwright.dev/docs/api/class-test#test-fixme)
    * instead.
    *
@@ -4423,7 +4562,7 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * });
    * ```
    *
-   * You can also call `test.skip()` without arguments inside the test body to always mark the test as failed. We
+   * You can also call `test.skip()` without arguments inside the test body to always skip the test. However, we
    * recommend using `test.skip(title, body)` instead.
    *
    * ```js
@@ -4440,16 +4579,16 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "skipped" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "skipped", based on test fixtures. Test or tests are marked as "skipped"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   skip(condition: boolean, description?: string): void;
   /**
    * Skip a test. Playwright will not run the test past the `test.skip()` call.
    *
-   * Skipped tests are not supposed to be ever run. If you intent to fix the test, use
+   * Skipped tests are not supposed to be ever run. If you intend to fix the test, use
    * [test.fixme([title, details, body, condition, callback, description])](https://playwright.dev/docs/api/class-test#test-fixme)
    * instead.
    *
@@ -4504,7 +4643,7 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * });
    * ```
    *
-   * You can also call `test.skip()` without arguments inside the test body to always mark the test as failed. We
+   * You can also call `test.skip()` without arguments inside the test body to always skip the test. However, we
    * recommend using `test.skip(title, body)` instead.
    *
    * ```js
@@ -4521,9 +4660,9 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "skipped" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "skipped", based on test fixtures. Test or tests are marked as "skipped"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   skip(callback: ConditionBody<TestArgs & WorkerArgs>, description?: string): void;
@@ -4600,9 +4739,9 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "fixme" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "fixme", based on test fixtures. Test or tests are marked as "fixme"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   fixme(title: string, body: TestBody<TestArgs & WorkerArgs>): void;
@@ -4678,9 +4817,9 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "fixme" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "fixme", based on test fixtures. Test or tests are marked as "fixme"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   fixme(title: string, details: TestDetails, body: TestBody<TestArgs & WorkerArgs>): void;
@@ -4756,9 +4895,9 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "fixme" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "fixme", based on test fixtures. Test or tests are marked as "fixme"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   fixme(): void;
@@ -4834,9 +4973,9 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "fixme" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "fixme", based on test fixtures. Test or tests are marked as "fixme"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   fixme(condition: boolean, description?: string): void;
@@ -4912,9 +5051,9 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    * description.
    * @param body Test body that takes one or two arguments: an object with fixtures and optional
    * [TestInfo](https://playwright.dev/docs/api/class-testinfo).
-   * @param condition Test is marked as "should fail" when the condition is `true`.
-   * @param callback A function that returns whether to mark as "should fail", based on test fixtures. Test or tests are marked as
-   * "should fail" when the return value is `true`.
+   * @param condition Test is marked as "fixme" when the condition is `true`.
+   * @param callback A function that returns whether to mark as "fixme", based on test fixtures. Test or tests are marked as "fixme"
+   * when the return value is `true`.
    * @param description Optional description that will be reflected in a test report.
    */
   fixme(callback: ConditionBody<TestArgs & WorkerArgs>, description?: string): void;
@@ -5443,6 +5582,29 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
      */
     only(title: string, details: TestDetails, body: TestBody<TestArgs & WorkerArgs>): void;
   }
+
+  /**
+   * Aborts the currently running test by throwing an error. The test is immediately marked as failed and execution
+   * stops. This is useful from inside a fixture or a route handler when you have detected an unrecoverable misuse and
+   * want to fail the test right away.
+   *
+   * **Usage**
+   *
+   * ```js
+   * import { test, expect } from '@playwright/test';
+   *
+   * test('does not publish to shared page', async ({ page }) => {
+   *   await page.route('**\/publish', route => {
+   *     test.abort('Tests must not publish to the shared page. Use the `clone` option.');
+   *     return route.abort();
+   *   });
+   *   // ...
+   * });
+   * ```
+   *
+   * @param message Optional message describing the reason for the abort. It will be included in the failure error.
+   */
+  abort(message?: string): never;
 
   /**
    * Marks a test as "slow". Slow test will be given triple the default timeout.
@@ -6165,7 +6327,7 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
    *     const name = this.constructor.name + '.' + (context.name as string);
    *     return test.step(name, async () => {
    *       return await target.call(this, ...args);
-   *     });
+   *     }, { box: true });
    *   };
    * }
    *
@@ -6324,7 +6486,7 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
      *     const name = this.constructor.name + '.' + (context.name as string);
      *     return test.step(name, async () => {
      *       return await target.call(this, ...args);
-     *     });
+     *     }, { box: true });
      *   };
      * }
      *
@@ -6568,13 +6730,13 @@ export type WorkerFixture<R, Args extends {}> = (args: Args, use: (r: R) => Prom
 type TestFixtureValue<R, Args extends {}> = Exclude<R, Function> | TestFixture<R, Args>;
 type WorkerFixtureValue<R, Args extends {}> = Exclude<R, Function> | WorkerFixture<R, Args>;
 export type Fixtures<T extends {} = {}, W extends {} = {}, PT extends {} = {}, PW extends {} = {}> = {
-  [K in keyof PW]?: WorkerFixtureValue<PW[K], W & PW> | [WorkerFixtureValue<PW[K], W & PW>, { scope: 'worker', timeout?: number | undefined, title?: string, box?: boolean }];
+  [K in keyof PW]?: WorkerFixtureValue<PW[K], W & PW> | [WorkerFixtureValue<PW[K], W & PW>, { scope: 'worker', timeout?: number | undefined, title?: string, box?: boolean | 'self' }];
 } & {
-  [K in keyof PT]?: TestFixtureValue<PT[K], T & W & PT & PW> | [TestFixtureValue<PT[K], T & W & PT & PW>, { scope: 'test', timeout?: number | undefined, title?: string, box?: boolean }];
+  [K in keyof PT]?: TestFixtureValue<PT[K], T & W & PT & PW> | [TestFixtureValue<PT[K], T & W & PT & PW>, { scope: 'test', timeout?: number | undefined, title?: string, box?: boolean | 'self' }];
 } & {
-  [K in Exclude<keyof W, keyof PW | keyof PT>]?: [WorkerFixtureValue<W[K], W & PW>, { scope: 'worker', auto?: boolean, option?: boolean, timeout?: number | undefined, title?: string, box?: boolean }];
+  [K in Exclude<keyof W, keyof PW | keyof PT>]?: [WorkerFixtureValue<W[K], W & PW>, { scope: 'worker', auto?: boolean, option?: boolean, timeout?: number | undefined, title?: string, box?: boolean | 'self' }];
 } & {
-  [K in Exclude<keyof T, keyof PW | keyof PT>]?: TestFixtureValue<T[K], T & W & PT & PW> | [TestFixtureValue<T[K], T & W & PT & PW>, { scope?: 'test', auto?: boolean, option?: boolean, timeout?: number | undefined, title?: string, box?: boolean }];
+  [K in Exclude<keyof T, keyof PW | keyof PT>]?: TestFixtureValue<T[K], T & W & PT & PW> | [TestFixtureValue<T[K], T & W & PT & PW>, { scope?: 'test', auto?: boolean, option?: boolean, timeout?: number | undefined, title?: string, box?: boolean | 'self' }];
 };
 
 type BrowserName = 'chromium' | 'firefox' | 'webkit';
@@ -6680,9 +6842,7 @@ export interface PlaywrightWorkerOptions {
   /**
    * Whether to run browser in headless mode. More details for
    * [Chromium](https://developers.google.com/web/updates/2017/04/headless-chrome) and
-   * [Firefox](https://hacks.mozilla.org/2017/12/using-headless-mode-in-firefox/). Defaults to `true` unless the
-   * [`devtools`](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-option-devtools) option is
-   * `true`.
+   * [Firefox](https://hacks.mozilla.org/2017/12/using-headless-mode-in-firefox/). Defaults to `true`.
    *
    * **Usage**
    *
@@ -6786,6 +6946,61 @@ export interface PlaywrightWorkerOptions {
    */
   connectOptions: ConnectOptions | undefined;
   /**
+   * **NOTE** This option trades test isolation for speed and is intended for component tests that drive a story gallery. Leave
+   * it unset for end-to-end tests - a fresh browser context per test is one of the core guarantees of Playwright Test.
+   *
+   * **Experimental.** When set to `true`, all tests in a worker process run in a single browser context that is reused
+   * between tests, instead of getting a brand new context per test. Defaults to `false`.
+   *
+   * Between tests, Playwright resets the state that component tests typically touch: it clears cookies, cache, local
+   * storage and IndexedDB of visited origins, unregisters service workers, closes extra pages, removes routes, bindings
+   * and init scripts, and re-applies the configured storage state, viewport and emulation options.
+   *
+   * This reset is best-effort, not a guarantee of isolation. State that is **not** reset includes:
+   * - Permissions granted with
+   *   [browserContext.grantPermissions(permissions[, options])](https://playwright.dev/docs/api/class-browsercontext#browser-context-grant-permissions)
+   *   during a test.
+   * - Runtime changes made through
+   *   [browserContext.setGeolocation(geolocation)](https://playwright.dev/docs/api/class-browsercontext#browser-context-set-geolocation),
+   *   [browserContext.setOffline(offline)](https://playwright.dev/docs/api/class-browsercontext#browser-context-set-offline)
+   *   and
+   *   [browserContext.setExtraHTTPHeaders(headers)](https://playwright.dev/docs/api/class-browsercontext#browser-context-set-extra-http-headers).
+   * - Browsing history, `window.name` and any browser-process-wide state.
+   *
+   * Additional restrictions:
+   * - The option is ignored when
+   *   [testOptions.video](https://playwright.dev/docs/api/class-testoptions#test-options-video) recording is enabled.
+   * - Only a few context options may differ between consecutive tests: `colorScheme`, `forcedColors`,
+   *   `reducedMotion`, `contrast`, `screen`, `userAgent`, `viewport` and `testIdAttribute`. Changing any other option
+   *   in [test.use(options)](https://playwright.dev/docs/api/class-test#test-use), for example `locale` or
+   *   `storageState`, silently forces a fresh context and negates the speedup.
+   * - Do not combine with
+   *   [testOptions.connectOptions](https://playwright.dev/docs/api/class-testoptions#test-options-connect-options)
+   *   pointing multiple workers at a shared browser - workers would compete for the single reusable context.
+   * - `recordHar` in
+   *   [testOptions.contextOptions](https://playwright.dev/docs/api/class-testoptions#test-options-context-options) is
+   *   not supported and produces no HAR file.
+   *
+   * **Usage**
+   *
+   * ```js
+   * // playwright.config.ts
+   * import { defineConfig } from '@playwright/test';
+   *
+   * export default defineConfig({
+   *   projects: [
+   *     {
+   *       name: 'components',
+   *       testDir: './tests/components',
+   *       use: { reuseContext: true },
+   *     },
+   *   ],
+   * });
+   * ```
+   *
+   */
+  reuseContext: boolean;
+  /**
    * Whether to automatically capture a screenshot after each test. Defaults to `'off'`.
    * - `'off'`: Do not capture screenshots.
    * - `'on'`: Capture screenshot after each test.
@@ -6809,14 +7024,21 @@ export interface PlaywrightWorkerOptions {
    */
   screenshot: ScreenshotMode | { mode: ScreenshotMode } & Pick<PageScreenshotOptions, 'fullPage' | 'omitBackground'>;
   /**
-   * Whether to record trace for each test. Defaults to `'off'`.
+   * Whether to record trace for each test. Defaults to `'off'`. The initial run of a test is the "first run";
+   * subsequent runs caused by [retries](https://playwright.dev/docs/test-retries) are "retries".
    * - `'off'`: Do not record trace.
-   * - `'on'`: Record trace for each test.
-   * - `'on-first-retry'`: Record trace only when retrying a test for the first time.
-   * - `'on-all-retries'`: Record trace only when retrying a test.
-   * - `'retain-on-failure'`: Record trace for each test. When test run passes, remove the recorded trace.
-   * - `'retain-on-first-failure'`: Record trace for the first run of each test, but not for retries. When test run
-   *   passes, remove the recorded trace.
+   * - `'on'`: Record and keep a trace for every run.
+   * - `'on-first-retry'`: Record and keep a trace only for the first retry of a test.
+   * - `'on-all-retries'`: Record and keep a trace for every retry.
+   * - `'retain-on-failure'`: Record a trace for every run, but keep it only for runs that failed. A failed run's
+   *   trace is kept even when a later retry passes.
+   * - `'retain-on-first-failure'`: Record a trace only for the first run of a test (not for retries), and keep it
+   *   only if that run failed.
+   * - `'retain-on-failure-and-retries'`: Record a trace for every run, and keep it for any run that failed or that is
+   *   a retry.
+   *
+   * See [trace modes](https://playwright.dev/docs/test-use-options#trace-modes) for a side-by-side comparison of what each mode records and
+   * keeps.
    *
    * For more control, pass an object that specifies `mode` and trace features to enable.
    *
@@ -6837,16 +7059,30 @@ export interface PlaywrightWorkerOptions {
    */
   trace: TraceMode | /** deprecated */ 'retry-with-trace' | { mode: TraceMode, snapshots?: boolean, screenshots?: boolean, sources?: boolean, attachments?: boolean };
   /**
-   * Whether to record video for each test. Defaults to `'off'`.
+   * Whether to record video for each test. Defaults to `'off'`. The initial run of a test is the "first run";
+   * subsequent runs caused by [retries](https://playwright.dev/docs/test-retries) are "retries".
    * - `'off'`: Do not record video.
-   * - `'on'`: Record video for each test.
-   * - `'retain-on-failure'`: Record video for each test, but remove all videos from successful test runs.
-   * - `'on-first-retry'`: Record video only when retrying a test for the first time.
+   * - `'on'`: Record and keep a video for every run.
+   * - `'on-first-retry'`: Record and keep a video only for the first retry of a test.
+   * - `'on-all-retries'`: Record and keep a video for every retry.
+   * - `'retain-on-failure'`: Record a video for every run, but keep it only for runs that failed. A failed run's
+   *   video is kept even when a later retry passes.
+   * - `'retain-on-first-failure'`: Record a video only for the first run of a test (not for retries), and keep it
+   *   only if that run failed.
+   * - `'retain-on-failure-and-retries'`: Record a video for every run, and keep it for any run that failed or that is
+   *   a retry.
+   *
+   * See [video modes](https://playwright.dev/docs/test-use-options#video-modes) for a side-by-side comparison of what each mode records and
+   * keeps.
    *
    * To control video size, pass an object with `mode` and `size` properties. If video size is not specified, it will be
    * equal to [testOptions.viewport](https://playwright.dev/docs/api/class-testoptions#test-options-viewport) scaled
    * down to fit into 800x800. If `viewport` is not configured explicitly the video size defaults to 800x450. Actual
    * picture of each page will be scaled down if necessary to fit the specified size.
+   *
+   * To annotate actions in the video, pass `show` with `action` and/or `test` sub-options. The `action` option controls
+   * visual highlights on interacted elements with an optional `delay` in milliseconds (defaults to `500`). The `test`
+   * option controls which test information is displayed as a status overlay.
    *
    * **Usage**
    *
@@ -6863,13 +7099,12 @@ export interface PlaywrightWorkerOptions {
    *
    * Learn more about [recording video](https://playwright.dev/docs/test-use-options#recording-options).
    */
-  video: VideoMode | /** deprecated */ 'retry-with-video' | { mode: VideoMode, size?: ViewportSize };
+  video: VideoMode | /** deprecated */ 'retry-with-video' | { mode: VideoMode, size?: ViewportSize, show?: { actions?: { duration?: number, position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right', fontSize?: number, cursor?: 'none' | 'pointer' }, test?: { level?: 'file' | 'title' | 'step', position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right', fontSize?: number } } };
 }
 
 export type ScreenshotMode = 'off' | 'on' | 'only-on-failure' | 'on-first-failure';
-export type TraceMode = 'off' | 'on' | 'retain-on-failure' | 'on-first-retry' | 'on-all-retries' | 'retain-on-first-failure';
-export type VideoMode = 'off' | 'on' | 'retain-on-failure' | 'on-first-retry';
-
+export type TraceMode = 'off' | 'on' | 'retain-on-failure' | 'on-first-retry' | 'on-all-retries' | 'retain-on-first-failure' | 'retain-on-failure-and-retries';
+export type VideoMode = 'off' | 'on' | 'retain-on-failure' | 'on-first-retry' | 'on-all-retries' | 'retain-on-first-failure' | 'retain-on-failure-and-retries';
 /**
  * Playwright Test provides many options to configure test environment,
  * [Browser](https://playwright.dev/docs/api/class-browser),
@@ -6975,6 +7210,10 @@ export interface PlaywrightTestOptions {
    * a single `pfxPath`, or their corresponding direct value equivalents (`cert` and `key`, or `pfx`). Optionally,
    * `passphrase` property should be provided if the certificate is encrypted. The `origin` property should be provided
    * with an exact match to the request origin that the certificate is valid for.
+   *
+   * Client certificate authentication is only active when at least one client certificate is provided. If you want to
+   * reject all client certificates sent by the server, you need to provide a client certificate with an `origin` that
+   * does not match any of the domains you plan to visit.
    *
    * **NOTE** When using WebKit on macOS, accessing `localhost` will not pick up client certificates. You can make it
    * work by replacing `localhost` with `local.playwright`.
@@ -7454,7 +7693,7 @@ export interface PlaywrightTestOptions {
   /**
    * Custom attribute to be used in
    * [page.getByTestId(testId)](https://playwright.dev/docs/api/class-page#page-get-by-test-id). `data-testid` is used
-   * by default.
+   * by default. To match elements with any of several attributes, pass them as a comma-separated list.
    *
    * **Usage**
    *
@@ -7465,6 +7704,19 @@ export interface PlaywrightTestOptions {
    * export default defineConfig({
    *   use: {
    *     testIdAttribute: 'pw-test-id',
+   *   },
+   * });
+   * ```
+   *
+   * Multiple attributes:
+   *
+   * ```js
+   * // playwright.config.ts
+   * import { defineConfig } from '@playwright/test';
+   *
+   * export default defineConfig({
+   *   use: {
+   *     testIdAttribute: 'data-pw,data-ti',
    *   },
    * });
    * ```
@@ -7522,6 +7774,12 @@ export interface PlaywrightWorkerArgs {
    */
   browser: Browser;
 }
+
+type StoryProps<Story> =
+  Story extends (props: infer Props) => any ? Props :
+  Story extends new (...args: any[]) => { $props: infer Props } ? Props :
+  Story extends new (props: infer Props, ...args: any[]) => any ? Props :
+  Story;
 
 /**
  * Playwright Test is based on the concept of the [test fixtures](https://playwright.dev/docs/test-fixtures). Test fixtures are used to
@@ -7614,6 +7872,48 @@ export interface PlaywrightTestArgs {
    *
    */
   request: APIRequestContext;
+  /**
+   * Mounts a component story and returns a [Locator](https://playwright.dev/docs/api/class-locator) pointing to the
+   * root element the story was rendered into. Scope your queries from the returned locator:
+   * `component.getByRole('button')`, not `page.getByRole('button')`.
+   *
+   * A **story** is a small wrapper component that embeds the component under test in one specific scenario: hard-coded
+   * props, mock data, providers, recorded callbacks. Stories are rendered by a **gallery** page that you implement and
+   * serve at [testOptions.baseURL](https://playwright.dev/docs/api/class-testoptions#test-options-base-url). The
+   * gallery exposes `window.mount(params)` and `window.unmount()` functions that render a story into its root element.
+   * Each call to [fixtures.mount(storyId[, props])](https://playwright.dev/docs/api/class-fixtures#fixtures-mount)
+   * navigates to [testOptions.baseURL](https://playwright.dev/docs/api/class-testoptions#test-options-base-url) and
+   * calls `window.mount()` with the story id and props, so tests are fully isolated from each other.
+   *
+   * **Usage**
+   *
+   * ```js
+   * test('click should expand', async ({ mount }) => {
+   *   const component = await mount('components/Expandable/Stateful');
+   *   await component.getByRole('button').click();
+   *   await expect(component.getByTestId('expanded')).toHaveValue('true');
+   * });
+   * ```
+   *
+   * Pass the story type as a template argument to type-check the props:
+   *
+   * ```js
+   * import type { WithTitle } from './Button.story';
+   *
+   * test('renders the title', async ({ mount }) => {
+   *   const component = await mount<typeof WithTitle>('Button/WithTitle', { title: 'Hello' });
+   *   await expect(component).toContainText('Hello');
+   * });
+   * ```
+   *
+   * The returned locator is augmented with two methods:
+   * - `update(props)` - re-renders the same story with new props without remounting, preserving component state;
+   * - `unmount()` - unmounts the story.
+   * @param storyId Identifier of the story to mount, as resolved by the gallery page. Conventionally, the story file path plus the
+   * exported story name, for example `'components/Button/Primary'`.
+   * @param props Optional plain, serializable props passed to the story.
+   */
+  mount: <Story = Record<string, any>>(storyId: string, props?: StoryProps<Story>) => Promise<Locator & { update(props?: StoryProps<Story>): Promise<void>, unmount(): Promise<void> }>;
 }
 
 type ExcludeProps<A, B> = {
@@ -7624,6 +7924,9 @@ type CustomProperties<T> = ExcludeProps<T, PlaywrightTestOptions & PlaywrightWor
 export type PlaywrightTestProject<TestArgs = {}, WorkerArgs = {}> = Project<PlaywrightTestOptions & CustomProperties<TestArgs>, PlaywrightWorkerOptions & CustomProperties<WorkerArgs>>;
 export type PlaywrightTestConfig<TestArgs = {}, WorkerArgs = {}> = Config<PlaywrightTestOptions & CustomProperties<TestArgs>, PlaywrightWorkerOptions & CustomProperties<WorkerArgs>>;
 
+// Use the global URLPattern type if available (Node.js 22+, modern browsers),
+// otherwise fall back to `never` so it disappears from union types.
+type URLPattern = typeof globalThis extends { URLPattern: new (...args: any) => infer T } ? T : never;
 type AsymmetricMatcher = Record<string, any>;
 
 interface AsymmetricMatchers {
@@ -7684,6 +7987,27 @@ interface AsymmetricMatchers {
    * @param expected Expected array that is a subset of the received value.
    */
   arrayContaining(sample: Array<unknown>): AsymmetricMatcher;
+  /**
+   * `expect.arrayOf()` matches array of objects created from the
+   * [`constructor`](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-array-of-option-constructor)
+   * or a corresponding primitive type. Use it inside
+   * [expect(value).toEqual(expected)](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-to-equal)
+   * to perform pattern matching.
+   *
+   * **Usage**
+   *
+   * ```js
+   * // Match instance of a class.
+   * class Example {}
+   * expect([new Example(), new Example()]).toEqual(expect.arrayOf(Example));
+   *
+   * // Match any string.
+   * expect(['a', 'b', 'c']).toEqual(expect.arrayOf(String));
+   * ```
+   *
+   * @param constructor Constructor of the expected object like `ExampleClass`, or a primitive boxed type like `Number`.
+   */
+  arrayOf(sample: unknown): AsymmetricMatcher;
   /**
    * Compares floating point numbers for approximate equality. Use this method inside
    * [expect(value).toEqual(expected)](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-to-equal)
@@ -7790,7 +8114,11 @@ interface AsymmetricMatchers {
  */
 interface GenericAssertions<R> {
   /**
-   * Makes the assertion check for the opposite condition. For example, the following code passes:
+   * Makes the assertion check for the opposite condition.
+   *
+   * **Usage**
+   *
+   * For example, the following code passes:
    *
    * ```js
    * const value = 1;
@@ -7799,6 +8127,34 @@ interface GenericAssertions<R> {
    *
    */
   not: GenericAssertions<R>;
+  /**
+   * Use `resolves` to unwrap the value of a fulfilled promise so any other matcher can be chained. If the promise is
+   * rejected the assertion fails.
+   *
+   * For example, this code tests that the promise resolves and that the resulting value is `'lemon'`:
+   *
+   * ```js
+   * test('resolves to lemon', async () => {
+   *   await expect(Promise.resolve('lemon')).resolves.toBe('lemon');
+   * });
+   * ```
+   *
+   */
+  resolves: GenericAssertions<R>;
+  /**
+   * Use `.rejects` to unwrap the reason of a rejected promise so any other matcher can be chained. If the promise is
+   * fulfilled the assertion fails.
+   *
+   * For example, this code tests that the promise rejects with reason `'octopus'`:
+   *
+   * ```js
+   * test('rejects to octopus', async () => {
+   *   await expect(Promise.reject(new Error('octopus'))).rejects.toThrow('octopus');
+   * });
+   * ```
+   *
+   */
+  rejects: GenericAssertions<R>;
   /**
    * Compares value with
    * [`expected`](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-to-be-option-expected) by
@@ -8067,6 +8423,7 @@ interface GenericAssertions<R> {
    * - [expect(value).any(constructor)](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-any)
    * - [expect(value).anything()](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-anything)
    * - [expect(value).arrayContaining(expected)](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-array-containing)
+   * - [expect(value).arrayOf(constructor)](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-array-of)
    * - [expect(value).closeTo(expected[, numDigits])](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-close-to)
    * - [expect(value).objectContaining(expected)](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-object-containing)
    * - [expect(value).stringContaining(expected)](https://playwright.dev/docs/api/class-genericassertions#generic-assertions-string-containing)
@@ -8358,7 +8715,7 @@ type PollMatchers<R, T, ExtendedMatchers> = {
 
 export type Expect<ExtendedMatchers = {}> = {
   <T = unknown>(actual: T, messageOrOptions?: string | { message?: string }): MakeMatchers<void, T, ExtendedMatchers>;
-  soft: <T = unknown>(actual: T, messageOrOptions?: string | { message?: string }) => MakeMatchers<void, T, ExtendedMatchers>;
+  soft: Expect<ExtendedMatchers>;
   poll: <T = unknown>(actual: () => T | Promise<T>, messageOrOptions?: string | { message?: string, timeout?: number, intervals?: number[] }) => PollMatchers<Promise<void>, T, ExtendedMatchers>;
   extend<MoreMatchers extends Record<string, (this: ExpectMatcherState, receiver: any, ...args: any[]) => MatcherReturnType | Promise<MatcherReturnType>>>(matchers: MoreMatchers): Expect<ExtendedMatchers & MoreMatchers>;
   configure: (configuration: {
@@ -8420,7 +8777,6 @@ export function mergeExpects<List extends any[]>(...expects: List): MergedExpect
 export { };
 
 
-
 /**
  * The [APIResponseAssertions](https://playwright.dev/docs/api/class-apiresponseassertions) class provides assertion
  * methods that can be used to make assertions about the
@@ -8451,8 +8807,11 @@ interface APIResponseAssertions {
   toBeOK(): Promise<void>;
 
   /**
-   * Makes the assertion check for the opposite condition. For example, this code tests that the response status is not
-   * successful:
+   * Makes the assertion check for the opposite condition.
+   *
+   * **Usage**
+   *
+   * For example, this code tests that the response status is not successful:
    *
    * ```js
    * await expect(response).not.toBeOK();
@@ -8495,6 +8854,13 @@ interface LocatorAssertions {
     attached?: boolean;
 
     /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
     timeout?: number;
@@ -8529,6 +8895,13 @@ interface LocatorAssertions {
     indeterminate?: boolean;
 
     /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
     timeout?: number;
@@ -8552,6 +8925,13 @@ interface LocatorAssertions {
    */
   toBeDisabled(options?: {
     /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
     timeout?: number;
@@ -8571,6 +8951,13 @@ interface LocatorAssertions {
    */
   toBeEditable(options?: {
     editable?: boolean;
+
+    /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
 
     /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
@@ -8593,6 +8980,13 @@ interface LocatorAssertions {
    */
   toBeEmpty(options?: {
     /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
     timeout?: number;
@@ -8614,6 +9008,13 @@ interface LocatorAssertions {
     enabled?: boolean;
 
     /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
     timeout?: number;
@@ -8632,6 +9033,13 @@ interface LocatorAssertions {
    * @param options
    */
   toBeFocused(options?: {
+    /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
     /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
@@ -8652,6 +9060,13 @@ interface LocatorAssertions {
    * @param options
    */
   toBeHidden(options?: {
+    /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
     /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
@@ -8683,6 +9098,13 @@ interface LocatorAssertions {
      * any positive ratio. Defaults to `0`.
      */
     ratio?: number;
+
+    /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
 
     /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
@@ -8717,6 +9139,13 @@ interface LocatorAssertions {
    * @param options
    */
   toBeVisible(options?: {
+    /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
     /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
@@ -8764,6 +9193,13 @@ interface LocatorAssertions {
    * @param options
    */
   toContainClass(expected: string|ReadonlyArray<string>, options?: {
+    /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
     /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
@@ -8832,6 +9268,13 @@ interface LocatorAssertions {
     ignoreCase?: boolean;
 
     /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
     timeout?: number;
@@ -8865,6 +9308,13 @@ interface LocatorAssertions {
     ignoreCase?: boolean;
 
     /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
     timeout?: number;
@@ -8891,6 +9341,13 @@ interface LocatorAssertions {
      * option takes precedence over the corresponding regular expression flag if specified.
      */
     ignoreCase?: boolean;
+
+    /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
 
     /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
@@ -8921,6 +9378,13 @@ interface LocatorAssertions {
     ignoreCase?: boolean;
 
     /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
     timeout?: number;
@@ -8949,6 +9413,13 @@ interface LocatorAssertions {
     ignoreCase?: boolean;
 
     /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
     timeout?: number;
@@ -8969,6 +9440,13 @@ interface LocatorAssertions {
    * @param options
    */
   toHaveAttribute(name: string, options?: {
+    /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
     /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
@@ -9006,6 +9484,13 @@ interface LocatorAssertions {
    */
   toHaveClass(expected: string|RegExp|ReadonlyArray<string|RegExp>, options?: {
     /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
     timeout?: number;
@@ -9025,6 +9510,13 @@ interface LocatorAssertions {
    * @param options
    */
   toHaveCount(count: number, options?: {
+    /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
     /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
@@ -9048,6 +9540,18 @@ interface LocatorAssertions {
    */
   toHaveCSS(name: string, value: string|RegExp, options?: {
     /**
+     * Pseudo-element to read computed styles from.
+     */
+    pseudo?: "before"|"after";
+
+    /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
     timeout?: number;
@@ -9068,6 +9572,13 @@ interface LocatorAssertions {
    * @param options
    */
   toHaveId(id: string|RegExp, options?: {
+    /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
     /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
@@ -9090,6 +9601,13 @@ interface LocatorAssertions {
    * @param options
    */
   toHaveJSProperty(name: string, value: any, options?: {
+    /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
     /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
@@ -9115,6 +9633,13 @@ interface LocatorAssertions {
    */
   toHaveRole(role: "alert"|"alertdialog"|"application"|"article"|"banner"|"blockquote"|"button"|"caption"|"cell"|"checkbox"|"code"|"columnheader"|"combobox"|"complementary"|"contentinfo"|"definition"|"deletion"|"dialog"|"directory"|"document"|"emphasis"|"feed"|"figure"|"form"|"generic"|"grid"|"gridcell"|"group"|"heading"|"img"|"insertion"|"link"|"list"|"listbox"|"listitem"|"log"|"main"|"marquee"|"math"|"meter"|"menu"|"menubar"|"menuitem"|"menuitemcheckbox"|"menuitemradio"|"navigation"|"none"|"note"|"option"|"paragraph"|"presentation"|"progressbar"|"radio"|"radiogroup"|"region"|"row"|"rowgroup"|"rowheader"|"scrollbar"|"search"|"searchbox"|"separator"|"slider"|"spinbutton"|"status"|"strong"|"subscript"|"superscript"|"switch"|"tab"|"table"|"tablist"|"tabpanel"|"term"|"textbox"|"time"|"timer"|"toolbar"|"tooltip"|"tree"|"treegrid"|"treeitem", options?: {
     /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
     timeout?: number;
@@ -9129,10 +9654,14 @@ interface LocatorAssertions {
    * ```js
    * const locator = page.getByRole('button');
    * await expect(locator).toHaveScreenshot('image.png');
+   *
+   * // Store the snapshot in the WebP format.
+   * await expect(locator).toHaveScreenshot('image.webp');
    * ```
    *
    * Note that screenshot assertions only work with Playwright test runner.
-   * @param name Snapshot name.
+   * @param name Snapshot name. Must have a `.png` or `.webp` extension, the screenshot is captured in the corresponding format.
+   * Both formats are lossless.
    * @param options
    */
   toHaveScreenshot(name: string|ReadonlyArray<string>, options?: {
@@ -9195,6 +9724,13 @@ interface LocatorAssertions {
     scale?: "css"|"device";
 
     /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
      * File name containing the stylesheet to apply while making the screenshot. This is where you can hide dynamic
      * elements, make elements invisible or change their properties to help you creating repeatable screenshots. This
      * stylesheet pierces the Shadow DOM and applies to the inner frames.
@@ -9217,6 +9753,9 @@ interface LocatorAssertions {
   /**
    * This function will wait until two consecutive locator screenshots yield the same result, and then compare the last
    * screenshot with the expectation.
+   *
+   * The snapshot is stored in the PNG format. To store it in the WebP format instead, pass a snapshot name with the
+   * `.webp` extension.
    *
    * **Usage**
    *
@@ -9286,6 +9825,13 @@ interface LocatorAssertions {
      * Defaults to `"css"`.
      */
     scale?: "css"|"device";
+
+    /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
 
     /**
      * File name containing the stylesheet to apply while making the screenshot. This is where you can hide dynamic
@@ -9368,6 +9914,13 @@ interface LocatorAssertions {
     ignoreCase?: boolean;
 
     /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
     timeout?: number;
@@ -9393,6 +9946,13 @@ interface LocatorAssertions {
    * @param options
    */
   toHaveValue(value: string|RegExp, options?: {
+    /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
     /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
@@ -9426,6 +9986,13 @@ interface LocatorAssertions {
    */
   toHaveValues(values: ReadonlyArray<string|RegExp>, options?: {
     /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
     timeout?: number;
@@ -9448,6 +10015,13 @@ interface LocatorAssertions {
    * @param options
    */
   toMatchAriaSnapshot(expected: string, options?: {
+    /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
     /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
@@ -9477,14 +10051,24 @@ interface LocatorAssertions {
     name?: string;
 
     /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
     timeout?: number;
   }): Promise<void>;
 
   /**
-   * Makes the assertion check for the opposite condition. For example, this code tests that the Locator doesn't contain
-   * text `"error"`:
+   * Makes the assertion check for the opposite condition.
+   *
+   * **Usage**
+   *
+   * For example, this code tests that the Locator doesn't contain text `"error"`:
    *
    * ```js
    * await expect(locator).not.toContainText('error');
@@ -9518,10 +10102,14 @@ interface PageAssertions {
    *
    * ```js
    * await expect(page).toHaveScreenshot('image.png');
+   *
+   * // Store the snapshot in the WebP format.
+   * await expect(page).toHaveScreenshot('image.webp');
    * ```
    *
    * Note that screenshot assertions only work with Playwright test runner.
-   * @param name Snapshot name.
+   * @param name Snapshot name. Must have a `.png` or `.webp` extension, the screenshot is captured in the corresponding format.
+   * Both formats are lossless.
    * @param options
    */
   toHaveScreenshot(name: string|ReadonlyArray<string>, options?: PageAssertionsToHaveScreenshotOptions): Promise<void>;
@@ -9529,6 +10117,9 @@ interface PageAssertions {
   /**
    * This function will wait until two consecutive page screenshots yield the same result, and then compare the last
    * screenshot with the expectation.
+   *
+   * The snapshot is stored in the PNG format. To store it in the WebP format instead, pass a snapshot name with the
+   * `.webp` extension.
    *
    * **Usage**
    *
@@ -9555,6 +10146,13 @@ interface PageAssertions {
    */
   toHaveTitle(titleOrRegExp: string|RegExp, options?: {
     /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
     timeout?: number;
@@ -9572,6 +10170,9 @@ interface PageAssertions {
    * // Check for the page URL to contain 'doc', followed by an optional 's', followed by '/'
    * await expect(page).toHaveURL(/docs?\//);
    *
+   * // Check for the page URL to match the URL pattern
+   * await expect(page).toHaveURL(new URLPattern({ pathname: '/docs/*' }));
+   *
    * // Check for the predicate to be satisfied
    * // For example: verify query strings
    * await expect(page).toHaveURL(url => {
@@ -9587,7 +10188,7 @@ interface PageAssertions {
    * against the current browser URL.
    * @param options
    */
-  toHaveURL(url: string|RegExp|((url: URL) => boolean), options?: {
+  toHaveURL(url: string|RegExp|URLPattern|((url: URL) => boolean), options?: {
     /**
      * Whether to perform case-insensitive match.
      * [`ignoreCase`](https://playwright.dev/docs/api/class-pageassertions#page-assertions-to-have-url-option-ignore-case)
@@ -9597,14 +10198,89 @@ interface PageAssertions {
     ignoreCase?: boolean;
 
     /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */
     timeout?: number;
   }): Promise<void>;
 
   /**
-   * Makes the assertion check for the opposite condition. For example, this code tests that the page URL doesn't
-   * contain `"error"`:
+   * Asserts that the page body matches the given [accessibility snapshot](https://playwright.dev/docs/aria-snapshots).
+   *
+   * **Usage**
+   *
+   * ```js
+   * await page.goto('https://demo.playwright.dev/todomvc/');
+   * await expect(page).toMatchAriaSnapshot(`
+   *   - heading "todos"
+   *   - textbox "What needs to be done?"
+   * `);
+   * ```
+   *
+   * @param expected
+   * @param options
+   */
+  toMatchAriaSnapshot(expected: string, options?: {
+    /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
+     * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
+     */
+    timeout?: number;
+  }): Promise<void>;
+
+  /**
+   * Asserts that the page body matches the given [accessibility snapshot](https://playwright.dev/docs/aria-snapshots).
+   *
+   * Snapshot is stored in a separate `.aria.yml` file in a location configured by
+   * `expect.toMatchAriaSnapshot.pathTemplate` and/or `snapshotPathTemplate` properties in the configuration file.
+   *
+   * **Usage**
+   *
+   * ```js
+   * await expect(page).toMatchAriaSnapshot();
+   * await expect(page).toMatchAriaSnapshot({ name: 'home.aria.yml' });
+   * ```
+   *
+   * @param options
+   */
+  toMatchAriaSnapshot(options?: {
+    /**
+     * Name of the snapshot to store in the snapshot folder corresponding to this test. Generates sequential names if not
+     * specified.
+     */
+    name?: string;
+
+    /**
+     * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+     * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+     * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+     */
+    signal?: AbortSignal;
+
+    /**
+     * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
+     */
+    timeout?: number;
+  }): Promise<void>;
+
+  /**
+   * Makes the assertion check for the opposite condition.
+   *
+   * **Usage**
+   *
+   * For example, this code tests that the page URL doesn't contain `"error"`:
    *
    * ```js
    * await expect(page).not.toHaveURL('error');
@@ -9767,6 +10443,12 @@ export interface TestInfoError {
   cause?: TestInfoError;
 
   /**
+   * Additional context for the error, such as the aria snapshot of the receiver at the time of an `expect(...)` matcher
+   * failure.
+   */
+  errorContext?: string;
+
+  /**
    * Error message. Set when [Error] (or its subclass) has been thrown.
    */
   message?: string;
@@ -9908,6 +10590,12 @@ export interface TestStepInfo {
    * @param description Optional description that will be reflected in a test report.
    */
   skip(condition: boolean, description?: string): void;
+
+  /**
+   * The full title path starting with the test file name, including the step titles. See also
+   * [testInfo.titlePath](https://playwright.dev/docs/api/class-testinfo#test-info-title-path).
+   */
+  titlePath: Array<string>;
 }
 
 /**
@@ -10037,6 +10725,13 @@ export interface PageAssertionsToHaveScreenshotOptions {
   scale?: "css"|"device";
 
   /**
+   * An optional [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) that can cancel the
+   * assertion. Aborting the signal fails the assertion like a timeout: if the signal is aborted while the assertion is
+   * retrying, or is already aborted before the assertion starts, the assertion fails without retrying further.
+   */
+  signal?: AbortSignal;
+
+  /**
    * File name containing the stylesheet to apply while making the screenshot. This is where you can hide dynamic
    * elements, make elements invisible or change their properties to help you creating repeatable screenshots. This
    * stylesheet pierces the Shadow DOM and applies to the inner frames.
@@ -10119,6 +10814,25 @@ interface TestConfigWebServer {
    * of the command. Default to `"ignore"`.
    */
   stdout?: "pipe"|"ignore";
+
+  /**
+   * Consider command started only when given output has been produced.
+   */
+  wait?: {
+    /**
+     * Regular expression to wait for in the `stdout` of the command output. Named capture groups are stored in the
+     * environment, for example `/Listening on port (?<my_server_port>\d+)/` will store the port number in
+     * `process.env['MY_SERVER_PORT']`.
+     */
+    stdout?: RegExp;
+
+    /**
+     * Regular expression to wait for in the `stderr` of the command output. Named capture groups are stored in the
+     * environment, for example `/Listening on port (?<my_server_port>\d+)/` will store the port number in
+     * `process.env['MY_SERVER_PORT']`.
+     */
+    stderr?: RegExp;
+  };
 
   /**
    * How long to wait for the process to start up and be available in milliseconds. Defaults to 60000.

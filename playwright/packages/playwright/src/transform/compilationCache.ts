@@ -18,8 +18,11 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { isWorkerProcess } from '../common/globals';
-import { sourceMapSupport } from '../utilsBundle';
+import sourceMapSupport from 'source-map-support';
+import { calculateSha1 } from '@utils/crypto';
+
+import { isWorkerProcess } from '../globals';
+import { packageRoot } from '../package';
 
 export type MemoryCache = {
   codePath: string;
@@ -98,31 +101,55 @@ function _innerAddToCompilationCacheAndSerialize(filename: string, entry: Memory
   };
 }
 
+// Cached code files are prefixed with a `// <sha1>` line so that a partially
+// written cache entry is detected and ignored when reading.
+function writeCodeCache(codePath: string, code: string) {
+  fs.writeFileSync(codePath, `// ${calculateSha1(code)}\n${code}`, 'utf8');
+}
+
+function readCodeCache(codePath: string): string {
+  const content = fs.readFileSync(codePath, 'utf8');
+  const newLineIndex = content.indexOf('\n');
+  if (newLineIndex === -1)
+    throw new Error(`Cache file is missing the hash header`);
+  const firstLine = content.substring(0, newLineIndex);
+  const sha1Length = 40;
+  if (firstLine.length !== '// '.length + sha1Length || !firstLine.startsWith('// '))
+    throw new Error(`Cache file has a malformed hash header`);
+  const code = content.substring(newLineIndex + 1);
+  if (calculateSha1(code) !== firstLine.substring('// '.length))
+    throw new Error(`Cache file content does not match the hash header`);
+  return code;
+}
+
 type CompilationCacheLookupResult = {
   serializedCache?: any;
   cachedCode?: string;
   addToCache?: (code: string, map: any | undefined | null, data: Map<string, any>) => { serializedCache?: any };
 };
 
-export function getFromCompilationCache(filename: string, hash: string, moduleUrl?: string): CompilationCacheLookupResult {
+export function getFromCompilationCache(filename: string, contentHash: string, moduleUrl?: string): CompilationCacheLookupResult {
   // First check the memory cache by filename, this cache will always work in the worker,
   // because we just compiled this file in the loader.
   const cache = memoryCache.get(filename);
   if (cache?.codePath) {
     try {
-      return { cachedCode: fs.readFileSync(cache.codePath, 'utf-8') };
+      return { cachedCode: readCodeCache(cache.codePath) };
     } catch {
       // Not able to read the file - fall through.
     }
   }
 
   // Then do the disk cache, this cache works between the Playwright Test runs.
-  const cachePath = calculateCachePath(filename, hash);
+  const filePathHash = calculateFilePathHash(filename);
+  const hashPrefix = filePathHash + '_' + contentHash.substring(0, 7);
+  const cacheFolderName = filePathHash.substring(0, 2);
+  const cachePath = calculateCachePath(filename, cacheFolderName, hashPrefix);
   const codePath = cachePath + '.js';
   const sourceMapPath = cachePath + '.map';
   const dataPath = cachePath + '.data';
   try {
-    const cachedCode = fs.readFileSync(codePath, 'utf8');
+    const cachedCode = readCodeCache(codePath);
     const serializedCache = _innerAddToCompilationCacheAndSerialize(filename, { codePath, sourceMapPath, dataPath, moduleUrl });
     return { cachedCode, serializedCache };
   } catch {
@@ -132,12 +159,14 @@ export function getFromCompilationCache(filename: string, hash: string, moduleUr
     addToCache: (code: string, map: any | undefined | null, data: Map<string, any>) => {
       if (isWorkerProcess())
         return {};
+      // Trim cache. This won't help with deleted files, but it will remove storing multiple copies of the same file
+      clearOldCacheEntries(cacheFolderName, filePathHash);
       fs.mkdirSync(path.dirname(cachePath), { recursive: true });
       if (map)
         fs.writeFileSync(sourceMapPath, JSON.stringify(map), 'utf8');
       if (data.size)
         fs.writeFileSync(dataPath, JSON.stringify(Object.fromEntries(data.entries()), undefined, 2), 'utf8');
-      fs.writeFileSync(codePath, code, 'utf8');
+      writeCodeCache(codePath, code);
       const serializedCache = _innerAddToCompilationCacheAndSerialize(filename, { codePath, sourceMapPath, dataPath, moduleUrl });
       return { serializedCache };
     }
@@ -168,9 +197,24 @@ export function addToCompilationCache(payload: SerializedCompilationCache) {
   }
 }
 
-function calculateCachePath(filePath: string, hash: string): string {
-  const fileName = path.basename(filePath, path.extname(filePath)).replace(/\W/g, '') + '_' + hash;
-  return path.join(cacheDir, hash[0] + hash[1], fileName);
+function calculateFilePathHash(filePath: string): string {
+  // Larger file path hash allows for fewer collisions compared to content, as we only check file path collision for deleting files
+  return calculateSha1(filePath).substring(0, 10);
+}
+
+function calculateCachePath(filePath: string, cacheFolderName: string, hashPrefix: string): string {
+  const fileName = hashPrefix + '_' + path.basename(filePath, path.extname(filePath)).replace(/\W/g, '');
+  return path.join(cacheDir, cacheFolderName, fileName);
+}
+
+function clearOldCacheEntries(cacheFolderName: string, filePathHash: string) {
+  const cachePath = path.join(cacheDir, cacheFolderName);
+  try {
+    const cachedRelevantFiles = fs.readdirSync(cachePath).filter(file => file.startsWith(filePathHash));
+    for (const file of cachedRelevantFiles)
+      fs.rmSync(path.join(cachePath, file), { force: true });
+  } catch {
+  }
 }
 
 // Since ESM and CJS collect dependencies differently,
@@ -203,7 +247,9 @@ export function setExternalDependencies(filename: string, deps: string[]) {
 }
 
 export function fileDependenciesForTest() {
-  return fileDependencies;
+  return Object.fromEntries([...fileDependencies.entries()].map(entry => (
+    [path.basename(entry[0]), [...entry[1]].map(f => path.basename(f)).sort()]
+  )));
 }
 
 export function collectAffectedTestFiles(changedFile: string, testFileCollector: Set<string>) {
@@ -256,7 +302,7 @@ export function dependenciesForTestFile(filename: string): Set<string> {
 // This is only used in the dev mode, specifically excluding
 // files from packages/playwright*. In production mode, node_modules covers
 // that.
-const kPlaywrightInternalPrefix = path.resolve(__dirname, '../../../playwright');
+const kPlaywrightInternalPrefix = packageRoot;
 
 export function belongsToNodeModules(file: string) {
   if (file.includes(`${path.sep}node_modules${path.sep}`))

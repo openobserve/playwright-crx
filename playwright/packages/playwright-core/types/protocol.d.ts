@@ -1,7 +1,7 @@
 // This is generated from /utils/protocol-types-generator/index.js
 type binary = string;
-export module Protocol {
-  export module Accessibility {
+export namespace Protocol {
+  export namespace Accessibility {
     /**
      * Unique accessibility node identifier.
      */
@@ -110,9 +110,10 @@ export module Protocol {
 - from 'live' to 'root': attributes which apply to nodes in live regions
 - from 'autocomplete' to 'valuetext': attributes which apply to widgets
 - from 'checked' to 'selected': states which apply to widgets
-- from 'activedescendant' to 'owns' - relationships between elements other than parent/child/sibling.
+- from 'activedescendant' to 'owns': relationships between elements other than parent/child/sibling
+- from 'activeFullscreenElement' to 'uninteresting': reasons why this noode is hidden
      */
-    export type AXPropertyName = "actions"|"busy"|"disabled"|"editable"|"focusable"|"focused"|"hidden"|"hiddenRoot"|"invalid"|"keyshortcuts"|"settable"|"roledescription"|"live"|"atomic"|"relevant"|"root"|"autocomplete"|"hasPopup"|"level"|"multiselectable"|"orientation"|"multiline"|"readonly"|"required"|"valuemin"|"valuemax"|"valuetext"|"checked"|"expanded"|"modal"|"pressed"|"selected"|"activedescendant"|"controls"|"describedby"|"details"|"errormessage"|"flowto"|"labelledby"|"owns"|"url";
+    export type AXPropertyName = "actions"|"busy"|"disabled"|"editable"|"focusable"|"focused"|"hidden"|"hiddenRoot"|"invalid"|"keyshortcuts"|"settable"|"roledescription"|"live"|"atomic"|"relevant"|"root"|"autocomplete"|"hasPopup"|"level"|"multiselectable"|"orientation"|"multiline"|"readonly"|"required"|"valuemin"|"valuemax"|"valuetext"|"checked"|"expanded"|"modal"|"pressed"|"selected"|"activedescendant"|"controls"|"describedby"|"details"|"errormessage"|"flowto"|"labelledby"|"owns"|"url"|"activeFullscreenElement"|"activeModalDialog"|"activeAriaModalDialog"|"ariaHiddenElement"|"ariaHiddenSubtree"|"emptyAlt"|"emptyText"|"inertElement"|"inertSubtree"|"labelContainer"|"labelFor"|"notRendered"|"notVisible"|"presentationalRole"|"probablyPresentational"|"inactiveCarouselTabContent"|"uninteresting";
     /**
      * A node in the accessibility tree.
      */
@@ -340,7 +341,85 @@ including nodes that are ignored for accessibility.
     }
   }
   
-  export module Animation {
+  /**
+   * A domain for ad-related metrics and data.
+   */
+  export namespace Ads {
+    /**
+     * Ad frame data.
+     */
+    export interface AdFrameData {
+      /**
+       * The DevTools frame token.
+       */
+      frameId: Page.FrameId;
+      /**
+       * The initial origin of the frame. To minimize the payload size, this is
+only sent once per frame.
+       */
+      initialOrigin?: string;
+      /**
+       * The network bytes of the frame.
+       */
+      networkBytes: number;
+      /**
+       * The CPU time of the frame, in milliseconds.
+       */
+      cpuTime: number;
+    }
+    /**
+     * Ad metrics for a page.
+     */
+    export interface AdMetrics {
+      /**
+       * The viewport ad density by area, represented as a percentage (an integer
+between 0 and 100).
+       */
+      viewportAdDensityByArea: number;
+      /**
+       * The time-weighted average of the viewport ad density by area, measured
+across the duration of the page.
+       */
+      averageViewportAdDensityByArea: number;
+      /**
+       * The number of ads currently visible within the viewport.
+       */
+      viewportAdCount: number;
+      /**
+       * The time-weighted average of the viewport ad count, measured across the
+duration of the page.
+       */
+      averageViewportAdCount: number;
+      /**
+       * The total ad CPU usage, in milliseconds.
+       */
+      totalAdCpuTime: number;
+      /**
+       * The total ad network bytes.
+       */
+      totalAdNetworkBytes: number;
+      /**
+       * The list of ad frames that have been updated since the last event.
+       */
+      updateAdFrames: AdFrameData[];
+      /**
+       * The list of ad frame IDs that have been removed since the last event.
+       */
+      removeAdFrames: Page.FrameId[];
+    }
+    
+    
+    /**
+     * Retrieves ad metrics for the current page.
+     */
+    export type getAdMetricsParameters = {
+    }
+    export type getAdMetricsReturnValue = {
+      metrics: AdMetrics;
+    }
+  }
+  
+  export namespace Animation {
     /**
      * Animation instance.
      */
@@ -440,9 +519,9 @@ Does not exist for animations with ScrollTimeline
        */
       iterationStart: number;
       /**
-       * `AnimationEffect`'s iterations.
+       * `AnimationEffect`'s iterations. Omitted if the value is infinite.
        */
-      iterations: number;
+      iterations?: number;
       /**
        * `AnimationEffect`'s iteration duration.
 Milliseconds for time based animations and
@@ -666,7 +745,7 @@ percentage [0 - 100] for scroll driven animations
   /**
    * Audits domain allows investigation of page violations and possible improvements.
    */
-  export module Audits {
+  export namespace Audits {
     /**
      * Information about a cookie that is affected by an inspector issue.
      */
@@ -694,7 +773,7 @@ percentage [0 - 100] for scroll driven animations
     export interface AffectedFrame {
       frameId: Page.FrameId;
     }
-    export type CookieExclusionReason = "ExcludeSameSiteUnspecifiedTreatedAsLax"|"ExcludeSameSiteNoneInsecure"|"ExcludeSameSiteLax"|"ExcludeSameSiteStrict"|"ExcludeInvalidSameParty"|"ExcludeSamePartyCrossPartyContext"|"ExcludeDomainNonASCII"|"ExcludeThirdPartyCookieBlockedInFirstPartySet"|"ExcludeThirdPartyPhaseout"|"ExcludePortMismatch"|"ExcludeSchemeMismatch";
+    export type CookieExclusionReason = "ExcludeSameSiteUnspecifiedTreatedAsLax"|"ExcludeSameSiteNoneInsecure"|"ExcludeSameSiteLax"|"ExcludeSameSiteStrict"|"ExcludeDomainNonASCII"|"ExcludeThirdPartyCookieBlockedInFirstPartySet"|"ExcludeThirdPartyPhaseout"|"ExcludePortMismatch"|"ExcludeSchemeMismatch";
     export type CookieWarningReason = "WarnSameSiteUnspecifiedCrossSiteContext"|"WarnSameSiteNoneInsecure"|"WarnSameSiteUnspecifiedLaxAllowUnsafe"|"WarnSameSiteStrictLaxDowngradeStrict"|"WarnSameSiteStrictCrossDowngradeStrict"|"WarnSameSiteStrictCrossDowngradeLax"|"WarnSameSiteLaxCrossDowngradeStrict"|"WarnSameSiteLaxCrossDowngradeLax"|"WarnAttributeValueExceedsMaxSize"|"WarnDomainNonASCII"|"WarnThirdPartyPhaseout"|"WarnCrossSiteRedirectDowngradeChangesInclusion"|"WarnDeprecationTrialMetadata"|"WarnThirdPartyCookieHeuristic";
     export type CookieOperation = "SetCookie"|"ReadCookie";
     /**
@@ -739,6 +818,14 @@ may be used by the front-end as additional context.
        * The recommended solution to the issue.
        */
       insight?: CookieIssueInsight;
+    }
+    export type PerformanceIssueType = "DocumentCookie";
+    /**
+     * Details for a performance issue.
+     */
+    export interface PerformanceIssueDetails {
+      performanceIssueType: PerformanceIssueType;
+      sourceCodeLocation?: SourceCodeLocation;
     }
     export type MixedContentResolutionStatus = "MixedContentBlocked"|"MixedContentAutomaticallyUpgraded"|"MixedContentWarning";
     export type MixedContentResourceType = "AttributionSrc"|"Audio"|"Beacon"|"CSPReport"|"Download"|"EventSource"|"Favicon"|"Font"|"Form"|"Frame"|"Image"|"Import"|"JSON"|"Manifest"|"Ping"|"PluginData"|"PluginResource"|"Prefetch"|"Resource"|"Script"|"ServiceWorker"|"SharedWorker"|"SpeculationRules"|"Stylesheet"|"Track"|"Video"|"Worker"|"XMLHttpRequest"|"XSLT";
@@ -836,15 +923,6 @@ transferred to a context that is not cross-origin isolated.
       isWarning: boolean;
       type: SharedArrayBufferIssueType;
     }
-    export interface LowTextContrastIssueDetails {
-      violatingNodeId: DOM.BackendNodeId;
-      violatingNodeSelector: string;
-      contrastRatio: number;
-      thresholdAA: number;
-      thresholdAAA: number;
-      fontSize: string;
-      fontWeight: string;
-    }
     /**
      * Details for a CORS related issue, e.g. a warning or error related to
 CORS RFC1918 enforcement.
@@ -859,8 +937,10 @@ CORS RFC1918 enforcement.
       clientSecurityState?: Network.ClientSecurityState;
     }
     export type AttributionReportingIssueType = "PermissionPolicyDisabled"|"UntrustworthyReportingOrigin"|"InsecureContext"|"InvalidHeader"|"InvalidRegisterTriggerHeader"|"SourceAndTriggerHeaders"|"SourceIgnored"|"TriggerIgnored"|"OsSourceIgnored"|"OsTriggerIgnored"|"InvalidRegisterOsSourceHeader"|"InvalidRegisterOsTriggerHeader"|"WebAndOsHeaders"|"NoWebOrOsSupport"|"NavigationRegistrationWithoutTransientUserActivation"|"InvalidInfoHeader"|"NoRegisterSourceHeader"|"NoRegisterTriggerHeader"|"NoRegisterOsSourceHeader"|"NoRegisterOsTriggerHeader"|"NavigationRegistrationUniqueScopeAlreadySet";
-    export type SharedDictionaryError = "UseErrorCrossOriginNoCorsRequest"|"UseErrorDictionaryLoadFailure"|"UseErrorMatchingDictionaryNotUsed"|"UseErrorUnexpectedContentDictionaryHeader"|"WriteErrorCossOriginNoCorsRequest"|"WriteErrorDisallowedBySettings"|"WriteErrorExpiredResponse"|"WriteErrorFeatureDisabled"|"WriteErrorInsufficientResources"|"WriteErrorInvalidMatchField"|"WriteErrorInvalidStructuredHeader"|"WriteErrorNavigationRequest"|"WriteErrorNoMatchField"|"WriteErrorNonListMatchDestField"|"WriteErrorNonSecureContext"|"WriteErrorNonStringIdField"|"WriteErrorNonStringInMatchDestList"|"WriteErrorNonStringMatchField"|"WriteErrorNonTokenTypeField"|"WriteErrorRequestAborted"|"WriteErrorShuttingDown"|"WriteErrorTooLongIdField"|"WriteErrorUnsupportedType";
-    export type SRIMessageSignatureError = "MissingSignatureHeader"|"MissingSignatureInputHeader"|"InvalidSignatureHeader"|"InvalidSignatureInputHeader"|"SignatureHeaderValueIsNotByteSequence"|"SignatureHeaderValueIsParameterized"|"SignatureHeaderValueIsIncorrectLength"|"SignatureInputHeaderMissingLabel"|"SignatureInputHeaderValueNotInnerList"|"SignatureInputHeaderValueMissingComponents"|"SignatureInputHeaderInvalidComponentType"|"SignatureInputHeaderInvalidComponentName"|"SignatureInputHeaderInvalidHeaderComponentParameter"|"SignatureInputHeaderInvalidDerivedComponentParameter"|"SignatureInputHeaderKeyIdLength"|"SignatureInputHeaderInvalidParameter"|"SignatureInputHeaderMissingRequiredParameters"|"ValidationFailedSignatureExpired"|"ValidationFailedInvalidLength"|"ValidationFailedSignatureMismatch"|"ValidationFailedIntegrityMismatch";
+    export type SharedDictionaryError = "UseErrorCrossOriginNoCorsRequest"|"UseErrorDictionaryLoadFailure"|"UseErrorMatchingDictionaryNotUsed"|"UseErrorUnexpectedContentDictionaryHeader"|"WriteErrorCossOriginNoCorsRequest"|"WriteErrorDisallowedBySettings"|"WriteErrorExpiredResponse"|"WriteErrorFeatureDisabled"|"WriteErrorInsufficientResources"|"WriteErrorInvalidMatchField"|"WriteErrorInvalidStructuredHeader"|"WriteErrorInvalidTTLField"|"WriteErrorNavigationRequest"|"WriteErrorNoMatchField"|"WriteErrorNonIntegerTTLField"|"WriteErrorNonListMatchDestField"|"WriteErrorNonSecureContext"|"WriteErrorNonStringIdField"|"WriteErrorNonStringInMatchDestList"|"WriteErrorInvalidMatchDestList"|"WriteErrorNonStringMatchField"|"WriteErrorNonTokenTypeField"|"WriteErrorRequestAborted"|"WriteErrorShuttingDown"|"WriteErrorTooLongIdField"|"WriteErrorUnsupportedType";
+    export type SRIMessageSignatureError = "MissingSignatureHeader"|"MissingSignatureInputHeader"|"InvalidSignatureHeader"|"InvalidSignatureInputHeader"|"SignatureHeaderValueIsNotByteSequence"|"SignatureHeaderValueIsParameterized"|"SignatureHeaderValueIsIncorrectLength"|"SignatureInputHeaderMissingLabel"|"SignatureInputHeaderValueNotInnerList"|"SignatureInputHeaderValueMissingComponents"|"SignatureInputHeaderInvalidComponentType"|"SignatureInputHeaderInvalidComponentName"|"SignatureInputHeaderInvalidHeaderComponentParameter"|"SignatureInputHeaderInvalidDerivedComponentParameter"|"SignatureInputHeaderKeyIdLength"|"SignatureInputHeaderInvalidParameter"|"SignatureInputHeaderMissingRequiredParameters"|"ValidationFailedSignatureExpired"|"ValidationFailedInvalidLength"|"ValidationFailedSignatureMismatch"|"ValidationFailedIntegrityMismatch"|"SignatureBaseUnknownDerivedComponent"|"SignatureBaseMissingHeader"|"SignatureBaseInvalidUnencodedDigest"|"SignatureBaseUnsupportedComponent";
+    export type UnencodedDigestError = "MalformedDictionary"|"UnknownAlgorithm"|"IncorrectDigestType"|"IncorrectDigestLength";
+    export type ConnectionAllowlistError = "InvalidHeader"|"MoreThanOneList"|"ItemNotInnerList"|"InvalidAllowlistItemType"|"ReportingEndpointNotToken"|"InvalidUrlPattern";
     /**
      * Details for issues around "Attribution Reporting API" usage.
 Explainer: https://github.com/WICG/attribution-reporting-api
@@ -900,7 +980,15 @@ instead of "limited-quirks".
       integrityAssertions: string[];
       request: AffectedRequest;
     }
-    export type GenericIssueErrorType = "FormLabelForNameError"|"FormDuplicateIdForInputError"|"FormInputWithNoLabelError"|"FormAutocompleteAttributeEmptyError"|"FormEmptyIdAndNameAttributesForInputError"|"FormAriaLabelledByToNonExistingId"|"FormInputAssignedAutocompleteValueToIdOrNameAttributeError"|"FormLabelHasNeitherForNorNestedInput"|"FormLabelForMatchesNonExistingIdError"|"FormInputHasWrongButWellIntendedAutocompleteValueError"|"ResponseWasBlockedByORB";
+    export interface UnencodedDigestIssueDetails {
+      error: UnencodedDigestError;
+      request: AffectedRequest;
+    }
+    export interface ConnectionAllowlistIssueDetails {
+      error: ConnectionAllowlistError;
+      request: AffectedRequest;
+    }
+    export type GenericIssueErrorType = "FormLabelForNameError"|"FormDuplicateIdForInputError"|"FormInputWithNoLabelError"|"FormAutocompleteAttributeEmptyError"|"FormEmptyIdAndNameAttributesForInputError"|"FormAriaLabelledByToNonExistingIdError"|"FormInputAssignedAutocompleteValueToIdOrNameAttributeError"|"FormLabelHasNeitherForNorNestedInputError"|"FormLabelForMatchesNonExistingIdError"|"FormInputHasWrongButWellIntendedAutocompleteValueError"|"ResponseWasBlockedByORB"|"NavigationEntryMarkedSkippable"|"BackUINavigationWouldSkipAd"|"AutofillAndManualTextPolicyControlledFeaturesInfo"|"AutofillPolicyControlledFeatureInfo"|"ManualTextPolicyControlledFeatureInfo"|"FormModelContextParameterMissingTitleAndDescription"|"FormModelContextMissingToolName"|"FormModelContextMissingToolDescription"|"FormModelContextRequiredParameterMissingName"|"FormModelContextParameterMissingName";
     /**
      * Depending on the concrete errorType, different properties are set.
      */
@@ -959,7 +1047,7 @@ Should be updated alongside RequestIdTokenStatus in
 third_party/blink/public/mojom/devtools/inspector_issue.mojom to include
 all cases except for success.
      */
-    export type FederatedAuthRequestIssueReason = "ShouldEmbargo"|"TooManyRequests"|"WellKnownHttpNotFound"|"WellKnownNoResponse"|"WellKnownInvalidResponse"|"WellKnownListEmpty"|"WellKnownInvalidContentType"|"ConfigNotInWellKnown"|"WellKnownTooBig"|"ConfigHttpNotFound"|"ConfigNoResponse"|"ConfigInvalidResponse"|"ConfigInvalidContentType"|"ClientMetadataHttpNotFound"|"ClientMetadataNoResponse"|"ClientMetadataInvalidResponse"|"ClientMetadataInvalidContentType"|"IdpNotPotentiallyTrustworthy"|"DisabledInSettings"|"DisabledInFlags"|"ErrorFetchingSignin"|"InvalidSigninResponse"|"AccountsHttpNotFound"|"AccountsNoResponse"|"AccountsInvalidResponse"|"AccountsListEmpty"|"AccountsInvalidContentType"|"IdTokenHttpNotFound"|"IdTokenNoResponse"|"IdTokenInvalidResponse"|"IdTokenIdpErrorResponse"|"IdTokenCrossSiteIdpErrorResponse"|"IdTokenInvalidRequest"|"IdTokenInvalidContentType"|"ErrorIdToken"|"Canceled"|"RpPageNotVisible"|"SilentMediationFailure"|"ThirdPartyCookiesBlocked"|"NotSignedInWithIdp"|"MissingTransientUserActivation"|"ReplacedByActiveMode"|"InvalidFieldsSpecified"|"RelyingPartyOriginIsOpaque"|"TypeNotMatching"|"UiDismissedNoEmbargo"|"CorsError"|"SuppressedBySegmentationPlatform";
+    export type FederatedAuthRequestIssueReason = "ShouldEmbargo"|"TooManyRequests"|"WellKnownHttpNotFound"|"WellKnownNoResponse"|"WellKnownInvalidResponse"|"WellKnownListEmpty"|"WellKnownInvalidContentType"|"ConfigNotInWellKnown"|"WellKnownTooBig"|"ConfigHttpNotFound"|"ConfigNoResponse"|"ConfigInvalidResponse"|"ConfigInvalidContentType"|"IdpNotPotentiallyTrustworthy"|"DisabledInSettings"|"DisabledInFlags"|"ErrorFetchingSignin"|"InvalidSigninResponse"|"AccountsHttpNotFound"|"AccountsNoResponse"|"AccountsInvalidResponse"|"AccountsListEmpty"|"AccountsInvalidContentType"|"IdTokenHttpNotFound"|"IdTokenNoResponse"|"IdTokenInvalidResponse"|"IdTokenIdpErrorResponse"|"IdTokenCrossSiteIdpErrorResponse"|"IdTokenInvalidRequest"|"IdTokenInvalidContentType"|"ErrorIdToken"|"Canceled"|"RpPageNotVisible"|"SilentMediationFailure"|"NotSignedInWithIdp"|"MissingTransientUserActivation"|"ReplacedByActiveMode"|"RelyingPartyOriginIsOpaque"|"TypeNotMatching"|"UiDismissedNoEmbargo"|"CorsError"|"SuppressedBySegmentationPlatform";
     export interface FederatedAuthUserInfoRequestIssueDetails {
       federatedAuthUserInfoRequestIssueReason: FederatedAuthUserInfoRequestIssueReason;
     }
@@ -969,6 +1057,15 @@ Should be updated alongside FederatedAuthUserInfoRequestResult in
 third_party/blink/public/mojom/devtools/inspector_issue.mojom.
      */
     export type FederatedAuthUserInfoRequestIssueReason = "NotSameOrigin"|"NotIframe"|"NotPotentiallyTrustworthy"|"NoApiPermission"|"NotSignedInWithIdp"|"NoAccountSharingPermission"|"InvalidConfigOrWellKnown"|"InvalidAccountsResponse"|"NoReturningUserFromFetchedAccounts";
+    export interface EmailVerificationRequestIssueDetails {
+      emailVerificationRequestIssueReason: EmailVerificationRequestIssueReason;
+    }
+    /**
+     * Represents the failure reason when an email verification request fails.
+Should be updated alongside EmailVerificationRequestResult in
+third_party/blink/public/mojom/devtools/inspector_issue.mojom.
+     */
+    export type EmailVerificationRequestIssueReason = "InvalidEmail"|"DnsFetchFailed"|"DnsInvalidRecord"|"WellKnownHttpNotFound"|"WellKnownNoResponse"|"WellKnownInvalidResponse"|"WellKnownListEmpty"|"WellKnownInvalidContentType"|"WellKnownMissingIssuanceEndpoint"|"WellKnownIssuanceEndpointCrossOrigin"|"WellKnownUnsupportedSigningAlgorithm"|"TokenHttpNotFound"|"TokenNoResponse"|"TokenInvalidResponse"|"TokenInvalidContentType"|"TokenMalformedSdJwt"|"TokenInvalidSdJwt"|"KeyBindingSigningFailed"|"RpOriginIsOpaque"|"WellKnownMissingAccountsEndpoint"|"UserLoggedOut"|"WellKnownAccountsEndpointCrossOrigin"|"AccountsHttpNotFound"|"AccountsNoResponse"|"AccountsInvalidResponse"|"AccountsInvalidContentType"|"AccountsEmptyList"|"EmailVerificationWellKnownHttpNotFound"|"EmailVerificationWellKnownNoResponse"|"EmailVerificationWellKnownInvalidResponse"|"EmailVerificationWellKnownInvalidContentType"|"JwksHttpNotFound"|"JwksInvalidResponse"|"TokenVerificationSdJwtUnsupportedHeaderAlg"|"TokenVerificationSdJwtInvalidTyp"|"TokenVerificationSdJwtMissingIss"|"TokenVerificationSdJwtMissingIat"|"TokenVerificationSdJwtMissingCnf"|"TokenVerificationSdJwtMissingEmail"|"TokenVerificationSdJwtInvalidIssuedAt"|"TokenVerificationSdJwtInvalidIssuer"|"TokenVerificationSdJwtJwksMissingKeys"|"TokenVerificationSdJwtSignatureFailed"|"TokenVerificationSdJwtInvalidEmailVerified"|"TokenVerificationSdJwtInvalidEmail"|"TokenVerificationSdJwtInvalidHolderKey"|"TokenVerificationKbInvalidTyp"|"TokenVerificationKbMissingAud"|"TokenVerificationKbMissingNonce"|"TokenVerificationKbMissingIat"|"TokenVerificationKbMissingSdHash"|"TokenVerificationKbInvalidIssuedAt"|"TokenVerificationKbInvalidAudience"|"TokenVerificationKbInvalidNonce"|"TokenVerificationKbInvalidSdHash"|"TokenVerificationKbMissingCnf"|"TokenVerificationKbSignatureFailed";
     /**
      * This issue tracks client hints related issues. It's used to deprecate old
 features, encourage the use of new ones, and provide general guidance.
@@ -999,13 +1096,13 @@ features, encourage the use of new ones, and provide general guidance.
        */
       partitioningBlobURLInfo: PartitioningBlobURLInfo;
     }
-    export type SelectElementAccessibilityIssueReason = "DisallowedSelectChild"|"DisallowedOptGroupChild"|"NonPhrasingContentOptionChild"|"InteractiveContentOptionChild"|"InteractiveContentLegendChild";
+    export type ElementAccessibilityIssueReason = "DisallowedSelectChild"|"DisallowedOptGroupChild"|"NonPhrasingContentOptionChild"|"InteractiveContentOptionChild"|"InteractiveContentLegendChild"|"InteractiveContentSummaryDescendant";
     /**
-     * This issue warns about errors in the select element content model.
+     * This issue warns about errors in the select or summary element content model.
      */
-    export interface SelectElementAccessibilityIssueDetails {
+    export interface ElementAccessibilityIssueDetails {
       nodeId: DOM.BackendNodeId;
-      selectElementAccessibilityIssueReason: SelectElementAccessibilityIssueReason;
+      elementAccessibilityIssueReason: ElementAccessibilityIssueReason;
       hasDisallowedAttributes: boolean;
     }
     export type StyleSheetLoadingIssueReason = "LateImportRule"|"RequestFailed";
@@ -1045,7 +1142,7 @@ registrations being ignored.
        */
       propertyValue?: string;
     }
-    export type UserReidentificationIssueType = "BlockedFrameNavigation"|"BlockedSubresource";
+    export type UserReidentificationIssueType = "BlockedFrameNavigation"|"BlockedSubresource"|"NoisedCanvasReadback";
     /**
      * This issue warns about uses of APIs that may be considered misuse to
 re-identify users.
@@ -1056,13 +1153,71 @@ re-identify users.
        * Applies to BlockedFrameNavigation and BlockedSubresource issue types.
        */
       request?: AffectedRequest;
+      /**
+       * Applies to NoisedCanvasReadback issue type.
+       */
+      sourceCodeLocation?: SourceCodeLocation;
+    }
+    export type PermissionElementIssueType = "InvalidType"|"FencedFrameDisallowed"|"CspFrameAncestorsMissing"|"PermissionsPolicyBlocked"|"PaddingRightUnsupported"|"PaddingBottomUnsupported"|"InsetBoxShadowUnsupported"|"RequestInProgress"|"UntrustedEvent"|"RegistrationFailed"|"TypeNotSupported"|"InvalidTypeActivation"|"SecurityChecksFailed"|"ActivationDisabled"|"GeolocationDeprecated"|"InvalidDisplayStyle"|"NonOpaqueColor"|"LowContrast"|"FontSizeTooSmall"|"FontSizeTooLarge"|"InvalidSizeValue"|"NonSecureContext"|"MissingTransientUserActivation";
+    /**
+     * This issue warns about improper usage of the <permission> element.
+     */
+    export interface PermissionElementIssueDetails {
+      issueType: PermissionElementIssueType;
+      /**
+       * The value of the type attribute.
+       */
+      type?: string;
+      /**
+       * The node ID of the <permission> element.
+       */
+      nodeId?: DOM.BackendNodeId;
+      /**
+       * True if the issue is a warning, false if it is an error.
+       */
+      isWarning?: boolean;
+      /**
+       * Fields for message construction:
+Used for messages that reference a specific permission name
+       */
+      permissionName?: string;
+      /**
+       * Used for messages about occlusion
+       */
+      occluderNodeInfo?: string;
+      /**
+       * Used for messages about occluder's parent
+       */
+      occluderParentNodeInfo?: string;
+      /**
+       * Used for messages about activation disabled reason
+       */
+      disableReason?: string;
+    }
+    /**
+     * The issue warns about blocked calls to privacy sensitive APIs via the
+Selective Permissions Intervention.
+     */
+    export interface SelectivePermissionsInterventionIssueDetails {
+      /**
+       * Which API was intervened on.
+       */
+      apiName: string;
+      /**
+       * Why the ad script using the API is considered an ad.
+       */
+      adAncestry: Network.AdAncestry;
+      /**
+       * The stack trace at the time of the intervention.
+       */
+      stackTrace?: Runtime.StackTrace;
     }
     /**
      * A unique identifier for the type of issue. Each type may use one of the
 optional fields in InspectorIssueDetails to convey more specific
 information about the kind of issue.
      */
-    export type InspectorIssueCode = "CookieIssue"|"MixedContentIssue"|"BlockedByResponseIssue"|"HeavyAdIssue"|"ContentSecurityPolicyIssue"|"SharedArrayBufferIssue"|"LowTextContrastIssue"|"CorsIssue"|"AttributionReportingIssue"|"QuirksModeIssue"|"PartitioningBlobURLIssue"|"NavigatorUserAgentIssue"|"GenericIssue"|"DeprecationIssue"|"ClientHintIssue"|"FederatedAuthRequestIssue"|"BounceTrackingIssue"|"CookieDeprecationMetadataIssue"|"StylesheetLoadingIssue"|"FederatedAuthUserInfoRequestIssue"|"PropertyRuleIssue"|"SharedDictionaryIssue"|"SelectElementAccessibilityIssue"|"SRIMessageSignatureIssue"|"UserReidentificationIssue";
+    export type InspectorIssueCode = "CookieIssue"|"MixedContentIssue"|"BlockedByResponseIssue"|"HeavyAdIssue"|"ContentSecurityPolicyIssue"|"SharedArrayBufferIssue"|"CorsIssue"|"AttributionReportingIssue"|"QuirksModeIssue"|"PartitioningBlobURLIssue"|"NavigatorUserAgentIssue"|"GenericIssue"|"DeprecationIssue"|"ClientHintIssue"|"FederatedAuthRequestIssue"|"BounceTrackingIssue"|"CookieDeprecationMetadataIssue"|"StylesheetLoadingIssue"|"FederatedAuthUserInfoRequestIssue"|"PropertyRuleIssue"|"SharedDictionaryIssue"|"ElementAccessibilityIssue"|"SRIMessageSignatureIssue"|"UnencodedDigestIssue"|"ConnectionAllowlistIssue"|"UserReidentificationIssue"|"PermissionElementIssue"|"PerformanceIssue"|"SelectivePermissionsInterventionIssue"|"EmailVerificationRequestIssue";
     /**
      * This struct holds a list of optional fields with additional information
 specific to the kind of issue. When adding a new issue code, please also
@@ -1075,7 +1230,6 @@ add a new optional field to this type.
       heavyAdIssueDetails?: HeavyAdIssueDetails;
       contentSecurityPolicyIssueDetails?: ContentSecurityPolicyIssueDetails;
       sharedArrayBufferIssueDetails?: SharedArrayBufferIssueDetails;
-      lowTextContrastIssueDetails?: LowTextContrastIssueDetails;
       corsIssueDetails?: CorsIssueDetails;
       attributionReportingIssueDetails?: AttributionReportingIssueDetails;
       quirksModeIssueDetails?: QuirksModeIssueDetails;
@@ -1091,9 +1245,15 @@ add a new optional field to this type.
       propertyRuleIssueDetails?: PropertyRuleIssueDetails;
       federatedAuthUserInfoRequestIssueDetails?: FederatedAuthUserInfoRequestIssueDetails;
       sharedDictionaryIssueDetails?: SharedDictionaryIssueDetails;
-      selectElementAccessibilityIssueDetails?: SelectElementAccessibilityIssueDetails;
+      elementAccessibilityIssueDetails?: ElementAccessibilityIssueDetails;
       sriMessageSignatureIssueDetails?: SRIMessageSignatureIssueDetails;
+      unencodedDigestIssueDetails?: UnencodedDigestIssueDetails;
+      connectionAllowlistIssueDetails?: ConnectionAllowlistIssueDetails;
       userReidentificationIssueDetails?: UserReidentificationIssueDetails;
+      permissionElementIssueDetails?: PermissionElementIssueDetails;
+      performanceIssueDetails?: PerformanceIssueDetails;
+      selectivePermissionsInterventionIssueDetails?: SelectivePermissionsInterventionIssueDetails;
+      emailVerificationRequestIssueDetails?: EmailVerificationRequestIssueDetails;
     }
     /**
      * A unique id for a DevTools inspector issue. Allows other entities (e.g.
@@ -1169,18 +1329,6 @@ applies to images.
     export type enableReturnValue = {
     }
     /**
-     * Runs the contrast check for the target page. Found issues are reported
-using Audits.issueAdded event.
-     */
-    export type checkContrastParameters = {
-      /**
-       * Whether to report WCAG AAA level issues. Default is false.
-       */
-      reportAAA?: boolean;
-    }
-    export type checkContrastReturnValue = {
-    }
-    /**
      * Runs the form issues check for the target page. Found issues are reported
 using Audits.issueAdded event.
      */
@@ -1192,128 +1340,9 @@ using Audits.issueAdded event.
   }
   
   /**
-   * Defines commands and events for browser extensions.
-   */
-  export module Extensions {
-    /**
-     * Storage areas.
-     */
-    export type StorageArea = "session"|"local"|"sync"|"managed";
-    
-    
-    /**
-     * Installs an unpacked extension from the filesystem similar to
---load-extension CLI flags. Returns extension ID once the extension
-has been installed. Available if the client is connected using the
---remote-debugging-pipe flag and the --enable-unsafe-extension-debugging
-flag is set.
-     */
-    export type loadUnpackedParameters = {
-      /**
-       * Absolute file path.
-       */
-      path: string;
-    }
-    export type loadUnpackedReturnValue = {
-      /**
-       * Extension id.
-       */
-      id: string;
-    }
-    /**
-     * Uninstalls an unpacked extension (others not supported) from the profile.
-Available if the client is connected using the --remote-debugging-pipe flag
-and the --enable-unsafe-extension-debugging.
-     */
-    export type uninstallParameters = {
-      /**
-       * Extension id.
-       */
-      id: string;
-    }
-    export type uninstallReturnValue = {
-    }
-    /**
-     * Gets data from extension storage in the given `storageArea`. If `keys` is
-specified, these are used to filter the result.
-     */
-    export type getStorageItemsParameters = {
-      /**
-       * ID of extension.
-       */
-      id: string;
-      /**
-       * StorageArea to retrieve data from.
-       */
-      storageArea: StorageArea;
-      /**
-       * Keys to retrieve.
-       */
-      keys?: string[];
-    }
-    export type getStorageItemsReturnValue = {
-      data: { [key: string]: string };
-    }
-    /**
-     * Removes `keys` from extension storage in the given `storageArea`.
-     */
-    export type removeStorageItemsParameters = {
-      /**
-       * ID of extension.
-       */
-      id: string;
-      /**
-       * StorageArea to remove data from.
-       */
-      storageArea: StorageArea;
-      /**
-       * Keys to remove.
-       */
-      keys: string[];
-    }
-    export type removeStorageItemsReturnValue = {
-    }
-    /**
-     * Clears extension storage in the given `storageArea`.
-     */
-    export type clearStorageItemsParameters = {
-      /**
-       * ID of extension.
-       */
-      id: string;
-      /**
-       * StorageArea to remove data from.
-       */
-      storageArea: StorageArea;
-    }
-    export type clearStorageItemsReturnValue = {
-    }
-    /**
-     * Sets `values` in extension storage in the given `storageArea`. The provided `values`
-will be merged with existing values in the storage area.
-     */
-    export type setStorageItemsParameters = {
-      /**
-       * ID of extension.
-       */
-      id: string;
-      /**
-       * StorageArea to set data in.
-       */
-      storageArea: StorageArea;
-      /**
-       * Values to set.
-       */
-      values: { [key: string]: string };
-    }
-    export type setStorageItemsReturnValue = {
-    }
-  }
-  
-  /**
    * Defines commands and events for Autofill.
    */
-  export module Autofill {
+  export namespace Autofill {
     export interface CreditCard {
       /**
        * 16-digit credit card number.
@@ -1339,6 +1368,8 @@ will be merged with existing values in the storage area.
     export interface AddressField {
       /**
        * address field name, for example GIVEN_NAME.
+The full list of supported field names:
+https://source.chromium.org/chromium/chromium/src/+/main:components/autofill/core/browser/field_types.cc;l=38
        */
       name: string;
       /**
@@ -1441,9 +1472,13 @@ If the field and related form cannot be autofilled, returns an error.
        */
       frameId?: Page.FrameId;
       /**
-       * Credit card information to fill out the form. Credit card data is not saved.
+       * Credit card information to fill out the form. Credit card data is not saved.  Mutually exclusive with `address`.
        */
-      card: CreditCard;
+      card?: CreditCard;
+      /**
+       * Address to fill out the form. Address data is not saved. Mutually exclusive with `card`.
+       */
+      address?: Address;
     }
     export type triggerReturnValue = {
     }
@@ -1474,7 +1509,7 @@ If the field and related form cannot be autofilled, returns an error.
   /**
    * Defines events for background web platform features.
    */
-  export module BackgroundService {
+  export namespace BackgroundService {
     /**
      * The Background Service that will be associated with the commands/events.
 Every Background Service operates independently, but they share the same
@@ -1574,9 +1609,295 @@ events afterwards if enabled and recording.
   }
   
   /**
+   * This domain allows configuring virtual Bluetooth devices to test
+the web-bluetooth API.
+   */
+  export namespace BluetoothEmulation {
+    /**
+     * Indicates the various states of Central.
+     */
+    export type CentralState = "absent"|"powered-off"|"powered-on";
+    /**
+     * Indicates the various types of GATT event.
+     */
+    export type GATTOperationType = "connection"|"discovery";
+    /**
+     * Indicates the various types of characteristic write.
+     */
+    export type CharacteristicWriteType = "write-default-deprecated"|"write-with-response"|"write-without-response";
+    /**
+     * Indicates the various types of characteristic operation.
+     */
+    export type CharacteristicOperationType = "read"|"write"|"subscribe-to-notifications"|"unsubscribe-from-notifications";
+    /**
+     * Indicates the various types of descriptor operation.
+     */
+    export type DescriptorOperationType = "read"|"write";
+    /**
+     * Stores the manufacturer data
+     */
+    export interface ManufacturerData {
+      /**
+       * Company identifier
+https://bitbucket.org/bluetooth-SIG/public/src/main/assigned_numbers/company_identifiers/company_identifiers.yaml
+https://usb.org/developers
+       */
+      key: number;
+      /**
+       * Manufacturer-specific data
+       */
+      data: binary;
+    }
+    /**
+     * Stores the byte data of the advertisement packet sent by a Bluetooth device.
+     */
+    export interface ScanRecord {
+      name?: string;
+      uuids?: string[];
+      /**
+       * Stores the external appearance description of the device.
+       */
+      appearance?: number;
+      /**
+       * Stores the transmission power of a broadcasting device.
+       */
+      txPower?: number;
+      /**
+       * Key is the company identifier and the value is an array of bytes of
+manufacturer specific data.
+       */
+      manufacturerData?: ManufacturerData[];
+    }
+    /**
+     * Stores the advertisement packet information that is sent by a Bluetooth device.
+     */
+    export interface ScanEntry {
+      deviceAddress: string;
+      rssi: number;
+      scanRecord: ScanRecord;
+    }
+    /**
+     * Describes the properties of a characteristic. This follows Bluetooth Core
+Specification BT 4.2 Vol 3 Part G 3.3.1. Characteristic Properties.
+     */
+    export interface CharacteristicProperties {
+      broadcast?: boolean;
+      read?: boolean;
+      writeWithoutResponse?: boolean;
+      write?: boolean;
+      notify?: boolean;
+      indicate?: boolean;
+      authenticatedSignedWrites?: boolean;
+      extendedProperties?: boolean;
+    }
+    
+    /**
+     * Event for when a GATT operation of |type| to the peripheral with |address|
+happened.
+     */
+    export type gattOperationReceivedPayload = {
+      address: string;
+      type: GATTOperationType;
+    }
+    /**
+     * Event for when a characteristic operation of |type| to the characteristic
+respresented by |characteristicId| happened. |data| and |writeType| is
+expected to exist when |type| is write.
+     */
+    export type characteristicOperationReceivedPayload = {
+      characteristicId: string;
+      type: CharacteristicOperationType;
+      data?: binary;
+      writeType?: CharacteristicWriteType;
+    }
+    /**
+     * Event for when a descriptor operation of |type| to the descriptor
+respresented by |descriptorId| happened. |data| is expected to exist when
+|type| is write.
+     */
+    export type descriptorOperationReceivedPayload = {
+      descriptorId: string;
+      type: DescriptorOperationType;
+      data?: binary;
+    }
+    
+    /**
+     * Enable the BluetoothEmulation domain.
+     */
+    export type enableParameters = {
+      /**
+       * State of the simulated central.
+       */
+      state: CentralState;
+      /**
+       * If the simulated central supports low-energy.
+       */
+      leSupported: boolean;
+    }
+    export type enableReturnValue = {
+    }
+    /**
+     * Set the state of the simulated central.
+     */
+    export type setSimulatedCentralStateParameters = {
+      /**
+       * State of the simulated central.
+       */
+      state: CentralState;
+    }
+    export type setSimulatedCentralStateReturnValue = {
+    }
+    /**
+     * Disable the BluetoothEmulation domain.
+     */
+    export type disableParameters = {
+    }
+    export type disableReturnValue = {
+    }
+    /**
+     * Simulates a peripheral with |address|, |name| and |knownServiceUuids|
+that has already been connected to the system.
+     */
+    export type simulatePreconnectedPeripheralParameters = {
+      address: string;
+      name: string;
+      manufacturerData: ManufacturerData[];
+      knownServiceUuids: string[];
+    }
+    export type simulatePreconnectedPeripheralReturnValue = {
+    }
+    /**
+     * Simulates an advertisement packet described in |entry| being received by
+the central.
+     */
+    export type simulateAdvertisementParameters = {
+      entry: ScanEntry;
+    }
+    export type simulateAdvertisementReturnValue = {
+    }
+    /**
+     * Simulates the response code from the peripheral with |address| for a
+GATT operation of |type|. The |code| value follows the HCI Error Codes from
+Bluetooth Core Specification Vol 2 Part D 1.3 List Of Error Codes.
+     */
+    export type simulateGATTOperationResponseParameters = {
+      address: string;
+      type: GATTOperationType;
+      code: number;
+    }
+    export type simulateGATTOperationResponseReturnValue = {
+    }
+    /**
+     * Simulates the response from the characteristic with |characteristicId| for a
+characteristic operation of |type|. The |code| value follows the Error
+Codes from Bluetooth Core Specification Vol 3 Part F 3.4.1.1 Error Response.
+The |data| is expected to exist when simulating a successful read operation
+response.
+     */
+    export type simulateCharacteristicOperationResponseParameters = {
+      characteristicId: string;
+      type: CharacteristicOperationType;
+      code: number;
+      data?: binary;
+    }
+    export type simulateCharacteristicOperationResponseReturnValue = {
+    }
+    /**
+     * Simulates the response from the descriptor with |descriptorId| for a
+descriptor operation of |type|. The |code| value follows the Error
+Codes from Bluetooth Core Specification Vol 3 Part F 3.4.1.1 Error Response.
+The |data| is expected to exist when simulating a successful read operation
+response.
+     */
+    export type simulateDescriptorOperationResponseParameters = {
+      descriptorId: string;
+      type: DescriptorOperationType;
+      code: number;
+      data?: binary;
+    }
+    export type simulateDescriptorOperationResponseReturnValue = {
+    }
+    /**
+     * Adds a service with |serviceUuid| to the peripheral with |address|.
+     */
+    export type addServiceParameters = {
+      address: string;
+      serviceUuid: string;
+    }
+    export type addServiceReturnValue = {
+      /**
+       * An identifier that uniquely represents this service.
+       */
+      serviceId: string;
+    }
+    /**
+     * Removes the service respresented by |serviceId| from the simulated central.
+     */
+    export type removeServiceParameters = {
+      serviceId: string;
+    }
+    export type removeServiceReturnValue = {
+    }
+    /**
+     * Adds a characteristic with |characteristicUuid| and |properties| to the
+service represented by |serviceId|.
+     */
+    export type addCharacteristicParameters = {
+      serviceId: string;
+      characteristicUuid: string;
+      properties: CharacteristicProperties;
+    }
+    export type addCharacteristicReturnValue = {
+      /**
+       * An identifier that uniquely represents this characteristic.
+       */
+      characteristicId: string;
+    }
+    /**
+     * Removes the characteristic respresented by |characteristicId| from the
+simulated central.
+     */
+    export type removeCharacteristicParameters = {
+      characteristicId: string;
+    }
+    export type removeCharacteristicReturnValue = {
+    }
+    /**
+     * Adds a descriptor with |descriptorUuid| to the characteristic respresented
+by |characteristicId|.
+     */
+    export type addDescriptorParameters = {
+      characteristicId: string;
+      descriptorUuid: string;
+    }
+    export type addDescriptorReturnValue = {
+      /**
+       * An identifier that uniquely represents this descriptor.
+       */
+      descriptorId: string;
+    }
+    /**
+     * Removes the descriptor with |descriptorId| from the simulated central.
+     */
+    export type removeDescriptorParameters = {
+      descriptorId: string;
+    }
+    export type removeDescriptorReturnValue = {
+    }
+    /**
+     * Simulates a GATT disconnection from the peripheral with |address|.
+     */
+    export type simulateGATTDisconnectionParameters = {
+      address: string;
+    }
+    export type simulateGATTDisconnectionReturnValue = {
+    }
+  }
+  
+  /**
    * The Browser domain defines methods and events for browser managing.
    */
-  export module Browser {
+  export namespace Browser {
     export type BrowserContextID = string;
     export type WindowID = number;
     /**
@@ -1608,7 +1929,7 @@ events afterwards if enabled and recording.
        */
       windowState?: WindowState;
     }
-    export type PermissionType = "ar"|"audioCapture"|"automaticFullscreen"|"backgroundFetch"|"backgroundSync"|"cameraPanTiltZoom"|"capturedSurfaceControl"|"clipboardReadWrite"|"clipboardSanitizedWrite"|"displayCapture"|"durableStorage"|"geolocation"|"handTracking"|"idleDetection"|"keyboardLock"|"localFonts"|"localNetworkAccess"|"midi"|"midiSysex"|"nfc"|"notifications"|"paymentHandler"|"periodicBackgroundSync"|"pointerLock"|"protectedMediaIdentifier"|"sensors"|"smartCard"|"speakerSelection"|"storageAccess"|"topLevelStorageAccess"|"videoCapture"|"vr"|"wakeLockScreen"|"wakeLockSystem"|"webAppInstallation"|"webPrinting"|"windowManagement";
+    export type PermissionType = "ar"|"audioCapture"|"automaticFullscreen"|"backgroundFetch"|"backgroundSync"|"cameraPanTiltZoom"|"capturedSurfaceControl"|"clipboardReadWrite"|"clipboardSanitizedWrite"|"displayCapture"|"durableStorage"|"geolocation"|"handTracking"|"idleDetection"|"keyboardLock"|"localFonts"|"localNetwork"|"localNetworkAccess"|"loopbackNetwork"|"midi"|"midiSysex"|"nfc"|"notifications"|"paymentHandler"|"periodicBackgroundSync"|"pointerLock"|"protectedMediaIdentifier"|"sensors"|"smartCard"|"speakerSelection"|"storageAccess"|"topLevelStorageAccess"|"videoCapture"|"vr"|"wakeLockScreen"|"wakeLockSystem"|"webAppInstallation"|"webPrinting"|"windowManagement";
     export type PermissionSetting = "granted"|"denied"|"prompt";
     /**
      * Definition of PermissionDescriptor defined in the Permissions API:
@@ -1736,7 +2057,7 @@ is guaranteed to exist.
     }
     
     /**
-     * Set permission settings for given origin.
+     * Set permission settings for given embedding and embedded origins.
      */
     export type setPermissionParameters = {
       /**
@@ -1748,9 +2069,15 @@ is guaranteed to exist.
        */
       setting: PermissionSetting;
       /**
-       * Origin the permission applies to, all origins if not specified.
+       * Embedding origin the permission applies to, all origins if not specified.
        */
       origin?: string;
+      /**
+       * Embedded origin the permission applies to. It is ignored unless the embedding origin is
+present and valid. If the embedding origin is provided but the embedded origin isn't, the
+embedding origin is used as the embedded origin.
+       */
+      embeddedOrigin?: string;
       /**
        * Context to override. When omitted, default browser context is used.
        */
@@ -1759,7 +2086,8 @@ is guaranteed to exist.
     export type setPermissionReturnValue = {
     }
     /**
-     * Grant specific permissions to the given origin and reject all others.
+     * Grant specific permissions to the given origin and reject all others. Deprecated. Use
+setPermission instead.
      */
     export type grantPermissionsParameters = {
       permissions: PermissionType[];
@@ -1979,6 +2307,27 @@ with 'left', 'top', 'width' or 'height'. Leaves unspecified fields unchanged.
     export type setWindowBoundsReturnValue = {
     }
     /**
+     * Set size of the browser contents resizing browser window as necessary.
+     */
+    export type setContentsSizeParameters = {
+      /**
+       * Browser window id.
+       */
+      windowId: WindowID;
+      /**
+       * The window contents width in DIP. Assumes current width if omitted.
+Must be specified if 'height' is omitted.
+       */
+      width?: number;
+      /**
+       * The window contents height in DIP. Assumes current height if omitted.
+Must be specified if 'width' is omitted.
+       */
+      height?: number;
+    }
+    export type setContentsSizeReturnValue = {
+    }
+    /**
      * Set dock tile details, platform-specific.
      */
     export type setDockTileParameters = {
@@ -2035,8 +2384,7 @@ CSS objects can be loaded using the `get*ForNode()` calls (which accept a DOM no
 can also keep track of stylesheets via the `styleSheetAdded`/`styleSheetRemoved` events and
 subsequently load the required stylesheet contents using the `getStyleSheet[Text]()` methods.
    */
-  export module CSS {
-    export type StyleSheetId = string;
+  export namespace CSS {
     /**
      * Stylesheet type: "injected" for stylesheets injected via extension, "user-agent" for user-agent
 stylesheets, "inspector" for stylesheets created by the inspector (i.e. those holding the "via
@@ -2139,6 +2487,27 @@ inspector" rules), "regular" for regular stylesheets.
       specificity?: Specificity;
     }
     /**
+     * Contribution of an individual simple selector to specificity.
+     */
+    export interface SpecificityComponent {
+      /**
+       * The simple selector text that contributes to specificity.
+       */
+      text: string;
+      /**
+       * The a component contribution.
+       */
+      a: number;
+      /**
+       * The b component contribution.
+       */
+      b: number;
+      /**
+       * The c component contribution.
+       */
+      c: number;
+    }
+    /**
      * Specificity:
 https://drafts.csswg.org/selectors/#specificity-rules
      */
@@ -2156,6 +2525,10 @@ pseudo-classes.
        * The c component, which represents the number of type selectors and pseudo-elements.
        */
       c: number;
+      /**
+       * Per-simple-selector contributions used to explain this specificity.
+       */
+      components?: SpecificityComponent[];
     }
     /**
      * Selector list data.
@@ -2177,7 +2550,7 @@ pseudo-classes.
       /**
        * The stylesheet identifier.
        */
-      styleSheetId: StyleSheetId;
+      styleSheetId: DOM.StyleSheetId;
       /**
        * Owner frame identifier.
        */
@@ -2262,7 +2635,7 @@ CSS module script.
        * The css style sheet identifier (absent for user agent stylesheet and user-specified
 stylesheet rules) this rule came from.
        */
-      styleSheetId?: StyleSheetId;
+      styleSheetId?: DOM.StyleSheetId;
       /**
        * Rule selector data.
        */
@@ -2279,6 +2652,10 @@ stylesheet rules) this rule came from.
        * Associated style declaration.
        */
       style: CSSStyle;
+      /**
+       * The BackendNodeId of the DOM node that constitutes the origin tree scope of this rule.
+       */
+      originTreeScopeNodeId?: DOM.BackendNodeId;
       /**
        * Media list array (for rules involving media queries). The array enumerates media queries
 starting with the innermost one, going outwards.
@@ -2313,12 +2690,17 @@ The array enumerates @scope at-rules starting with the innermost one, going outw
 The array enumerates @starting-style at-rules starting with the innermost one, going outwards.
        */
       startingStyles?: CSSStartingStyle[];
+      /**
+       * @navigation CSS at-rule array.
+The array enumerates @navigation at-rules starting with the innermost one, going outwards.
+       */
+      navigations?: CSSNavigation[];
     }
     /**
      * Enum indicating the type of a CSS rule, used to represent the order of a style rule's ancestors.
 This list only contains rule types that are collected during the ancestor rule collection.
      */
-    export type CSSRuleType = "MediaRule"|"SupportsRule"|"ContainerRule"|"LayerRule"|"ScopeRule"|"StyleRule"|"StartingStyleRule";
+    export type CSSRuleType = "MediaRule"|"SupportsRule"|"ContainerRule"|"LayerRule"|"ScopeRule"|"StyleRule"|"StartingStyleRule"|"NavigationRule";
     /**
      * CSS coverage information.
      */
@@ -2327,7 +2709,7 @@ This list only contains rule types that are collected during the ancestor rule c
        * The css style sheet identifier (absent for user agent stylesheet and user-specified
 stylesheet rules) this rule came from.
        */
-      styleSheetId: StyleSheetId;
+      styleSheetId: DOM.StyleSheetId;
       /**
        * Offset of the start of the rule (including selector) from the beginning of the stylesheet.
        */
@@ -2386,6 +2768,14 @@ stylesheet rules) this rule came from.
        */
       value: string;
     }
+    export interface ComputedStyleExtraFields {
+      /**
+       * Returns whether or not this node is being rendered with base appearance,
+which happens when it has its appearance property set to base/base-select
+or it is in the subtree of an element being rendered with base appearance.
+       */
+      isAppearanceBase: boolean;
+    }
     /**
      * CSS style representation.
      */
@@ -2394,7 +2784,7 @@ stylesheet rules) this rule came from.
        * The css style sheet identifier (absent for user agent stylesheet and user-specified
 stylesheet rules) this rule came from.
        */
-      styleSheetId?: StyleSheetId;
+      styleSheetId?: DOM.StyleSheetId;
       /**
        * CSS properties in the style.
        */
@@ -2481,7 +2871,7 @@ available).
       /**
        * Identifier of the stylesheet containing this object (if exists).
        */
-      styleSheetId?: StyleSheetId;
+      styleSheetId?: DOM.StyleSheetId;
       /**
        * Array of media queries.
        */
@@ -2531,6 +2921,9 @@ available).
     export interface CSSContainerQuery {
       /**
        * Container query text.
+Contains the query part without the container name for a single query.
+Deprecated in favor of conditionText which contains the full prelude
+after @container.
        */
       text: string;
       /**
@@ -2541,7 +2934,7 @@ available).
       /**
        * Identifier of the stylesheet containing this object (if exists).
        */
-      styleSheetId?: StyleSheetId;
+      styleSheetId?: DOM.StyleSheetId;
       /**
        * Optional name for the container.
        */
@@ -2558,6 +2951,14 @@ available).
        * true if the query contains scroll-state() queries.
        */
       queriesScrollState?: boolean;
+      /**
+       * true if the query contains anchored() queries.
+       */
+      queriesAnchored?: boolean;
+      /**
+       * CSSContainerRule.conditionText
+       */
+      conditionText: string;
     }
     /**
      * CSS Supports at-rule descriptor.
@@ -2579,7 +2980,29 @@ available).
       /**
        * Identifier of the stylesheet containing this object (if exists).
        */
-      styleSheetId?: StyleSheetId;
+      styleSheetId?: DOM.StyleSheetId;
+    }
+    /**
+     * CSS Navigation at-rule descriptor.
+     */
+    export interface CSSNavigation {
+      /**
+       * Navigation rule text.
+       */
+      text: string;
+      /**
+       * Whether the navigation condition is satisfied.
+       */
+      active?: boolean;
+      /**
+       * The associated rule header range in the enclosing stylesheet (if
+available).
+       */
+      range?: SourceRange;
+      /**
+       * Identifier of the stylesheet containing this object (if exists).
+       */
+      styleSheetId?: DOM.StyleSheetId;
     }
     /**
      * CSS Scope at-rule descriptor.
@@ -2597,7 +3020,7 @@ available).
       /**
        * Identifier of the stylesheet containing this object (if exists).
        */
-      styleSheetId?: StyleSheetId;
+      styleSheetId?: DOM.StyleSheetId;
     }
     /**
      * CSS Layer at-rule descriptor.
@@ -2615,7 +3038,7 @@ available).
       /**
        * Identifier of the stylesheet containing this object (if exists).
        */
-      styleSheetId?: StyleSheetId;
+      styleSheetId?: DOM.StyleSheetId;
     }
     /**
      * CSS Starting Style at-rule descriptor.
@@ -2629,7 +3052,7 @@ available).
       /**
        * Identifier of the stylesheet containing this object (if exists).
        */
-      styleSheetId?: StyleSheetId;
+      styleSheetId?: DOM.StyleSheetId;
     }
     /**
      * CSS Layer data.
@@ -2749,7 +3172,7 @@ and additional information such as platformFontFamily and fontVariationAxes.
        * The css style sheet identifier (absent for user agent stylesheet and user-specified
 stylesheet rules) this rule came from.
        */
-      styleSheetId?: StyleSheetId;
+      styleSheetId?: DOM.StyleSheetId;
       /**
        * Parent stylesheet's origin.
        */
@@ -2771,7 +3194,7 @@ stylesheet rules) this rule came from.
        * The css style sheet identifier (absent for user agent stylesheet and user-specified
 stylesheet rules) this rule came from.
        */
-      styleSheetId?: StyleSheetId;
+      styleSheetId?: DOM.StyleSheetId;
       /**
        * Parent stylesheet's origin.
        */
@@ -2805,22 +3228,31 @@ stylesheet rules) this rule came from.
       syntax: string;
     }
     /**
-     * CSS font-palette-values rule representation.
+     * CSS generic @rule representation.
      */
-    export interface CSSFontPaletteValuesRule {
+    export interface CSSAtRule {
+      /**
+       * Type of at-rule.
+       */
+      type: "font-face"|"font-feature-values"|"font-palette-values"|"counter-style";
+      /**
+       * Subsection of font-feature-values, if this is a subsection.
+       */
+      subsection?: "swash"|"annotation"|"ornaments"|"stylistic"|"styleset"|"character-variant";
+      /**
+       * LINT.ThenChange(//third_party/blink/renderer/core/inspector/inspector_style_sheet.cc:FontVariantAlternatesFeatureType,//third_party/blink/renderer/core/inspector/inspector_css_agent.cc:FontVariantAlternatesFeatureType)
+Associated name, if applicable.
+       */
+      name?: Value;
       /**
        * The css style sheet identifier (absent for user agent stylesheet and user-specified
 stylesheet rules) this rule came from.
        */
-      styleSheetId?: StyleSheetId;
+      styleSheetId?: DOM.StyleSheetId;
       /**
        * Parent stylesheet's origin.
        */
       origin: StyleSheetOrigin;
-      /**
-       * Associated font palette name.
-       */
-      fontPaletteName: Value;
       /**
        * Associated style declaration.
        */
@@ -2834,7 +3266,7 @@ stylesheet rules) this rule came from.
        * The css style sheet identifier (absent for user agent stylesheet and user-specified
 stylesheet rules) this rule came from.
        */
-      styleSheetId?: StyleSheetId;
+      styleSheetId?: DOM.StyleSheetId;
       /**
        * Parent stylesheet's origin.
        */
@@ -2878,6 +3310,10 @@ stylesheet rules) this rule came from.
        */
       supports?: CSSSupports;
       /**
+       * @navigation condition. Only one type of condition should be set.
+       */
+      navigation?: CSSNavigation;
+      /**
        * Block body.
        */
       children: CSSFunctionNode[];
@@ -2911,7 +3347,7 @@ stylesheet rules) this rule came from.
        * The css style sheet identifier (absent for user agent stylesheet and user-specified
 stylesheet rules) this rule came from.
        */
-      styleSheetId?: StyleSheetId;
+      styleSheetId?: DOM.StyleSheetId;
       /**
        * Parent stylesheet's origin.
        */
@@ -2924,6 +3360,10 @@ stylesheet rules) this rule came from.
        * Function body.
        */
       children: CSSFunctionNode[];
+      /**
+       * The BackendNodeId of the DOM node that constitutes the origin tree scope of this rule.
+       */
+      originTreeScopeNodeId?: DOM.BackendNodeId;
     }
     /**
      * CSS keyframe rule representation.
@@ -2933,7 +3373,7 @@ stylesheet rules) this rule came from.
        * The css style sheet identifier (absent for user agent stylesheet and user-specified
 stylesheet rules) this rule came from.
        */
-      styleSheetId?: StyleSheetId;
+      styleSheetId?: DOM.StyleSheetId;
       /**
        * Parent stylesheet's origin.
        */
@@ -2954,7 +3394,7 @@ stylesheet rules) this rule came from.
       /**
        * The css style sheet identifier.
        */
-      styleSheetId: StyleSheetId;
+      styleSheetId: DOM.StyleSheetId;
       /**
        * The range of the style text in the enclosing stylesheet.
        */
@@ -2993,7 +3433,7 @@ resized.) The current implementation considers only viewport-dependent media fea
      * Fired whenever a stylesheet is changed as a result of the client operation.
      */
     export type styleSheetChangedPayload = {
-      styleSheetId: StyleSheetId;
+      styleSheetId: DOM.StyleSheetId;
     }
     /**
      * Fired whenever an active document stylesheet is removed.
@@ -3002,7 +3442,7 @@ resized.) The current implementation considers only viewport-dependent media fea
       /**
        * Identifier of the removed stylesheet.
        */
-      styleSheetId: StyleSheetId;
+      styleSheetId: DOM.StyleSheetId;
     }
     export type computedStyleUpdatedPayload = {
       /**
@@ -3019,7 +3459,7 @@ position specified by `location`.
       /**
        * The css style sheet identifier where a new rule should be inserted.
        */
-      styleSheetId: StyleSheetId;
+      styleSheetId: DOM.StyleSheetId;
       /**
        * The text of a new rule.
        */
@@ -3045,7 +3485,7 @@ incorrect results if the declaration contains a var() for example.
      * Returns all class names from specified stylesheet.
      */
     export type collectClassNamesParameters = {
-      styleSheetId: StyleSheetId;
+      styleSheetId: DOM.StyleSheetId;
     }
     export type collectClassNamesReturnValue = {
       /**
@@ -3073,7 +3513,7 @@ for the frame's document if it exists or creates a new stylesheet
       /**
        * Identifier of the created "via-inspector" stylesheet.
        */
-      styleSheetId: StyleSheetId;
+      styleSheetId: DOM.StyleSheetId;
     }
     /**
      * Disables the CSS agent for the given page.
@@ -3157,6 +3597,11 @@ be ignored (as if the image had failed to load).
        * Computed style for the specified DOM node.
        */
       computedStyle: CSSComputedStyleProperty[];
+      /**
+       * A list of non-standard "extra fields" which blink stores alongside each
+computed style.
+       */
+      extraFields: ComputedStyleExtraFields;
     }
     /**
      * Resolve the specified values in the context of the provided element.
@@ -3168,11 +3613,12 @@ they were property's declaration. If a value cannot be parsed according
 to the provided property syntax, the value is parsed using combined
 syntax as if null `propertyName` was provided. If the value cannot be
 resolved even then, return the provided value without any changes.
+Note: this function currently does not resolve CSS random() function,
+it returns unmodified random() function parts.`
      */
     export type resolveValuesParameters = {
       /**
-       * Substitution functions (var()/env()/attr()) and cascade-dependent
-keywords (revert/revert-layer) do not work.
+       * Cascade-dependent keywords (revert/revert-layer) do not work.
        */
       values: string[];
       /**
@@ -3295,9 +3741,9 @@ will not be set if there is no active position-try fallback.
        */
       cssPropertyRegistrations?: CSSPropertyRegistration[];
       /**
-       * A font-palette-values rule matching this node.
+       * A list of simple @rules matching this node or its pseudo-elements.
        */
-      cssFontPaletteValuesRule?: CSSFontPaletteValuesRule;
+      cssAtRules?: CSSAtRule[];
       /**
        * Id of the first parent element that does not have display: contents.
        */
@@ -3306,6 +3752,14 @@ will not be set if there is no active position-try fallback.
        * A list of CSS at-function rules referenced by styles of this node.
        */
       cssFunctionRules?: CSSFunctionRule[];
+    }
+    /**
+     * Returns the values of the default UA-defined environment variables used in env()
+     */
+    export type getEnvironmentVariablesParameters = {
+    }
+    export type getEnvironmentVariablesReturnValue = {
+      environmentVariables: { [key: string]: string };
     }
     /**
      * Returns all media queries parsed by the rendering engine.
@@ -3332,7 +3786,7 @@ node.
      * Returns the current textual content for a stylesheet.
      */
     export type getStyleSheetTextParameters = {
-      styleSheetId: StyleSheetId;
+      styleSheetId: DOM.StyleSheetId;
     }
     export type getStyleSheetTextReturnValue = {
       /**
@@ -3357,7 +3811,7 @@ the full layer tree for the tree scope and their ordering.
 returns an array of locations of the CSS selector in the style sheet.
      */
     export type getLocationForSelectorParameters = {
-      styleSheetId: StyleSheetId;
+      styleSheetId: DOM.StyleSheetId;
       selectorText: string;
     }
     export type getLocationForSelectorReturnValue = {
@@ -3418,7 +3872,7 @@ property
      * Modifies the property rule property name.
      */
     export type setPropertyRulePropertyNameParameters = {
-      styleSheetId: StyleSheetId;
+      styleSheetId: DOM.StyleSheetId;
       range: SourceRange;
       propertyName: string;
     }
@@ -3432,7 +3886,7 @@ property
      * Modifies the keyframe rule key text.
      */
     export type setKeyframeKeyParameters = {
-      styleSheetId: StyleSheetId;
+      styleSheetId: DOM.StyleSheetId;
       range: SourceRange;
       keyText: string;
     }
@@ -3446,7 +3900,7 @@ property
      * Modifies the rule selector.
      */
     export type setMediaTextParameters = {
-      styleSheetId: StyleSheetId;
+      styleSheetId: DOM.StyleSheetId;
       range: SourceRange;
       text: string;
     }
@@ -3458,9 +3912,10 @@ property
     }
     /**
      * Modifies the expression of a container query.
+Deprecated. Use setContainerQueryConditionText instead.
      */
     export type setContainerQueryTextParameters = {
-      styleSheetId: StyleSheetId;
+      styleSheetId: DOM.StyleSheetId;
       range: SourceRange;
       text: string;
     }
@@ -3470,11 +3925,22 @@ property
        */
       containerQuery: CSSContainerQuery;
     }
+    export type setContainerQueryConditionTextParameters = {
+      styleSheetId: DOM.StyleSheetId;
+      range: SourceRange;
+      text: string;
+    }
+    export type setContainerQueryConditionTextReturnValue = {
+      /**
+       * The resulting CSS container query rule after modification.
+       */
+      containerQuery: CSSContainerQuery;
+    }
     /**
      * Modifies the expression of a supports at-rule.
      */
     export type setSupportsTextParameters = {
-      styleSheetId: StyleSheetId;
+      styleSheetId: DOM.StyleSheetId;
       range: SourceRange;
       text: string;
     }
@@ -3485,10 +3951,24 @@ property
       supports: CSSSupports;
     }
     /**
+     * Modifies the expression of a navigation at-rule.
+     */
+    export type setNavigationTextParameters = {
+      styleSheetId: DOM.StyleSheetId;
+      range: SourceRange;
+      text: string;
+    }
+    export type setNavigationTextReturnValue = {
+      /**
+       * The resulting CSS Navigation rule after modification.
+       */
+      navigation: CSSNavigation;
+    }
+    /**
      * Modifies the expression of a scope at-rule.
      */
     export type setScopeTextParameters = {
-      styleSheetId: StyleSheetId;
+      styleSheetId: DOM.StyleSheetId;
       range: SourceRange;
       text: string;
     }
@@ -3502,7 +3982,7 @@ property
      * Modifies the rule selector.
      */
     export type setRuleSelectorParameters = {
-      styleSheetId: StyleSheetId;
+      styleSheetId: DOM.StyleSheetId;
       range: SourceRange;
       selector: string;
     }
@@ -3516,7 +3996,7 @@ property
      * Sets the new stylesheet text.
      */
     export type setStyleSheetTextParameters = {
-      styleSheetId: StyleSheetId;
+      styleSheetId: DOM.StyleSheetId;
       text: string;
     }
     export type setStyleSheetTextReturnValue = {
@@ -3585,7 +4065,7 @@ instrumentation).
     }
   }
   
-  export module CacheStorage {
+  export namespace CacheStorage {
     /**
      * Unique identifier of the Cache object.
      */
@@ -3782,7 +4262,7 @@ is the count of all entries from this storage.
    * A domain for interacting with Cast, Presentation API, and Remote Playback API
 functionalities.
    */
-  export module Cast {
+  export namespace Cast {
     export interface Sink {
       name: string;
       id: string;
@@ -3863,6 +4343,33 @@ sink via Presentation API, Remote Playback API, or Cast SDK.
   }
   
   /**
+   * This domain exposes the current state of the CrashReportContext API.
+   */
+  export namespace CrashReportContext {
+    /**
+     * Key-value pair in CrashReportContext.
+     */
+    export interface CrashReportContextEntry {
+      key: string;
+      value: string;
+      /**
+       * The ID of the frame where the key-value pair was set.
+       */
+      frameId: Page.FrameId;
+    }
+    
+    
+    /**
+     * Returns all entries in the CrashReportContext across all frames in the page.
+     */
+    export type getEntriesParameters = {
+    }
+    export type getEntriesReturnValue = {
+      entries: CrashReportContextEntry[];
+    }
+  }
+  
+  /**
    * This domain exposes DOM read/write operations. Each DOM Node is represented with its mirror object
 that has an `id`. This `id` can be used to get additional information on the Node, resolve it into
 the JavaScript object wrapper, etc. It is important that client receives DOM events only for the
@@ -3871,7 +4378,7 @@ and never sends the same node twice. It is client's responsibility to collect in
 the nodes that were sent to the client. Note that `iframe` owner elements will return
 corresponding document elements as their child nodes.
    */
-  export module DOM {
+  export namespace DOM {
     /**
      * Unique DOM node identifier.
      */
@@ -3881,6 +4388,10 @@ corresponding document elements as their child nodes.
 front-end.
      */
     export type BackendNodeId = number;
+    /**
+     * Unique identifier for a CSS stylesheet.
+     */
+    export type StyleSheetId = string;
     /**
      * Backend node with a friendly name.
      */
@@ -3898,7 +4409,7 @@ front-end.
     /**
      * Pseudo element type.
      */
-    export type PseudoType = "first-line"|"first-letter"|"checkmark"|"before"|"after"|"picker-icon"|"marker"|"backdrop"|"column"|"selection"|"search-text"|"target-text"|"spelling-error"|"grammar-error"|"highlight"|"first-line-inherited"|"scroll-marker"|"scroll-marker-group"|"scroll-button"|"scrollbar"|"scrollbar-thumb"|"scrollbar-button"|"scrollbar-track"|"scrollbar-track-piece"|"scrollbar-corner"|"resizer"|"input-list-button"|"view-transition"|"view-transition-group"|"view-transition-image-pair"|"view-transition-old"|"view-transition-new"|"placeholder"|"file-selector-button"|"details-content"|"picker"|"permission-icon";
+    export type PseudoType = "first-line"|"first-letter"|"checkmark"|"before"|"after"|"expand-icon"|"picker-icon"|"interest-button"|"marker"|"backdrop"|"column"|"selection"|"search-text"|"target-text"|"spelling-error"|"grammar-error"|"highlight"|"first-line-inherited"|"scroll-marker"|"scroll-marker-group"|"scroll-button"|"scrollbar"|"scrollbar-thumb"|"scrollbar-button"|"scrollbar-track"|"scrollbar-track-piece"|"scrollbar-corner"|"resizer"|"input-list-button"|"view-transition"|"view-transition-group"|"view-transition-image-pair"|"view-transition-group-children"|"view-transition-old"|"view-transition-new"|"placeholder"|"file-selector-button"|"details-content"|"picker"|"select-listbox"|"permission-icon"|"overscroll-area-parent"|"overscroll-backdrop"|"skeleton";
     /**
      * Shadow root type.
      */
@@ -4048,6 +4559,9 @@ The property is always undefined now.
       compatibilityMode?: CompatibilityMode;
       assignedSlot?: BackendNode;
       isScrollable?: boolean;
+      affectedByStartingStyles?: boolean;
+      adoptedStyleSheets?: StyleSheetId[];
+      adProvenance?: Network.AdProvenance;
     }
     /**
      * A structure to hold the top-level node of a detached tree and an array of its retained descendants.
@@ -4181,6 +4695,19 @@ The property is always undefined now.
       value: string;
     }
     /**
+     * Fired when `Element`'s adoptedStyleSheets are modified.
+     */
+    export type adoptedStyleSheetsModifiedPayload = {
+      /**
+       * Id of the node that has changed.
+       */
+      nodeId: NodeId;
+      /**
+       * New adoptedStyleSheets array.
+       */
+      adoptedStyleSheets: StyleSheetId[];
+    }
+    /**
      * Fired when `Element`'s attribute is removed.
      */
     export type attributeRemovedPayload = {
@@ -4304,6 +4831,32 @@ The property is always undefined now.
        * If the node is scrollable.
        */
       isScrollable: boolean;
+    }
+    /**
+     * Fired when a node's ad related state changes.
+     */
+    export type adRelatedStateUpdatedPayload = {
+      /**
+       * The id of the node.
+       */
+      nodeId: DOM.NodeId;
+      /**
+       * The provenance of the ad related node, if it is ad related.
+       */
+      adProvenance?: Network.AdProvenance;
+    }
+    /**
+     * Fired when a node's starting styles changes.
+     */
+    export type affectedByStartingStylesFlagUpdatedPayload = {
+      /**
+       * The id of the node.
+       */
+      nodeId: DOM.NodeId;
+      /**
+       * If the node has starting styles.
+       */
+      affectedByStartingStyles: boolean;
     }
     /**
      * Called when a pseudo element is removed from an element.
@@ -4691,6 +5244,10 @@ either returned or not.
        * JavaScript object id of the node wrapper.
        */
       objectId?: Runtime.RemoteObjectId;
+      /**
+       * Include all shadow roots. Equals to false if not specified.
+       */
+      includeShadowDOM?: boolean;
     }
     export type getOuterHTMLReturnValue = {
       /**
@@ -5214,9 +5771,9 @@ $x functions).
     /**
      * Returns the query container of the given node based on container query
 conditions: containerName, physical and logical axes, and whether it queries
-scroll-state. If no axes are provided and queriesScrollState is false, the
-style container is returned, which is the direct parent or the closest
-element with a matching container-name.
+scroll-state or anchored elements. If no axes are provided and
+queriesScrollState is false, the style container is returned, which is the
+direct parent or the closest element with a matching container-name.
      */
     export type getContainerForNodeParameters = {
       nodeId: NodeId;
@@ -5224,6 +5781,7 @@ element with a matching container-name.
       physicalAxes?: PhysicalAxes;
       logicalAxes?: LogicalAxes;
       queriesScrollState?: boolean;
+      queriesAnchored?: boolean;
     }
     export type getContainerForNodeReturnValue = {
       /**
@@ -5270,13 +5828,41 @@ the given positioned element.
        */
       nodeId: NodeId;
     }
+    /**
+     * When enabling, this API force-opens the popover identified by nodeId
+and keeps it open until disabled.
+     */
+    export type forceShowPopoverParameters = {
+      /**
+       * Id of the popover HTMLElement
+       */
+      nodeId: NodeId;
+      /**
+       * If true, opens the popover and keeps it open. If false, closes the
+popover if it was previously force-opened.
+       */
+      enable: boolean;
+      /**
+       * Optional ID of the element invoking this popover, used to establish the implicit anchor.
+If not provided, it will fall back to the first invoker in the document, preferring
+elements with a popovertarget attribute over those with a commandfor attribute. Note that
+if there are multiple invokers, this is just an estimate.
+       */
+      invokerNodeId?: BackendNodeId;
+    }
+    export type forceShowPopoverReturnValue = {
+      /**
+       * List of popovers that were closed in order to respect popover stacking order.
+       */
+      nodeIds: NodeId[];
+    }
   }
   
   /**
    * DOM debugging allows setting breakpoints on particular DOM operations and events. JavaScript
 execution will stop on these operations as if there was a regular breakpoint set.
    */
-  export module DOMDebugger {
+  export namespace DOMDebugger {
     /**
      * DOM breakpoint type.
      */
@@ -5476,48 +6062,9 @@ EventTarget.
   }
   
   /**
-   * EventBreakpoints permits setting JavaScript breakpoints on operations and events
-occurring in native code invoked from JavaScript. Once breakpoint is hit, it is
-reported through Debugger domain, similarly to regular breakpoints being hit.
-   */
-  export module EventBreakpoints {
-    
-    
-    /**
-     * Sets breakpoint on particular native event.
-     */
-    export type setInstrumentationBreakpointParameters = {
-      /**
-       * Instrumentation name to stop on.
-       */
-      eventName: string;
-    }
-    export type setInstrumentationBreakpointReturnValue = {
-    }
-    /**
-     * Removes breakpoint on particular native event.
-     */
-    export type removeInstrumentationBreakpointParameters = {
-      /**
-       * Instrumentation name to stop on.
-       */
-      eventName: string;
-    }
-    export type removeInstrumentationBreakpointReturnValue = {
-    }
-    /**
-     * Removes all breakpoints
-     */
-    export type disableParameters = {
-    }
-    export type disableReturnValue = {
-    }
-  }
-  
-  /**
    * This domain facilitates obtaining document snapshots with DOM, layout, and style information.
    */
-  export module DOMSnapshot {
+  export namespace DOMSnapshot {
     /**
      * A Node in the DOM tree.
      */
@@ -6055,7 +6602,7 @@ The final text color opacity is computed based on the opacity of all overlapping
   /**
    * Query and modify DOM storage.
    */
-  export module DOMStorage {
+  export namespace DOMStorage {
     export type SerializedStorageKey = string;
     /**
      * DOM Storage identifier.
@@ -6138,7 +6685,69 @@ The final text color opacity is computed based on the opacity of all overlapping
     }
   }
   
-  export module DeviceOrientation {
+  export namespace DeviceAccess {
+    /**
+     * Device request id.
+     */
+    export type RequestId = string;
+    /**
+     * A device id.
+     */
+    export type DeviceId = string;
+    /**
+     * Device information displayed in a user prompt to select a device.
+     */
+    export interface PromptDevice {
+      id: DeviceId;
+      /**
+       * Display name as it appears in a device request user prompt.
+       */
+      name: string;
+    }
+    
+    /**
+     * A device request opened a user prompt to select a device. Respond with the
+selectPrompt or cancelPrompt command.
+     */
+    export type deviceRequestPromptedPayload = {
+      id: RequestId;
+      devices: PromptDevice[];
+    }
+    
+    /**
+     * Enable events in this domain.
+     */
+    export type enableParameters = {
+    }
+    export type enableReturnValue = {
+    }
+    /**
+     * Disable events in this domain.
+     */
+    export type disableParameters = {
+    }
+    export type disableReturnValue = {
+    }
+    /**
+     * Select a device in response to a DeviceAccess.deviceRequestPrompted event.
+     */
+    export type selectPromptParameters = {
+      id: RequestId;
+      deviceId: DeviceId;
+    }
+    export type selectPromptReturnValue = {
+    }
+    /**
+     * Cancel a prompt in response to a DeviceAccess.deviceRequestPrompted event.
+     */
+    export type cancelPromptParameters = {
+      id: RequestId;
+    }
+    export type cancelPromptReturnValue = {
+    }
+  }
+  
+  export namespace DeviceOrientation {
     
     
     /**
@@ -6172,7 +6781,7 @@ The final text color opacity is computed based on the opacity of all overlapping
   /**
    * This domain emulates different environments for the page.
    */
-  export module Emulation {
+  export namespace Emulation {
     export interface SafeAreaInsets {
       /**
        * Overrides safe-area-inset-top.
@@ -6282,6 +6891,11 @@ Missing optional values will be filled in by the target with what it would norma
       mobile: boolean;
       bitness?: string;
       wow64?: boolean;
+      /**
+       * Used to specify User Agent form-factor values.
+See https://wicg.github.io/ua-client-hints/#sec-ch-ua-form-factors
+       */
+      formFactors?: string[];
     }
     /**
      * Used to specify sensor types to emulate.
@@ -6317,15 +6931,119 @@ See https://w3c.github.io/sensors/#automation for more information.
     export interface PressureMetadata {
       available?: boolean;
     }
+    export interface WorkAreaInsets {
+      /**
+       * Work area top inset in pixels. Default is 0;
+       */
+      top?: number;
+      /**
+       * Work area left inset in pixels. Default is 0;
+       */
+      left?: number;
+      /**
+       * Work area bottom inset in pixels. Default is 0;
+       */
+      bottom?: number;
+      /**
+       * Work area right inset in pixels. Default is 0;
+       */
+      right?: number;
+    }
+    export type ScreenId = string;
+    /**
+     * Screen information similar to the one returned by window.getScreenDetails() method,
+see https://w3c.github.io/window-management/#screendetailed.
+     */
+    export interface ScreenInfo {
+      /**
+       * Offset of the left edge of the screen.
+       */
+      left: number;
+      /**
+       * Offset of the top edge of the screen.
+       */
+      top: number;
+      /**
+       * Width of the screen.
+       */
+      width: number;
+      /**
+       * Height of the screen.
+       */
+      height: number;
+      /**
+       * Offset of the left edge of the available screen area.
+       */
+      availLeft: number;
+      /**
+       * Offset of the top edge of the available screen area.
+       */
+      availTop: number;
+      /**
+       * Width of the available screen area.
+       */
+      availWidth: number;
+      /**
+       * Height of the available screen area.
+       */
+      availHeight: number;
+      /**
+       * Specifies the screen's device pixel ratio.
+       */
+      devicePixelRatio: number;
+      /**
+       * Specifies the screen's orientation.
+       */
+      orientation: ScreenOrientation;
+      /**
+       * Specifies the screen's color depth in bits.
+       */
+      colorDepth: number;
+      /**
+       * Indicates whether the device has multiple screens.
+       */
+      isExtended: boolean;
+      /**
+       * Indicates whether the screen is internal to the device or external, attached to the device.
+       */
+      isInternal: boolean;
+      /**
+       * Indicates whether the screen is set as the the operating system primary screen.
+       */
+      isPrimary: boolean;
+      /**
+       * Specifies the descriptive label for the screen.
+       */
+      label: string;
+      /**
+       * Specifies the unique identifier of the screen.
+       */
+      id: ScreenId;
+    }
     /**
      * Enum of image types that can be disabled.
      */
-    export type DisabledImageType = "avif"|"webp";
+    export type DisabledImageType = "avif"|"jxl"|"webp";
     
     /**
      * Notification sent after the virtual time budget for the current VirtualTimePolicy has run out.
      */
     export type virtualTimeBudgetExpiredPayload = void;
+    /**
+     * Fired when a page calls screen.orientation.lock() or screen.orientation.unlock()
+while device emulation is enabled. This allows the DevTools frontend to update the
+emulated device orientation accordingly.
+     */
+    export type screenOrientationLockChangedPayload = {
+      /**
+       * Whether the screen orientation is currently locked.
+       */
+      locked: boolean;
+      /**
+       * The orientation lock type requested by the page. Only set when locked is true.
+       */
+      orientation?: ScreenOrientation;
+    }
     
     /**
      * Tells whether emulation is supported.
@@ -6483,6 +7201,18 @@ to continuous.
 Deprecated, use Emulation.setDevicePostureOverride.
        */
       devicePosture?: DevicePosture;
+      /**
+       * Scrollbar type. Default: `default`.
+       */
+      scrollbarType?: "overlay"|"default";
+      /**
+       * If set to true, enables screen orientation lock emulation, which
+intercepts screen.orientation.lock() calls from the page and reports
+orientation changes via screenOrientationLockChanged events. This is
+useful for emulating mobile device orientation lock behavior in
+responsive design mode.
+       */
+      screenOrientationLockEmulation?: boolean;
     }
     export type setDeviceMetricsOverrideReturnValue = {
     }
@@ -6580,6 +7310,14 @@ physiologically accurate emulations for medically recognized color vision defici
     export type setEmulatedVisionDeficiencyReturnValue = {
     }
     /**
+     * Emulates the given OS text scale.
+     */
+    export type setEmulatedOSTextScaleParameters = {
+      scale?: number;
+    }
+    export type setEmulatedOSTextScaleReturnValue = {
+    }
+    /**
      * Overrides the Geolocation Position or Error. Omitting latitude, longitude or
 accuracy emulates position unavailable.
      */
@@ -6659,8 +7397,7 @@ platform-provided telemetry data.
     export type setPressureSourceOverrideEnabledReturnValue = {
     }
     /**
-     * TODO: OBSOLETE: To remove when setPressureDataOverride is merged.
-Provides a given pressure state that will be processed and eventually be
+     * Provides a given pressure state that will be processed and eventually be
 delivered to PressureObserver users. |source| must have been previously
 overridden by setPressureSourceOverrideEnabled.
      */
@@ -6669,18 +7406,6 @@ overridden by setPressureSourceOverrideEnabled.
       state: PressureState;
     }
     export type setPressureStateOverrideReturnValue = {
-    }
-    /**
-     * Provides a given pressure data set that will be processed and eventually be
-delivered to PressureObserver users. |source| must have been previously
-overridden by setPressureSourceOverrideEnabled.
-     */
-    export type setPressureDataOverrideParameters = {
-      source: PressureSource;
-      state: PressureState;
-      ownContributionEstimate?: number;
-    }
-    export type setPressureDataOverrideReturnValue = {
     }
     /**
      * Overrides the Idle state.
@@ -6829,6 +7554,17 @@ on Android.
     }
     export type setDisabledImageTypesReturnValue = {
     }
+    /**
+     * Override the value of navigator.connection.saveData
+     */
+    export type setDataSaverOverrideParameters = {
+      /**
+       * Override value. Omitting the parameter disables the override.
+       */
+      dataSaverEnabled?: boolean;
+    }
+    export type setDataSaverOverrideReturnValue = {
+    }
     export type setHardwareConcurrencyOverrideParameters = {
       /**
        * Hardware concurrency to report
@@ -6885,12 +7621,876 @@ of size 100lvh.
     }
     export type setSmallViewportHeightDifferenceOverrideReturnValue = {
     }
+    /**
+     * Returns device's screen configuration. In headful mode, the physical screens configuration is returned,
+whereas in headless mode, a virtual headless screen configuration is provided instead.
+     */
+    export type getScreenInfosParameters = {
+    }
+    export type getScreenInfosReturnValue = {
+      screenInfos: ScreenInfo[];
+    }
+    /**
+     * Add a new screen to the device. Only supported in headless mode.
+     */
+    export type addScreenParameters = {
+      /**
+       * Offset of the left edge of the screen in pixels.
+       */
+      left: number;
+      /**
+       * Offset of the top edge of the screen in pixels.
+       */
+      top: number;
+      /**
+       * The width of the screen in pixels.
+       */
+      width: number;
+      /**
+       * The height of the screen in pixels.
+       */
+      height: number;
+      /**
+       * Specifies the screen's work area. Default is entire screen.
+       */
+      workAreaInsets?: WorkAreaInsets;
+      /**
+       * Specifies the screen's device pixel ratio. Default is 1.
+       */
+      devicePixelRatio?: number;
+      /**
+       * Specifies the screen's rotation angle. Available values are 0, 90, 180 and 270. Default is 0.
+       */
+      rotation?: number;
+      /**
+       * Specifies the screen's color depth in bits. Default is 24.
+       */
+      colorDepth?: number;
+      /**
+       * Specifies the descriptive label for the screen. Default is none.
+       */
+      label?: string;
+      /**
+       * Indicates whether the screen is internal to the device or external, attached to the device. Default is false.
+       */
+      isInternal?: boolean;
+    }
+    export type addScreenReturnValue = {
+      screenInfo: ScreenInfo;
+    }
+    /**
+     * Updates specified screen parameters. Only supported in headless mode.
+     */
+    export type updateScreenParameters = {
+      /**
+       * Target screen identifier.
+       */
+      screenId: ScreenId;
+      /**
+       * Offset of the left edge of the screen in pixels.
+       */
+      left?: number;
+      /**
+       * Offset of the top edge of the screen in pixels.
+       */
+      top?: number;
+      /**
+       * The width of the screen in pixels.
+       */
+      width?: number;
+      /**
+       * The height of the screen in pixels.
+       */
+      height?: number;
+      /**
+       * Specifies the screen's work area.
+       */
+      workAreaInsets?: WorkAreaInsets;
+      /**
+       * Specifies the screen's device pixel ratio.
+       */
+      devicePixelRatio?: number;
+      /**
+       * Specifies the screen's rotation angle. Available values are 0, 90, 180 and 270.
+       */
+      rotation?: number;
+      /**
+       * Specifies the screen's color depth in bits.
+       */
+      colorDepth?: number;
+      /**
+       * Specifies the descriptive label for the screen.
+       */
+      label?: string;
+      /**
+       * Indicates whether the screen is internal to the device or external, attached to the device. Default is false.
+       */
+      isInternal?: boolean;
+    }
+    export type updateScreenReturnValue = {
+      screenInfo: ScreenInfo;
+    }
+    /**
+     * Remove screen from the device. Only supported in headless mode.
+     */
+    export type removeScreenParameters = {
+      screenId: ScreenId;
+    }
+    export type removeScreenReturnValue = {
+    }
+    /**
+     * Set primary screen. Only supported in headless mode.
+Note that this changes the coordinate system origin to the top-left
+of the new primary screen, updating the bounds and work areas
+of all existing screens accordingly.
+     */
+    export type setPrimaryScreenParameters = {
+      screenId: ScreenId;
+    }
+    export type setPrimaryScreenReturnValue = {
+    }
+  }
+  
+  /**
+   * EventBreakpoints permits setting JavaScript breakpoints on operations and events
+occurring in native code invoked from JavaScript. Once breakpoint is hit, it is
+reported through Debugger domain, similarly to regular breakpoints being hit.
+   */
+  export namespace EventBreakpoints {
+    
+    
+    /**
+     * Sets breakpoint on particular native event.
+     */
+    export type setInstrumentationBreakpointParameters = {
+      /**
+       * Instrumentation name to stop on.
+       */
+      eventName: string;
+    }
+    export type setInstrumentationBreakpointReturnValue = {
+    }
+    /**
+     * Removes breakpoint on particular native event.
+     */
+    export type removeInstrumentationBreakpointParameters = {
+      /**
+       * Instrumentation name to stop on.
+       */
+      eventName: string;
+    }
+    export type removeInstrumentationBreakpointReturnValue = {
+    }
+    /**
+     * Removes all breakpoints
+     */
+    export type disableParameters = {
+    }
+    export type disableReturnValue = {
+    }
+  }
+  
+  /**
+   * Defines commands and events for browser extensions.
+   */
+  export namespace Extensions {
+    /**
+     * Storage areas.
+     */
+    export type StorageArea = "session"|"local"|"sync"|"managed";
+    /**
+     * Detailed information about an extension.
+     */
+    export interface ExtensionInfo {
+      /**
+       * Extension id.
+       */
+      id: string;
+      /**
+       * Extension name.
+       */
+      name: string;
+      /**
+       * Extension version.
+       */
+      version: string;
+      /**
+       * The path from which the extension was loaded.
+       */
+      path: string;
+      /**
+       * Extension enabled status.
+       */
+      enabled: boolean;
+    }
+    
+    
+    /**
+     * Runs an extension default action.
+     */
+    export type triggerActionParameters = {
+      /**
+       * Extension id.
+       */
+      id: string;
+      /**
+       * A tab target ID to trigger the default extension action on.
+       */
+      targetId: string;
+    }
+    export type triggerActionReturnValue = {
+    }
+    /**
+     * Installs an unpacked extension from the filesystem similar to
+--load-extension CLI flags. Returns extension ID once the extension
+has been installed.
+     */
+    export type loadUnpackedParameters = {
+      /**
+       * Absolute file path.
+       */
+      path: string;
+      /**
+       * Enable the extension in incognito
+       */
+      enableInIncognito?: boolean;
+    }
+    export type loadUnpackedReturnValue = {
+      /**
+       * Extension id.
+       */
+      id: string;
+    }
+    /**
+     * Gets a list of all unpacked extensions.
+     */
+    export type getExtensionsParameters = {
+    }
+    export type getExtensionsReturnValue = {
+      extensions: ExtensionInfo[];
+    }
+    /**
+     * Uninstalls an unpacked extension (others not supported) from the profile.
+     */
+    export type uninstallParameters = {
+      /**
+       * Extension id.
+       */
+      id: string;
+    }
+    export type uninstallReturnValue = {
+    }
+    /**
+     * Gets data from extension storage in the given `storageArea`. If `keys` is
+specified, these are used to filter the result.
+     */
+    export type getStorageItemsParameters = {
+      /**
+       * ID of extension.
+       */
+      id: string;
+      /**
+       * StorageArea to retrieve data from.
+       */
+      storageArea: StorageArea;
+      /**
+       * Keys to retrieve.
+       */
+      keys?: string[];
+    }
+    export type getStorageItemsReturnValue = {
+      data: { [key: string]: string };
+    }
+    /**
+     * Removes `keys` from extension storage in the given `storageArea`.
+     */
+    export type removeStorageItemsParameters = {
+      /**
+       * ID of extension.
+       */
+      id: string;
+      /**
+       * StorageArea to remove data from.
+       */
+      storageArea: StorageArea;
+      /**
+       * Keys to remove.
+       */
+      keys: string[];
+    }
+    export type removeStorageItemsReturnValue = {
+    }
+    /**
+     * Clears extension storage in the given `storageArea`.
+     */
+    export type clearStorageItemsParameters = {
+      /**
+       * ID of extension.
+       */
+      id: string;
+      /**
+       * StorageArea to remove data from.
+       */
+      storageArea: StorageArea;
+    }
+    export type clearStorageItemsReturnValue = {
+    }
+    /**
+     * Sets `values` in extension storage in the given `storageArea`. The provided `values`
+will be merged with existing values in the storage area.
+     */
+    export type setStorageItemsParameters = {
+      /**
+       * ID of extension.
+       */
+      id: string;
+      /**
+       * StorageArea to set data in.
+       */
+      storageArea: StorageArea;
+      /**
+       * Values to set.
+       */
+      values: { [key: string]: string };
+    }
+    export type setStorageItemsReturnValue = {
+    }
+  }
+  
+  /**
+   * This domain allows interacting with the FedCM dialog.
+   */
+  export namespace FedCm {
+    /**
+     * Whether this is a sign-up or sign-in action for this account, i.e.
+whether this account has ever been used to sign in to this RP before.
+     */
+    export type LoginState = "SignIn"|"SignUp";
+    /**
+     * The types of FedCM dialogs.
+     */
+    export type DialogType = "AccountChooser"|"AutoReauthn"|"ConfirmIdpLogin"|"Error";
+    /**
+     * The buttons on the FedCM dialog.
+     */
+    export type DialogButton = "ConfirmIdpLoginContinue"|"ErrorGotIt"|"ErrorMoreDetails";
+    /**
+     * The URLs that each account has
+     */
+    export type AccountUrlType = "TermsOfService"|"PrivacyPolicy";
+    /**
+     * Corresponds to IdentityRequestAccount
+     */
+    export interface Account {
+      accountId: string;
+      email: string;
+      name: string;
+      givenName: string;
+      pictureUrl: string;
+      idpConfigUrl: string;
+      idpLoginUrl: string;
+      loginState: LoginState;
+      /**
+       * These two are only set if the loginState is signUp
+       */
+      termsOfServiceUrl?: string;
+      privacyPolicyUrl?: string;
+    }
+    
+    export type dialogShownPayload = {
+      dialogId: string;
+      dialogType: DialogType;
+      accounts: Account[];
+      /**
+       * These exist primarily so that the caller can verify the
+RP context was used appropriately.
+       */
+      title: string;
+      subtitle?: string;
+    }
+    /**
+     * Triggered when a dialog is closed, either by user action, JS abort,
+or a command below.
+     */
+    export type dialogClosedPayload = {
+      dialogId: string;
+    }
+    
+    export type enableParameters = {
+      /**
+       * Allows callers to disable the promise rejection delay that would
+normally happen, if this is unimportant to what's being tested.
+(step 4 of https://fedidcg.github.io/FedCM/#browser-api-rp-sign-in)
+       */
+      disableRejectionDelay?: boolean;
+    }
+    export type enableReturnValue = {
+    }
+    export type disableParameters = {
+    }
+    export type disableReturnValue = {
+    }
+    export type selectAccountParameters = {
+      dialogId: string;
+      accountIndex: number;
+    }
+    export type selectAccountReturnValue = {
+    }
+    export type clickDialogButtonParameters = {
+      dialogId: string;
+      dialogButton: DialogButton;
+    }
+    export type clickDialogButtonReturnValue = {
+    }
+    export type openUrlParameters = {
+      dialogId: string;
+      accountIndex: number;
+      accountUrlType: AccountUrlType;
+    }
+    export type openUrlReturnValue = {
+    }
+    export type dismissDialogParameters = {
+      dialogId: string;
+      triggerCooldown?: boolean;
+    }
+    export type dismissDialogReturnValue = {
+    }
+    /**
+     * Resets the cooldown time, if any, to allow the next FedCM call to show
+a dialog even if one was recently dismissed by the user.
+     */
+    export type resetCooldownParameters = {
+    }
+    export type resetCooldownReturnValue = {
+    }
+  }
+  
+  /**
+   * A domain for letting clients substitute browser's network layer with client code.
+   */
+  export namespace Fetch {
+    /**
+     * Unique request identifier.
+Note that this does not identify individual HTTP requests that are part of
+a network request.
+     */
+    export type RequestId = string;
+    /**
+     * Stages of the request to handle. Request will intercept before the request is
+sent. Response will intercept after the response is received (but before response
+body is received).
+     */
+    export type RequestStage = "Request"|"Response";
+    export interface RequestPattern {
+      /**
+       * Wildcards (`'*'` -> zero or more, `'?'` -> exactly one) are allowed. Escape character is
+backslash. Omitting is equivalent to `"*"`.
+       */
+      urlPattern?: string;
+      /**
+       * If set, only requests for matching resource types will be intercepted.
+       */
+      resourceType?: Network.ResourceType;
+      /**
+       * Stage at which to begin intercepting requests. Default is Request.
+       */
+      requestStage?: RequestStage;
+    }
+    /**
+     * Response HTTP header entry
+     */
+    export interface HeaderEntry {
+      name: string;
+      value: string;
+    }
+    /**
+     * Authorization challenge for HTTP status code 401 or 407.
+     */
+    export interface AuthChallenge {
+      /**
+       * Source of the authentication challenge.
+       */
+      source?: "Server"|"Proxy";
+      /**
+       * Origin of the challenger.
+       */
+      origin: string;
+      /**
+       * The authentication scheme used, such as basic or digest
+       */
+      scheme: string;
+      /**
+       * The realm of the challenge. May be empty.
+       */
+      realm: string;
+    }
+    /**
+     * Response to an AuthChallenge.
+     */
+    export interface AuthChallengeResponse {
+      /**
+       * The decision on what to do in response to the authorization challenge.  Default means
+deferring to the default behavior of the net stack, which will likely either the Cancel
+authentication or display a popup dialog box.
+       */
+      response: "Default"|"CancelAuth"|"ProvideCredentials";
+      /**
+       * The username to provide, possibly empty. Should only be set if response is
+ProvideCredentials.
+       */
+      username?: string;
+      /**
+       * The password to provide, possibly empty. Should only be set if response is
+ProvideCredentials.
+       */
+      password?: string;
+    }
+    
+    /**
+     * Issued when the domain is enabled and the request URL matches the
+specified filter. The request is paused until the client responds
+with one of continueRequest, failRequest or fulfillRequest.
+The stage of the request can be determined by presence of responseErrorReason
+and responseStatusCode -- the request is at the response stage if either
+of these fields is present and in the request stage otherwise.
+Redirect responses and subsequent requests are reported similarly to regular
+responses and requests. Redirect responses may be distinguished by the value
+of `responseStatusCode` (which is one of 301, 302, 303, 307, 308) along with
+presence of the `location` header. Requests resulting from a redirect will
+have `redirectedRequestId` field set.
+     */
+    export type requestPausedPayload = {
+      /**
+       * Each request the page makes will have a unique id.
+       */
+      requestId: RequestId;
+      /**
+       * The details of the request.
+       */
+      request: Network.Request;
+      /**
+       * The id of the frame that initiated the request.
+       */
+      frameId: Page.FrameId;
+      /**
+       * How the requested resource will be used.
+       */
+      resourceType: Network.ResourceType;
+      /**
+       * Response error if intercepted at response stage.
+       */
+      responseErrorReason?: Network.ErrorReason;
+      /**
+       * Response code if intercepted at response stage.
+       */
+      responseStatusCode?: number;
+      /**
+       * Response status text if intercepted at response stage.
+       */
+      responseStatusText?: string;
+      /**
+       * Response headers if intercepted at the response stage.
+       */
+      responseHeaders?: HeaderEntry[];
+      /**
+       * If the intercepted request had a corresponding Network.requestWillBeSent event fired for it,
+then this networkId will be the same as the requestId present in the requestWillBeSent event.
+       */
+      networkId?: Network.RequestId;
+      /**
+       * If the request is due to a redirect response from the server, the id of the request that
+has caused the redirect.
+       */
+      redirectedRequestId?: RequestId;
+    }
+    /**
+     * Issued when the domain is enabled with handleAuthRequests set to true.
+The request is paused until client responds with continueWithAuth.
+     */
+    export type authRequiredPayload = {
+      /**
+       * Each request the page makes will have a unique id.
+       */
+      requestId: RequestId;
+      /**
+       * The details of the request.
+       */
+      request: Network.Request;
+      /**
+       * The id of the frame that initiated the request.
+       */
+      frameId: Page.FrameId;
+      /**
+       * How the requested resource will be used.
+       */
+      resourceType: Network.ResourceType;
+      /**
+       * Details of the Authorization Challenge encountered.
+If this is set, client should respond with continueRequest that
+contains AuthChallengeResponse.
+       */
+      authChallenge: AuthChallenge;
+    }
+    
+    /**
+     * Disables the fetch domain.
+     */
+    export type disableParameters = {
+    }
+    export type disableReturnValue = {
+    }
+    /**
+     * Enables issuing of requestPaused events. A request will be paused until client
+calls one of failRequest, fulfillRequest or continueRequest/continueWithAuth.
+     */
+    export type enableParameters = {
+      /**
+       * If specified, only requests matching any of these patterns will produce
+fetchRequested event and will be paused until clients response. If not set,
+all requests will be affected.
+       */
+      patterns?: RequestPattern[];
+      /**
+       * If true, authRequired events will be issued and requests will be paused
+expecting a call to continueWithAuth.
+       */
+      handleAuthRequests?: boolean;
+    }
+    export type enableReturnValue = {
+    }
+    /**
+     * Causes the request to fail with specified reason.
+     */
+    export type failRequestParameters = {
+      /**
+       * An id the client received in requestPaused event.
+       */
+      requestId: RequestId;
+      /**
+       * Causes the request to fail with the given reason.
+       */
+      errorReason: Network.ErrorReason;
+    }
+    export type failRequestReturnValue = {
+    }
+    /**
+     * Provides response to the request.
+     */
+    export type fulfillRequestParameters = {
+      /**
+       * An id the client received in requestPaused event.
+       */
+      requestId: RequestId;
+      /**
+       * An HTTP response code.
+       */
+      responseCode: number;
+      /**
+       * Response headers.
+       */
+      responseHeaders?: HeaderEntry[];
+      /**
+       * Alternative way of specifying response headers as a \0-separated
+series of name: value pairs. Prefer the above method unless you
+need to represent some non-UTF8 values that can't be transmitted
+over the protocol as text.
+       */
+      binaryResponseHeaders?: binary;
+      /**
+       * A response body. If absent, original response body will be used if
+the request is intercepted at the response stage and empty body
+will be used if the request is intercepted at the request stage.
+       */
+      body?: binary;
+      /**
+       * A textual representation of responseCode.
+If absent, a standard phrase matching responseCode is used.
+       */
+      responsePhrase?: string;
+    }
+    export type fulfillRequestReturnValue = {
+    }
+    /**
+     * Continues the request, optionally modifying some of its parameters.
+     */
+    export type continueRequestParameters = {
+      /**
+       * An id the client received in requestPaused event.
+       */
+      requestId: RequestId;
+      /**
+       * If set, the request url will be modified in a way that's not observable by page.
+       */
+      url?: string;
+      /**
+       * If set, the request method is overridden.
+       */
+      method?: string;
+      /**
+       * If set, overrides the post data in the request.
+       */
+      postData?: binary;
+      /**
+       * If set, overrides the request headers. Note that the overrides do not
+extend to subsequent redirect hops, if a redirect happens. Another override
+may be applied to a different request produced by a redirect.
+       */
+      headers?: HeaderEntry[];
+      /**
+       * If set, overrides response interception behavior for this request.
+       */
+      interceptResponse?: boolean;
+    }
+    export type continueRequestReturnValue = {
+    }
+    /**
+     * Continues a request supplying authChallengeResponse following authRequired event.
+     */
+    export type continueWithAuthParameters = {
+      /**
+       * An id the client received in authRequired event.
+       */
+      requestId: RequestId;
+      /**
+       * Response to  with an authChallenge.
+       */
+      authChallengeResponse: AuthChallengeResponse;
+    }
+    export type continueWithAuthReturnValue = {
+    }
+    /**
+     * Continues loading of the paused response, optionally modifying the
+response headers. If either responseCode or headers are modified, all of them
+must be present.
+     */
+    export type continueResponseParameters = {
+      /**
+       * An id the client received in requestPaused event.
+       */
+      requestId: RequestId;
+      /**
+       * An HTTP response code. If absent, original response code will be used.
+       */
+      responseCode?: number;
+      /**
+       * A textual representation of responseCode.
+If absent, a standard phrase matching responseCode is used.
+       */
+      responsePhrase?: string;
+      /**
+       * Response headers. If absent, original response headers will be used.
+       */
+      responseHeaders?: HeaderEntry[];
+      /**
+       * Alternative way of specifying response headers as a \0-separated
+series of name: value pairs. Prefer the above method unless you
+need to represent some non-UTF8 values that can't be transmitted
+over the protocol as text.
+       */
+      binaryResponseHeaders?: binary;
+    }
+    export type continueResponseReturnValue = {
+    }
+    /**
+     * Causes the body of the response to be received from the server and
+returned as a single string. May only be issued for a request that
+is paused in the Response stage and is mutually exclusive with
+takeResponseBodyForInterceptionAsStream. Calling other methods that
+affect the request or disabling fetch domain before body is received
+results in an undefined behavior.
+Note that the response body is not available for redirects. Requests
+paused in the _redirect received_ state may be differentiated by
+`responseCode` and presence of `location` response header, see
+comments to `requestPaused` for details.
+     */
+    export type getResponseBodyParameters = {
+      /**
+       * Identifier for the intercepted request to get body for.
+       */
+      requestId: RequestId;
+    }
+    export type getResponseBodyReturnValue = {
+      /**
+       * Response body.
+       */
+      body: string;
+      /**
+       * True, if content was sent as base64.
+       */
+      base64Encoded: boolean;
+    }
+    /**
+     * Returns a handle to the stream representing the response body.
+The request must be paused in the HeadersReceived stage.
+Note that after this command the request can't be continued
+as is -- client either needs to cancel it or to provide the
+response body.
+The stream only supports sequential read, IO.read will fail if the position
+is specified.
+This method is mutually exclusive with getResponseBody.
+Calling other methods that affect the request or disabling fetch
+domain before body is received results in an undefined behavior.
+     */
+    export type takeResponseBodyAsStreamParameters = {
+      requestId: RequestId;
+    }
+    export type takeResponseBodyAsStreamReturnValue = {
+      stream: IO.StreamHandle;
+    }
+  }
+  
+  export namespace FileSystem {
+    export interface File {
+      name: string;
+      /**
+       * Timestamp
+       */
+      lastModified: Network.TimeSinceEpoch;
+      /**
+       * Size in bytes
+       */
+      size: number;
+      type: string;
+    }
+    export interface Directory {
+      name: string;
+      nestedDirectories: string[];
+      /**
+       * Files that are directly nested under this directory.
+       */
+      nestedFiles: File[];
+    }
+    export interface BucketFileSystemLocator {
+      /**
+       * Storage key
+       */
+      storageKey: Storage.SerializedStorageKey;
+      /**
+       * Bucket name. Not passing a `bucketName` will retrieve the default Bucket. (https://developer.mozilla.org/en-US/docs/Web/API/Storage_API#storage_buckets)
+       */
+      bucketName?: string;
+      /**
+       * Path to the directory using each path component as an array item.
+       */
+      pathComponents: string[];
+    }
+    
+    
+    export type getDirectoryParameters = {
+      bucketFileSystemLocator: BucketFileSystemLocator;
+    }
+    export type getDirectoryReturnValue = {
+      /**
+       * Returns the directory object at the path.
+       */
+      directory: Directory;
+    }
   }
   
   /**
    * This domain provides experimental commands only supported in headless mode.
    */
-  export module HeadlessExperimental {
+  export namespace HeadlessExperimental {
     /**
      * Encoding options for a screenshot.
      */
@@ -6970,7 +8570,7 @@ display. Reported for diagnostic uses, may be removed in the future.
   /**
    * Input/Output operations for streams produced by DevTools.
    */
-  export module IO {
+  export namespace IO {
     /**
      * This is either obtained from another method or specified as `blob:<uuid>` where
 `<uuid>` is an UUID of a Blob.
@@ -7038,55 +8638,7 @@ following the last read). Some types of streams may only support sequential read
     }
   }
   
-  export module FileSystem {
-    export interface File {
-      name: string;
-      /**
-       * Timestamp
-       */
-      lastModified: Network.TimeSinceEpoch;
-      /**
-       * Size in bytes
-       */
-      size: number;
-      type: string;
-    }
-    export interface Directory {
-      name: string;
-      nestedDirectories: string[];
-      /**
-       * Files that are directly nested under this directory.
-       */
-      nestedFiles: File[];
-    }
-    export interface BucketFileSystemLocator {
-      /**
-       * Storage key
-       */
-      storageKey: Storage.SerializedStorageKey;
-      /**
-       * Bucket name. Not passing a `bucketName` will retrieve the default Bucket. (https://developer.mozilla.org/en-US/docs/Web/API/Storage_API#storage_buckets)
-       */
-      bucketName?: string;
-      /**
-       * Path to the directory using each path component as an array item.
-       */
-      pathComponents: string[];
-    }
-    
-    
-    export type getDirectoryParameters = {
-      bucketFileSystemLocator: BucketFileSystemLocator;
-    }
-    export type getDirectoryReturnValue = {
-      /**
-       * Returns the directory object at the path.
-       */
-      directory: Directory;
-    }
-  }
-  
-  export module IndexedDB {
+  export namespace IndexedDB {
     /**
      * Database with an array of object stores.
      */
@@ -7347,9 +8899,9 @@ Security origin.
        */
       objectStoreName: string;
       /**
-       * Index name, empty string for object store data requests.
+       * Index name. If not specified, it performs an object store data request.
        */
-      indexName: string;
+      indexName?: string;
       /**
        * Number of records to skip.
        */
@@ -7465,7 +9017,7 @@ Security origin.
     }
   }
   
-  export module Input {
+  export namespace Input {
     export interface TouchPoint {
       /**
        * X coordinate of the event relative to the main frame's viewport in CSS pixels.
@@ -7988,7 +9540,7 @@ for the preferred input type).
     }
   }
   
-  export module Inspector {
+  export namespace Inspector {
     
     /**
      * Fired when remote debugging connection is about to be terminated. Contains detach reason.
@@ -8007,6 +9559,10 @@ for the preferred input type).
      * Fired when debugging target has reloaded after crash
      */
     export type targetReloadedAfterCrashPayload = void;
+    /**
+     * Fired on worker targets when main worker script and any imported scripts have been evaluated.
+     */
+    export type workerScriptLoadedPayload = void;
     
     /**
      * Disables inspector domain notifications.
@@ -8024,7 +9580,7 @@ for the preferred input type).
     }
   }
   
-  export module LayerTree {
+  export namespace LayerTree {
     /**
      * Unique Layer identifier.
      */
@@ -8321,7 +9877,7 @@ transform/scrolling purposes only.
   /**
    * Provides access to log entries.
    */
-  export module Log {
+  export namespace Log {
     /**
      * Log entry.
      */
@@ -8434,7 +9990,141 @@ transform/scrolling purposes only.
     }
   }
   
-  export module Memory {
+  /**
+   * This domain allows detailed inspection of media elements.
+   */
+  export namespace Media {
+    /**
+     * Players will get an ID that is unique within the agent context.
+     */
+    export type PlayerId = string;
+    export type Timestamp = number;
+    /**
+     * Have one type per entry in MediaLogRecord::Type
+Corresponds to kMessage
+     */
+    export interface PlayerMessage {
+      /**
+       * Keep in sync with MediaLogMessageLevel
+We are currently keeping the message level 'error' separate from the
+PlayerError type because right now they represent different things,
+this one being a DVLOG(ERROR) style log message that gets printed
+based on what log level is selected in the UI, and the other is a
+representation of a media::PipelineStatus object. Soon however we're
+going to be moving away from using PipelineStatus for errors and
+introducing a new error type which should hopefully let us integrate
+the error log level into the PlayerError type.
+       */
+      level: "error"|"warning"|"info"|"debug";
+      message: string;
+    }
+    /**
+     * Corresponds to kMediaPropertyChange
+     */
+    export interface PlayerProperty {
+      name: string;
+      value: string;
+    }
+    /**
+     * Corresponds to kMediaEventTriggered
+     */
+    export interface PlayerEvent {
+      timestamp: Timestamp;
+      value: string;
+    }
+    /**
+     * Represents logged source line numbers reported in an error.
+NOTE: file and line are from chromium c++ implementation code, not js.
+     */
+    export interface PlayerErrorSourceLocation {
+      file: string;
+      line: number;
+    }
+    /**
+     * Corresponds to kMediaError
+     */
+    export interface PlayerError {
+      errorType: string;
+      /**
+       * Code is the numeric enum entry for a specific set of error codes, such
+as PipelineStatusCodes in media/base/pipeline_status.h
+       */
+      code: number;
+      /**
+       * A trace of where this error was caused / where it passed through.
+       */
+      stack: PlayerErrorSourceLocation[];
+      /**
+       * Errors potentially have a root cause error, ie, a DecoderError might be
+caused by an WindowsError
+       */
+      cause: PlayerError[];
+      /**
+       * Extra data attached to an error, such as an HRESULT, Video Codec, etc.
+       */
+      data: { [key: string]: string };
+    }
+    export interface Player {
+      playerId: PlayerId;
+      domNodeId?: DOM.BackendNodeId;
+    }
+    
+    /**
+     * This can be called multiple times, and can be used to set / override /
+remove player properties. A null propValue indicates removal.
+     */
+    export type playerPropertiesChangedPayload = {
+      playerId: PlayerId;
+      properties: PlayerProperty[];
+    }
+    /**
+     * Send events as a list, allowing them to be batched on the browser for less
+congestion. If batched, events must ALWAYS be in chronological order.
+     */
+    export type playerEventsAddedPayload = {
+      playerId: PlayerId;
+      events: PlayerEvent[];
+    }
+    /**
+     * Send a list of any messages that need to be delivered.
+     */
+    export type playerMessagesLoggedPayload = {
+      playerId: PlayerId;
+      messages: PlayerMessage[];
+    }
+    /**
+     * Send a list of any errors that need to be delivered.
+     */
+    export type playerErrorsRaisedPayload = {
+      playerId: PlayerId;
+      errors: PlayerError[];
+    }
+    /**
+     * Called whenever a player is created, or when a new agent joins and receives
+a list of active players. If an agent is restored, it will receive one
+event for each active player.
+     */
+    export type playerCreatedPayload = {
+      player: Player;
+    }
+    
+    /**
+     * Enables the Media domain
+     */
+    export type enableParameters = {
+    }
+    export type enableReturnValue = {
+    }
+    /**
+     * Disables the Media domain.
+     */
+    export type disableParameters = {
+    }
+    export type disableReturnValue = {
+    }
+  }
+  
+  export namespace Memory {
     /**
      * Memory pressure level.
      */
@@ -8614,7 +10304,7 @@ collected since browser process startup.
    * Network domain allows tracking network activities of the page. It exposes information about http,
 file, data and other requests and responses, their headers, bodies, timing, etc.
    */
-  export module Network {
+  export namespace Network {
     /**
      * Resource type as it was perceived by the rendering engine.
      */
@@ -8764,6 +10454,10 @@ milliseconds relatively to this requestTime.
      */
     export type ResourcePriority = "VeryLow"|"Low"|"Medium"|"High"|"VeryHigh";
     /**
+     * The render-blocking behavior of a resource request.
+     */
+    export type RenderBlockingBehavior = "Blocking"|"InBodyParserBlocking"|"NonBlocking"|"NonBlockingDynamic"|"PotentiallyBlocking";
+    /**
      * Post data entry for HTTP request
      */
     export interface PostDataEntry {
@@ -8828,6 +10522,10 @@ passed by the developer (e.g. via "fetch") as understood by the backend.
 request corresponding to the main frame.
        */
       isSameSite?: boolean;
+      /**
+       * True when the resource request is ad-related.
+       */
+      isAdRelated?: boolean;
     }
     /**
      * Details of a signed certificate timestamp (SCT).
@@ -8945,7 +10643,7 @@ applicable or not known.
     /**
      * The reason why request was blocked.
      */
-    export type CorsError = "DisallowedByMode"|"InvalidResponse"|"WildcardOriginNotAllowed"|"MissingAllowOriginHeader"|"MultipleAllowOriginValues"|"InvalidAllowOriginValue"|"AllowOriginMismatch"|"InvalidAllowCredentials"|"CorsDisabledScheme"|"PreflightInvalidStatus"|"PreflightDisallowedRedirect"|"PreflightWildcardOriginNotAllowed"|"PreflightMissingAllowOriginHeader"|"PreflightMultipleAllowOriginValues"|"PreflightInvalidAllowOriginValue"|"PreflightAllowOriginMismatch"|"PreflightInvalidAllowCredentials"|"PreflightMissingAllowExternal"|"PreflightInvalidAllowExternal"|"PreflightMissingAllowPrivateNetwork"|"PreflightInvalidAllowPrivateNetwork"|"InvalidAllowMethodsPreflightResponse"|"InvalidAllowHeadersPreflightResponse"|"MethodDisallowedByPreflightResponse"|"HeaderDisallowedByPreflightResponse"|"RedirectContainsCredentials"|"InsecurePrivateNetwork"|"InvalidPrivateNetworkAccess"|"UnexpectedPrivateNetworkAccess"|"NoCorsRedirectModeNotFollow"|"PreflightMissingPrivateNetworkAccessId"|"PreflightMissingPrivateNetworkAccessName"|"PrivateNetworkAccessPermissionUnavailable"|"PrivateNetworkAccessPermissionDenied"|"LocalNetworkAccessPermissionDenied";
+    export type CorsError = "DisallowedByMode"|"InvalidResponse"|"WildcardOriginNotAllowed"|"MissingAllowOriginHeader"|"MultipleAllowOriginValues"|"InvalidAllowOriginValue"|"AllowOriginMismatch"|"InvalidAllowCredentials"|"CorsDisabledScheme"|"PreflightInvalidStatus"|"PreflightDisallowedRedirect"|"PreflightWildcardOriginNotAllowed"|"PreflightMissingAllowOriginHeader"|"PreflightMultipleAllowOriginValues"|"PreflightInvalidAllowOriginValue"|"PreflightAllowOriginMismatch"|"PreflightInvalidAllowCredentials"|"PreflightMissingAllowExternal"|"PreflightInvalidAllowExternal"|"InvalidAllowMethodsPreflightResponse"|"InvalidAllowHeadersPreflightResponse"|"MethodDisallowedByPreflightResponse"|"HeaderDisallowedByPreflightResponse"|"RedirectContainsCredentials"|"InsecureLocalNetwork"|"InvalidLocalNetworkAccess"|"NoCorsRedirectModeNotFollow"|"LocalNetworkAccessPermissionDenied";
     export interface CorsErrorStatus {
       corsError: CorsError;
       failedParameter: string;
@@ -9198,7 +10896,7 @@ If the opcode isn't 1, then payloadData is a base64 encoded string representing 
       /**
        * Type of this initiator.
        */
-      type: "parser"|"script"|"preload"|"SignedExchange"|"preflight"|"other";
+      type: "parser"|"script"|"preload"|"SignedExchange"|"preflight"|"FedCM"|"other";
       /**
        * Initiator JavaScript stack trace, set for Script only.
 Requires the Debugger domain to be enabled.
@@ -9260,6 +10958,9 @@ of the request to the endpoint that set the cookie.
       path: string;
       /**
        * Cookie expiration date as the number of seconds since the UNIX epoch.
+The value is set to -1 if the expiry date is not set.
+The value can be null for values that cannot be represented in
+JSON (±Inf).
        */
       expires: number;
       /**
@@ -9287,10 +10988,6 @@ of the request to the endpoint that set the cookie.
        */
       priority: CookiePriority;
       /**
-       * True if cookie is SameParty.
-       */
-      sameParty: boolean;
-      /**
        * Cookie source scheme type.
        */
       sourceScheme: CookieSourceScheme;
@@ -9312,15 +11009,15 @@ This is a temporary ability and it will be removed in the future.
     /**
      * Types of reasons why a cookie may not be stored from a response.
      */
-    export type SetCookieBlockedReason = "SecureOnly"|"SameSiteStrict"|"SameSiteLax"|"SameSiteUnspecifiedTreatedAsLax"|"SameSiteNoneInsecure"|"UserPreferences"|"ThirdPartyPhaseout"|"ThirdPartyBlockedInFirstPartySet"|"SyntaxError"|"SchemeNotSupported"|"OverwriteSecure"|"InvalidDomain"|"InvalidPrefix"|"UnknownError"|"SchemefulSameSiteStrict"|"SchemefulSameSiteLax"|"SchemefulSameSiteUnspecifiedTreatedAsLax"|"SamePartyFromCrossPartyContext"|"SamePartyConflictsWithOtherAttributes"|"NameValuePairExceedsMaxSize"|"DisallowedCharacter"|"NoCookieContent";
+    export type SetCookieBlockedReason = "SecureOnly"|"SameSiteStrict"|"SameSiteLax"|"SameSiteUnspecifiedTreatedAsLax"|"SameSiteNoneInsecure"|"UserPreferences"|"ThirdPartyPhaseout"|"ThirdPartyBlockedInFirstPartySet"|"SyntaxError"|"SchemeNotSupported"|"OverwriteSecure"|"InvalidDomain"|"InvalidPrefix"|"UnknownError"|"SchemefulSameSiteStrict"|"SchemefulSameSiteLax"|"SchemefulSameSiteUnspecifiedTreatedAsLax"|"NameValuePairExceedsMaxSize"|"DisallowedCharacter"|"NoCookieContent";
     /**
      * Types of reasons why a cookie may not be sent with a request.
      */
-    export type CookieBlockedReason = "SecureOnly"|"NotOnPath"|"DomainMismatch"|"SameSiteStrict"|"SameSiteLax"|"SameSiteUnspecifiedTreatedAsLax"|"SameSiteNoneInsecure"|"UserPreferences"|"ThirdPartyPhaseout"|"ThirdPartyBlockedInFirstPartySet"|"UnknownError"|"SchemefulSameSiteStrict"|"SchemefulSameSiteLax"|"SchemefulSameSiteUnspecifiedTreatedAsLax"|"SamePartyFromCrossPartyContext"|"NameValuePairExceedsMaxSize"|"PortMismatch"|"SchemeMismatch"|"AnonymousContext";
+    export type CookieBlockedReason = "SecureOnly"|"NotOnPath"|"DomainMismatch"|"SameSiteStrict"|"SameSiteLax"|"SameSiteUnspecifiedTreatedAsLax"|"SameSiteNoneInsecure"|"UserPreferences"|"ThirdPartyPhaseout"|"ThirdPartyBlockedInFirstPartySet"|"UnknownError"|"SchemefulSameSiteStrict"|"SchemefulSameSiteLax"|"SchemefulSameSiteUnspecifiedTreatedAsLax"|"NameValuePairExceedsMaxSize"|"PortMismatch"|"SchemeMismatch"|"AnonymousContext";
     /**
      * Types of reasons why a cookie should have been blocked by 3PCD but is exempted for the request.
      */
-    export type CookieExemptionReason = "None"|"UserSetting"|"TPCDMetadata"|"TPCDDeprecationTrial"|"TopLevelTPCDDeprecationTrial"|"TPCDHeuristics"|"EnterprisePolicy"|"StorageAccess"|"TopLevelStorageAccess"|"Scheme"|"SameSiteNoneCookiesInSandbox";
+    export type CookieExemptionReason = "None"|"UserSetting"|"EnterprisePolicy"|"StorageAccess"|"TopLevelStorageAccess"|"Scheme"|"SameSiteNoneCookiesInSandbox";
     /**
      * A cookie which was not stored from a response with the corresponding reason.
      */
@@ -9423,10 +11120,6 @@ default domain, path, source port, and source scheme values of the created cooki
        * Cookie Priority.
        */
       priority?: CookiePriority;
-      /**
-       * True if cookie is SameParty.
-       */
-      sameParty?: boolean;
       /**
        * Cookie source scheme type.
        */
@@ -9605,6 +11298,11 @@ https://wicg.github.io/webpackage/draft-yasskin-httpbis-origin-signed-exchanges-
        */
       outerResponse: Response;
       /**
+       * Whether network response for the signed exchange was accompanied by
+extra headers.
+       */
+      hasExtraInfo: boolean;
+      /**
        * Information about the signed exchange header.
        */
       header?: SignedExchangeHeader;
@@ -9621,6 +11319,58 @@ https://wicg.github.io/webpackage/draft-yasskin-httpbis-origin-signed-exchanges-
      * List of content encodings supported by the backend.
      */
     export type ContentEncoding = "deflate"|"gzip"|"br"|"zstd";
+    export interface NetworkConditions {
+      /**
+       * Only matching requests will be affected by these conditions. Patterns use the URLPattern constructor string
+syntax (https://urlpattern.spec.whatwg.org/) and must be absolute. If the pattern is empty, all requests are
+matched (including p2p connections).
+       */
+      urlPattern: string;
+      /**
+       * Minimum latency from request sent to response headers received (ms).
+       */
+      latency: number;
+      /**
+       * Maximal aggregated download throughput (bytes/sec). -1 disables download throttling.
+       */
+      downloadThroughput: number;
+      /**
+       * Maximal aggregated upload throughput (bytes/sec).  -1 disables upload throttling.
+       */
+      uploadThroughput: number;
+      /**
+       * Connection type if known.
+       */
+      connectionType?: ConnectionType;
+      /**
+       * WebRTC packet loss (percent, 0-100). 0 disables packet loss emulation, 100 drops all the packets.
+       */
+      packetLoss?: number;
+      /**
+       * WebRTC packet queue length (packet). 0 removes any queue length limitations.
+       */
+      packetQueueLength?: number;
+      /**
+       * WebRTC packetReordering feature.
+       */
+      packetReordering?: boolean;
+      /**
+       * True to emulate internet disconnection.
+       */
+      offline?: boolean;
+    }
+    export interface BlockPattern {
+      /**
+       * URL pattern to match. Patterns use the URLPattern constructor string syntax
+(https://urlpattern.spec.whatwg.org/) and must be absolute. Example: `<example>`.
+       */
+      urlPattern: string;
+      /**
+       * Whether or not to block the pattern. If false, a matching request will not be blocked even if it matches a later
+`BlockPattern`.
+       */
+      block: boolean;
+    }
     export type DirectSocketDnsQueryType = "ipv4"|"ipv6";
     export interface DirectTCPSocketOptions {
       /**
@@ -9661,6 +11411,12 @@ https://wicg.github.io/webpackage/draft-yasskin-httpbis-origin-signed-exchanges-
        * Expected to be unsigned integer.
        */
       receiveBufferSize?: number;
+      multicastLoopback?: boolean;
+      /**
+       * Unsigned int 8.
+       */
+      multicastTimeToLive?: number;
+      multicastAllowAddressSharing?: boolean;
     }
     export interface DirectUDPMessage {
       data: binary;
@@ -9674,8 +11430,8 @@ Expected to be unsigned integer.
        */
       remotePort?: number;
     }
-    export type PrivateNetworkRequestPolicy = "Allow"|"BlockFromInsecureToMorePrivate"|"WarnFromInsecureToMorePrivate"|"PreflightBlock"|"PreflightWarn"|"PermissionBlock"|"PermissionWarn";
-    export type IPAddressSpace = "Local"|"Private"|"Public"|"Unknown";
+    export type LocalNetworkAccessRequestPolicy = "Allow"|"BlockFromInsecureToMorePrivate"|"WarnFromInsecureToMorePrivate"|"PermissionBlock"|"PermissionWarn";
+    export type IPAddressSpace = "Loopback"|"Local"|"Public"|"Unknown";
     export interface ConnectTiming {
       /**
        * Timing's requestTime is a baseline in seconds, while the other numbers are ticks in
@@ -9687,7 +11443,63 @@ the same request (but not for redirected requests).
     export interface ClientSecurityState {
       initiatorIsSecureContext: boolean;
       initiatorIPAddressSpace: IPAddressSpace;
-      privateNetworkRequestPolicy: PrivateNetworkRequestPolicy;
+      localNetworkAccessRequestPolicy: LocalNetworkAccessRequestPolicy;
+    }
+    /**
+     * Identifies the script on the stack that caused a resource or element to be
+labeled as an ad. For resources, this indicates the context that triggered
+the fetch. For elements, this indicates the context that caused the element
+to be appended to the DOM.
+     */
+    export interface AdScriptIdentifier {
+      /**
+       * The script's V8 identifier.
+       */
+      scriptId: Runtime.ScriptId;
+      /**
+       * V8's debugging ID for the v8::Context.
+       */
+      debuggerId: Runtime.UniqueDebuggerId;
+      /**
+       * The script's url (or generated name based on id if inline script).
+       */
+      name: string;
+    }
+    /**
+     * Encapsulates the script ancestry and the root script filter list rule that
+caused the resource or element to be labeled as an ad.
+     */
+    export interface AdAncestry {
+      /**
+       * A chain of `AdScriptIdentifier`s representing the ancestry of an ad
+script that led to the creation of a resource or element. The chain is
+ordered from the script itself (lowest level) up to its root ancestor
+that was flagged by a filter list.
+       */
+      ancestryChain: AdScriptIdentifier[];
+      /**
+       * The filter list rule that caused the root (last) script in
+`ancestryChain` to be tagged as an ad.
+       */
+      rootScriptFilterlistRule?: string;
+    }
+    /**
+     * Represents the provenance of an ad resource or element. Only one of
+`filterlistRule` or `adScriptAncestry` can be set. If `filterlistRule`
+is provided, the resource URL directly matches a filter list rule. If
+`adScriptAncestry` is provided, an ad script initiated the resource fetch or
+appended the element to the DOM. If neither is provided, the entity is
+known to be an ad, but provenance tracking information is unavailable.
+     */
+    export interface AdProvenance {
+      /**
+       * The filterlist rule that matched, if any.
+       */
+      filterlistRule?: string;
+      /**
+       * The script ancestry that created the ad, if any.
+       */
+      adScriptAncestry?: AdAncestry;
     }
     export type CrossOriginOpenerPolicyValue = "SameOrigin"|"SameOriginAllowPopups"|"RestrictProperties"|"UnsafeNone"|"SameOriginPlusCoep"|"RestrictPropertiesPlusCoep"|"NoopenerAllowPopups";
     export interface CrossOriginOpenerPolicyStatus {
@@ -9760,6 +11572,229 @@ the same request (but not for redirected requests).
        * Name of the endpoint group.
        */
       groupName: string;
+    }
+    /**
+     * Unique identifier for a device bound session.
+     */
+    export interface DeviceBoundSessionKey {
+      /**
+       * The site the session is set up for.
+       */
+      site: string;
+      /**
+       * The id of the session.
+       */
+      id: string;
+    }
+    /**
+     * How a device bound session was used during a request.
+     */
+    export interface DeviceBoundSessionWithUsage {
+      /**
+       * The key for the session.
+       */
+      sessionKey: DeviceBoundSessionKey;
+      /**
+       * How the session was used (or not used).
+       */
+      usage: "NotInScope"|"InScopeRefreshNotYetNeeded"|"InScopeRefreshNotAllowed"|"ProactiveRefreshNotPossible"|"ProactiveRefreshAttempted"|"Deferred";
+    }
+    /**
+     * A device bound session's cookie craving.
+     */
+    export interface DeviceBoundSessionCookieCraving {
+      /**
+       * The name of the craving.
+       */
+      name: string;
+      /**
+       * The domain of the craving.
+       */
+      domain: string;
+      /**
+       * The path of the craving.
+       */
+      path: string;
+      /**
+       * The `Secure` attribute of the craving attributes.
+       */
+      secure: boolean;
+      /**
+       * The `HttpOnly` attribute of the craving attributes.
+       */
+      httpOnly: boolean;
+      /**
+       * The `SameSite` attribute of the craving attributes.
+       */
+      sameSite?: CookieSameSite;
+    }
+    /**
+     * A device bound session's inclusion URL rule.
+     */
+    export interface DeviceBoundSessionUrlRule {
+      /**
+       * See comments on `net::device_bound_sessions::SessionInclusionRules::UrlRule::rule_type`.
+       */
+      ruleType: "Exclude"|"Include";
+      /**
+       * See comments on `net::device_bound_sessions::SessionInclusionRules::UrlRule::host_pattern`.
+       */
+      hostPattern: string;
+      /**
+       * See comments on `net::device_bound_sessions::SessionInclusionRules::UrlRule::path_prefix`.
+       */
+      pathPrefix: string;
+    }
+    /**
+     * A device bound session's inclusion rules.
+     */
+    export interface DeviceBoundSessionInclusionRules {
+      /**
+       * See comments on `net::device_bound_sessions::SessionInclusionRules::origin_`.
+       */
+      origin: string;
+      /**
+       * Whether the whole site is included. See comments on
+`net::device_bound_sessions::SessionInclusionRules::include_site_` for more
+details; this boolean is true if that value is populated.
+       */
+      includeSite: boolean;
+      /**
+       * See comments on `net::device_bound_sessions::SessionInclusionRules::url_rules_`.
+       */
+      urlRules: DeviceBoundSessionUrlRule[];
+    }
+    /**
+     * A device bound session.
+     */
+    export interface DeviceBoundSession {
+      /**
+       * The site and session ID of the session.
+       */
+      key: DeviceBoundSessionKey;
+      /**
+       * See comments on `net::device_bound_sessions::Session::refresh_url_`.
+       */
+      refreshUrl: string;
+      /**
+       * See comments on `net::device_bound_sessions::Session::inclusion_rules_`.
+       */
+      inclusionRules: DeviceBoundSessionInclusionRules;
+      /**
+       * See comments on `net::device_bound_sessions::Session::cookie_cravings_`.
+       */
+      cookieCravings: DeviceBoundSessionCookieCraving[];
+      /**
+       * See comments on `net::device_bound_sessions::Session::expiry_date_`.
+       */
+      expiryDate: Network.TimeSinceEpoch;
+      /**
+       * See comments on `net::device_bound_sessions::Session::cached_challenge__`.
+       */
+      cachedChallenge?: string;
+      /**
+       * See comments on `net::device_bound_sessions::Session::allowed_refresh_initiators_`.
+       */
+      allowedRefreshInitiators: string[];
+    }
+    /**
+     * A unique identifier for a device bound session event.
+     */
+    export type DeviceBoundSessionEventId = string;
+    /**
+     * A fetch result for a device bound session creation or refresh.
+     */
+    export type DeviceBoundSessionFetchResult = "Success"|"KeyError"|"SigningError"|"TransientSigningError"|"ServerRequestedTermination"|"InvalidSessionId"|"InvalidChallenge"|"TooManyChallenges"|"InvalidFetcherUrl"|"InvalidRefreshUrl"|"TransientHttpError"|"ScopeOriginSameSiteMismatch"|"RefreshUrlSameSiteMismatch"|"MismatchedSessionId"|"MissingScope"|"NoCredentials"|"SubdomainRegistrationWellKnownUnavailable"|"SubdomainRegistrationUnauthorized"|"SubdomainRegistrationWellKnownMalformed"|"SessionProviderWellKnownUnavailable"|"RelyingPartyWellKnownUnavailable"|"FederatedKeyThumbprintMismatch"|"InvalidFederatedSessionUrl"|"InvalidFederatedKey"|"TooManyRelyingOriginLabels"|"BoundCookieSetForbidden"|"NetError"|"ProxyError"|"EmptySessionConfig"|"InvalidCredentialsConfig"|"InvalidCredentialsType"|"InvalidCredentialsEmptyName"|"InvalidCredentialsCookie"|"PersistentHttpError"|"RegistrationAttemptedChallenge"|"InvalidScopeOrigin"|"ScopeOriginContainsPath"|"RefreshInitiatorNotString"|"RefreshInitiatorInvalidHostPattern"|"InvalidScopeSpecification"|"MissingScopeSpecificationType"|"EmptyScopeSpecificationDomain"|"EmptyScopeSpecificationPath"|"InvalidScopeSpecificationType"|"InvalidScopeIncludeSite"|"MissingScopeIncludeSite"|"FederatedNotAuthorizedByProvider"|"FederatedNotAuthorizedByRelyingParty"|"SessionProviderWellKnownMalformed"|"SessionProviderWellKnownHasProviderOrigin"|"RelyingPartyWellKnownMalformed"|"RelyingPartyWellKnownHasRelyingOrigins"|"InvalidFederatedSessionProviderSessionMissing"|"InvalidFederatedSessionWrongProviderOrigin"|"InvalidCredentialsCookieCreationTime"|"InvalidCredentialsCookieName"|"InvalidCredentialsCookieParsing"|"InvalidCredentialsCookieUnpermittedAttribute"|"InvalidCredentialsCookieInvalidDomain"|"InvalidCredentialsCookiePrefix"|"InvalidScopeRulePath"|"InvalidScopeRuleHostPattern"|"ScopeRuleOriginScopedHostPatternMismatch"|"ScopeRuleSiteScopedHostPatternMismatch"|"SigningQuotaExceeded"|"InvalidConfigJson"|"InvalidFederatedSessionProviderFailedToRestoreKey"|"FailedToUnwrapKey"|"SessionDeletedDuringRefresh"|"CrossOriginRegistrationSiteNotIncluded";
+    /**
+     * Details about a failed device bound session network request.
+     */
+    export interface DeviceBoundSessionFailedRequest {
+      /**
+       * The failed request URL.
+       */
+      requestUrl: string;
+      /**
+       * The net error of the response if it was not OK.
+       */
+      netError?: string;
+      /**
+       * The response code if the net error was OK and the response code was not
+200.
+       */
+      responseError?: number;
+      /**
+       * The body of the response if the net error was OK, the response code was
+not 200, and the response body was not empty.
+       */
+      responseErrorBody?: string;
+    }
+    /**
+     * Session event details specific to creation.
+     */
+    export interface CreationEventDetails {
+      /**
+       * The result of the fetch attempt.
+       */
+      fetchResult: DeviceBoundSessionFetchResult;
+      /**
+       * The session if there was a newly created session. This is populated for
+all successful creation events.
+       */
+      newSession?: DeviceBoundSession;
+      /**
+       * Details about a failed device bound session network request if there was
+one.
+       */
+      failedRequest?: DeviceBoundSessionFailedRequest;
+    }
+    /**
+     * Session event details specific to refresh.
+     */
+    export interface RefreshEventDetails {
+      /**
+       * The result of a refresh.
+       */
+      refreshResult: "Refreshed"|"InitializedService"|"Unreachable"|"ServerError"|"RefreshQuotaExceeded"|"FatalError"|"SigningQuotaExceeded"|"RefreshedAsWaiter"|"TransientSigningError";
+      /**
+       * If there was a fetch attempt, the result of that.
+       */
+      fetchResult?: DeviceBoundSessionFetchResult;
+      /**
+       * The session display if there was a newly created session. This is populated
+for any refresh event that modifies the session config.
+       */
+      newSession?: DeviceBoundSession;
+      /**
+       * See comments on `net::device_bound_sessions::RefreshEventResult::was_fully_proactive_refresh`.
+       */
+      wasFullyProactiveRefresh: boolean;
+      /**
+       * Details about a failed device bound session network request if there was
+one.
+       */
+      failedRequest?: DeviceBoundSessionFailedRequest;
+    }
+    /**
+     * Session event details specific to termination.
+     */
+    export interface TerminationEventDetails {
+      /**
+       * The reason for a session being deleted.
+       */
+      deletionReason: "Expired"|"FailedToRestoreKey"|"FailedToUnwrapKey"|"StoragePartitionCleared"|"ClearBrowsingData"|"ServerRequested"|"InvalidSessionParams"|"RefreshFatalError"|"DevTools";
+    }
+    /**
+     * Session event details specific to challenges.
+     */
+    export interface ChallengeEventDetails {
+      /**
+       * The result of a challenge.
+       */
+      challengeResult: "Success"|"NoSessionId"|"NoSessionMatch"|"CantSetBoundCookie";
+      /**
+       * The challenge set.
+       */
+      challenge: string;
     }
     /**
      * An object providing the result of a network resource load.
@@ -10013,6 +12048,10 @@ for the request which was just redirected.
        * Whether the request is initiated by a user gesture. Defaults to false.
        */
       hasUserGesture?: boolean;
+      /**
+       * The render-blocking behavior of the request.
+       */
+      renderBlockingBehavior?: RenderBlockingBehavior;
     }
     /**
      * Fired when resource loading priority is changed
@@ -10306,6 +12345,14 @@ or were emitted for this request.
       data: binary;
       timestamp: MonotonicTime;
     }
+    export type directUDPSocketJoinedMulticastGroupPayload = {
+      identifier: RequestId;
+      IPAddress: string;
+    }
+    export type directUDPSocketLeftMulticastGroupPayload = {
+      identifier: RequestId;
+      IPAddress: string;
+    }
     /**
      * Fired upon direct_socket.UDPSocket creation.
      */
@@ -10388,6 +12435,10 @@ the request and the ones not sent; the latter are distinguished by having blocke
        */
       connectTiming: ConnectTiming;
       /**
+       * How the request site's device bound sessions were used during this request.
+       */
+      deviceBoundSessionUsages?: DeviceBoundSessionWithUsage[];
+      /**
        * The client security state set for the request.
        */
       clientSecurityState?: ClientSecurityState;
@@ -10395,6 +12446,11 @@ the request and the ones not sent; the latter are distinguished by having blocke
        * Whether the site has partitioned cookies stored in a partition different than the current one.
        */
       siteHasCookieInOtherPartition?: boolean;
+      /**
+       * The network conditions id if this request was affected by network conditions configured via
+emulateNetworkConditionsByRule.
+       */
+      appliedNetworkConditionsId?: string;
     }
     /**
      * Fired when additional information about a responseReceived event is available from the network
@@ -10502,76 +12558,6 @@ preemptively (e.g. a cache hit).
      */
     export type policyUpdatedPayload = void;
     /**
-     * Fired once when parsing the .wbn file has succeeded.
-The event contains the information about the web bundle contents.
-     */
-    export type subresourceWebBundleMetadataReceivedPayload = {
-      /**
-       * Request identifier. Used to match this information to another event.
-       */
-      requestId: RequestId;
-      /**
-       * A list of URLs of resources in the subresource Web Bundle.
-       */
-      urls: string[];
-    }
-    /**
-     * Fired once when parsing the .wbn file has failed.
-     */
-    export type subresourceWebBundleMetadataErrorPayload = {
-      /**
-       * Request identifier. Used to match this information to another event.
-       */
-      requestId: RequestId;
-      /**
-       * Error message
-       */
-      errorMessage: string;
-    }
-    /**
-     * Fired when handling requests for resources within a .wbn file.
-Note: this will only be fired for resources that are requested by the webpage.
-     */
-    export type subresourceWebBundleInnerResponseParsedPayload = {
-      /**
-       * Request identifier of the subresource request
-       */
-      innerRequestId: RequestId;
-      /**
-       * URL of the subresource resource.
-       */
-      innerRequestURL: string;
-      /**
-       * Bundle request identifier. Used to match this information to another event.
-This made be absent in case when the instrumentation was enabled only
-after webbundle was parsed.
-       */
-      bundleRequestId?: RequestId;
-    }
-    /**
-     * Fired when request for resources within a .wbn file failed.
-     */
-    export type subresourceWebBundleInnerResponseErrorPayload = {
-      /**
-       * Request identifier of the subresource request
-       */
-      innerRequestId: RequestId;
-      /**
-       * URL of the subresource resource.
-       */
-      innerRequestURL: string;
-      /**
-       * Error message
-       */
-      errorMessage: string;
-      /**
-       * Bundle request identifier. Used to match this information to another event.
-This made be absent in case when the instrumentation was enabled only
-after webbundle was parsed.
-       */
-      bundleRequestId?: RequestId;
-    }
-    /**
      * Is sent whenever a new report is added.
 And after 'enableReportingApi' for all existing reports.
      */
@@ -10587,6 +12573,44 @@ And after 'enableReportingApi' for all existing reports.
        */
       origin: string;
       endpoints: ReportingApiEndpoint[];
+    }
+    /**
+     * Triggered when the initial set of device bound sessions is added.
+     */
+    export type deviceBoundSessionsAddedPayload = {
+      /**
+       * The device bound sessions.
+       */
+      sessions: DeviceBoundSession[];
+    }
+    /**
+     * Triggered when a device bound session event occurs.
+     */
+    export type deviceBoundSessionEventOccurredPayload = {
+      /**
+       * A unique identifier for this session event.
+       */
+      eventId: DeviceBoundSessionEventId;
+      /**
+       * The site this session event is associated with.
+       */
+      site: string;
+      /**
+       * Whether this event was considered successful.
+       */
+      succeeded: boolean;
+      /**
+       * The session ID this event is associated with. May not be populated for
+failed events.
+       */
+      sessionId?: string;
+      /**
+       * The below are the different session event type details. Exactly one is populated.
+       */
+      creationEventDetails?: CreationEventDetails;
+      refreshEventDetails?: RefreshEventDetails;
+      terminationEventDetails?: TerminationEventDetails;
+      challengeEventDetails?: ChallengeEventDetails;
     }
     
     /**
@@ -10737,7 +12761,8 @@ all partition key attributes match the cookie partition key attribute.
     export type disableReturnValue = {
     }
     /**
-     * Activates emulation of network conditions.
+     * Activates emulation of network conditions. This command is deprecated in favor of the emulateNetworkConditionsByRule
+and overrideNetworkState commands, which can be used together to the same effect.
      */
     export type emulateNetworkConditionsParameters = {
       /**
@@ -10776,11 +12801,69 @@ all partition key attributes match the cookie partition key attribute.
     export type emulateNetworkConditionsReturnValue = {
     }
     /**
+     * Activates emulation of network conditions for individual requests using URL match patterns. Unlike the deprecated
+Network.emulateNetworkConditions this method does not affect `navigator` state. Use Network.overrideNetworkState to
+explicitly modify `navigator` behavior.
+     */
+    export type emulateNetworkConditionsByRuleParameters = {
+      /**
+       * True to emulate internet disconnection. Deprecated, use the offline property in matchedNetworkConditions
+or emulateOfflineServiceWorker instead.
+       */
+      offline?: boolean;
+      /**
+       * True to emulate offline service worker.
+       */
+      emulateOfflineServiceWorker?: boolean;
+      /**
+       * Configure conditions for matching requests. If multiple entries match a request, the first entry wins.  Global
+conditions can be configured by leaving the urlPattern for the conditions empty. These global conditions are
+also applied for throttling of p2p connections.
+       */
+      matchedNetworkConditions: NetworkConditions[];
+    }
+    export type emulateNetworkConditionsByRuleReturnValue = {
+      /**
+       * An id for each entry in matchedNetworkConditions. The id will be included in the requestWillBeSentExtraInfo for
+requests affected by a rule.
+       */
+      ruleIds: string[];
+    }
+    /**
+     * Override the state of navigator.onLine and navigator.connection.
+     */
+    export type overrideNetworkStateParameters = {
+      /**
+       * True to emulate internet disconnection.
+       */
+      offline: boolean;
+      /**
+       * Minimum latency from request sent to response headers received (ms).
+       */
+      latency: number;
+      /**
+       * Maximal aggregated download throughput (bytes/sec). -1 disables download throttling.
+       */
+      downloadThroughput: number;
+      /**
+       * Maximal aggregated upload throughput (bytes/sec).  -1 disables upload throttling.
+       */
+      uploadThroughput: number;
+      /**
+       * Connection type if known.
+       */
+      connectionType?: ConnectionType;
+    }
+    export type overrideNetworkStateReturnValue = {
+    }
+    /**
      * Enables network tracking, network events will now be delivered to the client.
      */
     export type enableParameters = {
       /**
        * Buffer size in bytes to use when preserving network payloads (XHRs, etc).
+This is the maximum number of bytes that will be collected by this
+DevTools session.
        */
       maxTotalBufferSize?: number;
       /**
@@ -10795,8 +12878,33 @@ all partition key attributes match the cookie partition key attribute.
        * Whether DirectSocket chunk send/receive events should be reported.
        */
       reportDirectSocketTraffic?: boolean;
+      /**
+       * Enable storing response bodies outside of renderer, so that these survive
+a cross-process navigation. Requires maxTotalBufferSize to be set.
+Currently defaults to false. This field is being deprecated in favor of the dedicated
+configureDurableMessages command, due to the possibility of deadlocks when awaiting
+Network.enable before issuing Runtime.runIfWaitingForDebugger.
+       */
+      enableDurableMessages?: boolean;
     }
     export type enableReturnValue = {
+    }
+    /**
+     * Configures storing response bodies outside of renderer, so that these survive
+a cross-process navigation.
+If maxTotalBufferSize is not set, durable messages are disabled.
+     */
+    export type configureDurableMessagesParameters = {
+      /**
+       * Buffer size in bytes to use when preserving network payloads (XHRs, etc).
+       */
+      maxTotalBufferSize?: number;
+      /**
+       * Per-resource buffer size in bytes to use when preserving network payloads (XHRs, etc).
+       */
+      maxResourceBufferSize?: number;
+    }
+    export type configureDurableMessagesReturnValue = {
     }
     /**
      * Returns all browser cookies. Depending on the backend support, will return detailed cookie
@@ -10874,6 +12982,10 @@ the URLs of the page and all of its subframes.
        * Request body string, omitting files from multipart requests
        */
       postData: string;
+      /**
+       * True, if content was sent as base64.
+       */
+      base64Encoded: boolean;
     }
     /**
      * Returns content served for the given currently intercepted request.
@@ -10951,9 +13063,14 @@ attribute, user, password.
      */
     export type setBlockedURLsParameters = {
       /**
+       * Patterns to match in the order in which they are given. These patterns
+also take precedence over any wildcard patterns defined in `urls`.
+       */
+      urlPatterns?: BlockPattern[];
+      /**
        * URL patterns to block. Wildcards ('*') are allowed.
        */
-      urls: string[];
+      urls?: string[];
     }
     export type setBlockedURLsReturnValue = {
     }
@@ -11024,10 +13141,6 @@ default domain, path, source port, and source scheme values of the created cooki
        * Cookie Priority type.
        */
       priority?: CookiePriority;
-      /**
-       * True if cookie is SameParty.
-       */
-      sameParty?: boolean;
       /**
        * Cookie source scheme type.
        */
@@ -11159,6 +13272,40 @@ Enabling triggers 'reportingApiReportAdded' for all existing reports.
     export type enableReportingApiReturnValue = {
     }
     /**
+     * Sets up tracking device bound sessions and fetching of initial set of sessions.
+     */
+    export type enableDeviceBoundSessionsParameters = {
+      /**
+       * Whether to enable or disable events.
+       */
+      enable: boolean;
+    }
+    export type enableDeviceBoundSessionsReturnValue = {
+    }
+    /**
+     * Deletes a device bound session.
+     */
+    export type deleteDeviceBoundSessionParameters = {
+      key: DeviceBoundSessionKey;
+    }
+    export type deleteDeviceBoundSessionReturnValue = {
+    }
+    /**
+     * Fetches the schemeful site for a specific origin.
+     */
+    export type fetchSchemefulSiteParameters = {
+      /**
+       * The URL origin.
+       */
+      origin: string;
+    }
+    export type fetchSchemefulSiteReturnValue = {
+      /**
+       * The corresponding schemeful site.
+       */
+      schemefulSite: string;
+    }
+    /**
      * Fetches the resource and returns the content.
      */
     export type loadNetworkResourceParameters = {
@@ -11188,14 +13335,6 @@ Page reload is required before the new cookie behavior will be observed
        * Whether 3pc restriction is enabled.
        */
       enableThirdPartyCookieRestriction: boolean;
-      /**
-       * Whether 3pc grace period exception should be enabled; false by default.
-       */
-      disableThirdPartyCookieMetadata: boolean;
-      /**
-       * Whether 3pc heuristics exceptions should be enabled; false by default.
-       */
-      disableThirdPartyCookieHeuristics: boolean;
     }
     export type setCookieControlsReturnValue = {
     }
@@ -11204,7 +13343,7 @@ Page reload is required before the new cookie behavior will be observed
   /**
    * This domain provides various functionality related to drawing atop the inspected page.
    */
-  export module Overlay {
+  export namespace Overlay {
     /**
      * Configuration data for drawing the source order of an elements children.
      */
@@ -11535,6 +13674,51 @@ Page reload is required before the new cookie behavior will be observed
       outlineColor?: DOM.RGBA;
     }
     /**
+     * Supported display cutout shapes.
+     */
+    export type DisplayCutoutShape = "pill"|"notch"|"circle"|"rectangle";
+    /**
+     * Configuration for a display cutout.
+     */
+    export interface DisplayCutoutConfig {
+      /**
+       * A rectangle representing the cutout bounds.
+       */
+      rect: DOM.Rect;
+      /**
+       * Shape used to draw the cutout.
+       */
+      shape: DisplayCutoutShape;
+      /**
+       * Border radius for rounded cutout shapes.
+       */
+      borderRadius?: number;
+      /**
+       * Upper shoulder radius for notch cutout shapes.
+       */
+      upperRadius?: number;
+      /**
+       * Lower transition radius for notch cutout shapes.
+       */
+      lowerRadius?: number;
+      /**
+       * Center x coordinate for circle cutout shapes.
+       */
+      cx?: number;
+      /**
+       * Center y coordinate for circle cutout shapes.
+       */
+      cy?: number;
+      /**
+       * Radius for circle cutout shapes.
+       */
+      radius?: number;
+      /**
+       * The cutout fill color (default: black).
+       */
+      contentColor?: DOM.RGBA;
+    }
+    /**
      * Configuration for Window Controls Overlay
      */
     export interface WindowControlsOverlayConfig {
@@ -11595,7 +13779,17 @@ Page reload is required before the new cookie behavior will be observed
        */
       maskColor?: DOM.RGBA;
     }
-    export type InspectMode = "searchForNode"|"searchForUAShadowDOM"|"captureAreaScreenshot"|"showDistances"|"none";
+    export type InspectMode = "searchForNode"|"searchForUAShadowDOM"|"captureAreaScreenshot"|"none";
+    export interface InspectedElementAnchorConfig {
+      /**
+       * Identifier of the node to highlight.
+       */
+      nodeId?: DOM.NodeId;
+      /**
+       * Identifier of the backend node to highlight.
+       */
+      backendNodeId?: DOM.BackendNodeId;
+    }
     
     /**
      * Fired when the node should be inspected. This happens after call to `setInspectMode` or when
@@ -11621,6 +13815,24 @@ user manually inspects an element.
        * Viewport to capture, in device independent pixels (dip).
        */
       viewport: Page.Viewport;
+    }
+    /**
+     * Fired when user asks to show the Inspect panel.
+     */
+    export type inspectPanelShowRequestedPayload = {
+      /**
+       * Id of the node to show in the panel.
+       */
+      backendNodeId: DOM.BackendNodeId;
+    }
+    /**
+     * Fired when user asks to restore the Inspected Element floating window.
+     */
+    export type inspectedElementWindowRestoredPayload = {
+      /**
+       * Id of the node to restore the floating window for.
+       */
+      backendNodeId: DOM.BackendNodeId;
     }
     /**
      * Fired when user cancels the inspect mode.
@@ -11780,6 +13992,9 @@ objectId must be specified.
     }
     /**
      * Highlights given rectangle. Coordinates are absolute with respect to the main frame viewport.
+Issue: the method does not handle device pixel ratio (DPR) correctly.
+The coordinates currently have to be adjusted by the client
+if DPR is not 1 (see crbug.com/437807128).
      */
     export type highlightRectParameters = {
       /**
@@ -11926,6 +14141,14 @@ Backend then generates 'inspectNodeRequested' event upon element selection.
     }
     export type setShowContainerQueryOverlaysReturnValue = {
     }
+    export type setShowInspectedElementAnchorParameters = {
+      /**
+       * Node identifier for which to show an anchor for.
+       */
+      inspectedElementAnchorConfig: InspectedElementAnchorConfig;
+    }
+    export type setShowInspectedElementAnchorReturnValue = {
+    }
     /**
      * Requests that backend shows paint rectangles
      */
@@ -12001,6 +14224,17 @@ Backend then generates 'inspectNodeRequested' event upon element selection.
     export type setShowHingeReturnValue = {
     }
     /**
+     * Add a display cutout overlay.
+     */
+    export type setShowDisplayCutoutParameters = {
+      /**
+       * display cutout data, null means hide display cutout
+       */
+      displayCutoutConfig?: DisplayCutoutConfig;
+    }
+    export type setShowDisplayCutoutReturnValue = {
+    }
+    /**
      * Show elements in isolation mode with overlays.
      */
     export type setShowIsolatedElementsParameters = {
@@ -12025,9 +14259,180 @@ Backend then generates 'inspectNodeRequested' event upon element selection.
   }
   
   /**
+   * This domain allows interacting with the browser to control PWAs.
+   */
+  export namespace PWA {
+    /**
+     * The following types are the replica of
+https://crsrc.org/c/chrome/browser/web_applications/proto/web_app_os_integration_state.proto;drc=9910d3be894c8f142c977ba1023f30a656bc13fc;l=67
+     */
+    export interface FileHandlerAccept {
+      /**
+       * New name of the mimetype according to
+https://www.iana.org/assignments/media-types/media-types.xhtml
+       */
+      mediaType: string;
+      fileExtensions: string[];
+    }
+    export interface FileHandler {
+      action: string;
+      accepts: FileHandlerAccept[];
+      displayName: string;
+    }
+    /**
+     * If user prefers opening the app in browser or an app window.
+     */
+    export type DisplayMode = "standalone"|"browser";
+    
+    
+    /**
+     * Returns the following OS state for the given manifest id.
+     */
+    export type getOsAppStateParameters = {
+      /**
+       * The id from the webapp's manifest file, commonly it's the url of the
+site installing the webapp. See
+https://web.dev/learn/pwa/web-app-manifest.
+       */
+      manifestId: string;
+    }
+    export type getOsAppStateReturnValue = {
+      badgeCount: number;
+      fileHandlers: FileHandler[];
+    }
+    /**
+     * Installs the given manifest identity, optionally using the given installUrlOrBundleUrl
+
+IWA-specific install description:
+manifestId corresponds to isolated-app:// + web_package::SignedWebBundleId
+
+File installation mode:
+The installUrlOrBundleUrl can be either file:// or http(s):// pointing
+to a signed web bundle (.swbn). In this case SignedWebBundleId must correspond to
+The .swbn file's signing key.
+
+Dev proxy installation mode:
+installUrlOrBundleUrl must be http(s):// that serves dev mode IWA.
+web_package::SignedWebBundleId must be of type dev proxy.
+
+The advantage of dev proxy mode is that all changes to IWA
+automatically will be reflected in the running app without
+reinstallation.
+
+To generate bundle id for proxy mode:
+1. Generate 32 random bytes.
+2. Add a specific suffix at the end following the documentation
+   https://github.com/WICG/isolated-web-apps/blob/main/Scheme.md#suffix
+3. Encode the entire sequence using Base32 without padding.
+
+If Chrome is not in IWA dev
+mode, the installation will fail, regardless of the state of the allowlist.
+     */
+    export type installParameters = {
+      manifestId: string;
+      /**
+       * The location of the app or bundle overriding the one derived from the
+manifestId.
+       */
+      installUrlOrBundleUrl?: string;
+    }
+    export type installReturnValue = {
+    }
+    /**
+     * Uninstalls the given manifest_id and closes any opened app windows.
+     */
+    export type uninstallParameters = {
+      manifestId: string;
+    }
+    export type uninstallReturnValue = {
+    }
+    /**
+     * Launches the installed web app, or an url in the same web app instead of the
+default start url if it is provided. Returns a page Target.TargetID which
+can be used to attach to via Target.attachToTarget or similar APIs.
+     */
+    export type launchParameters = {
+      manifestId: string;
+      url?: string;
+    }
+    export type launchReturnValue = {
+      /**
+       * ID of the tab target created as a result.
+       */
+      targetId: Target.TargetID;
+    }
+    /**
+     * Opens one or more local files from an installed web app identified by its
+manifestId. The web app needs to have file handlers registered to process
+the files. The API returns one or more page Target.TargetIDs which can be
+used to attach to via Target.attachToTarget or similar APIs.
+If some files in the parameters cannot be handled by the web app, they will
+be ignored. If none of the files can be handled, this API returns an error.
+If no files are provided as the parameter, this API also returns an error.
+
+According to the definition of the file handlers in the manifest file, one
+Target.TargetID may represent a page handling one or more files. The order
+of the returned Target.TargetIDs is not guaranteed.
+
+TODO(crbug.com/339454034): Check the existences of the input files.
+     */
+    export type launchFilesInAppParameters = {
+      manifestId: string;
+      files: string[];
+    }
+    export type launchFilesInAppReturnValue = {
+      /**
+       * IDs of the tab targets created as the result.
+       */
+      targetIds: Target.TargetID[];
+    }
+    /**
+     * Opens the current page in its web app identified by the manifest id, needs
+to be called on a page target. This function returns immediately without
+waiting for the app to finish loading.
+     */
+    export type openCurrentPageInAppParameters = {
+      manifestId: string;
+    }
+    export type openCurrentPageInAppReturnValue = {
+    }
+    /**
+     * Changes user settings of the web app identified by its manifestId. If the
+app was not installed, this command returns an error. Unset parameters will
+be ignored; unrecognized values will cause an error.
+
+Unlike the ones defined in the manifest files of the web apps, these
+settings are provided by the browser and controlled by the users, they
+impact the way the browser handling the web apps.
+
+See the comment of each parameter.
+     */
+    export type changeAppUserSettingsParameters = {
+      manifestId: string;
+      /**
+       * If user allows the links clicked on by the user in the app's scope, or
+extended scope if the manifest has scope extensions and the flags
+`DesktopPWAsLinkCapturingWithScopeExtensions` and
+`WebAppEnableScopeExtensions` are enabled.
+
+Note, the API does not support resetting the linkCapturing to the
+initial value, uninstalling and installing the web app again will reset
+it.
+
+TODO(crbug.com/339453269): Setting this value on ChromeOS is not
+supported yet.
+       */
+      linkCapturing?: boolean;
+      displayMode?: DisplayMode;
+    }
+    export type changeAppUserSettingsReturnValue = {
+    }
+  }
+  
+  /**
    * Actions and events related to the inspected page belong to the page domain.
    */
-  export module Page {
+  export namespace Page {
     /**
      * Unique frame identifier.
      */
@@ -12045,21 +14450,6 @@ Backend then generates 'inspectNodeRequested' event upon element selection.
       explanations?: AdFrameExplanation[];
     }
     /**
-     * Identifies the bottom-most script which caused the frame to be labelled
-as an ad.
-     */
-    export interface AdScriptId {
-      /**
-       * Script Id of the bottom-most script which caused the frame to be labelled
-as an ad.
-       */
-      scriptId: Runtime.ScriptId;
-      /**
-       * Id of adScriptId's debugger.
-       */
-      debuggerId: Runtime.UniqueDebuggerId;
-    }
-    /**
      * Indicates whether the frame is a secure context and why it is the case.
      */
     export type SecureContextType = "Secure"|"SecureLocalhost"|"InsecureScheme"|"InsecureAncestor";
@@ -12073,7 +14463,7 @@ as an ad.
 in services/network/public/cpp/permissions_policy/permissions_policy_features.json5.
 LINT.IfChange(PermissionsPolicyFeature)
      */
-    export type PermissionsPolicyFeature = "accelerometer"|"all-screens-capture"|"ambient-light-sensor"|"attribution-reporting"|"autoplay"|"bluetooth"|"browsing-topics"|"camera"|"captured-surface-control"|"ch-dpr"|"ch-device-memory"|"ch-downlink"|"ch-ect"|"ch-prefers-color-scheme"|"ch-prefers-reduced-motion"|"ch-prefers-reduced-transparency"|"ch-rtt"|"ch-save-data"|"ch-ua"|"ch-ua-arch"|"ch-ua-bitness"|"ch-ua-high-entropy-values"|"ch-ua-platform"|"ch-ua-model"|"ch-ua-mobile"|"ch-ua-form-factors"|"ch-ua-full-version"|"ch-ua-full-version-list"|"ch-ua-platform-version"|"ch-ua-wow64"|"ch-viewport-height"|"ch-viewport-width"|"ch-width"|"clipboard-read"|"clipboard-write"|"compute-pressure"|"controlled-frame"|"cross-origin-isolated"|"deferred-fetch"|"deferred-fetch-minimal"|"device-attributes"|"digital-credentials-get"|"direct-sockets"|"direct-sockets-private"|"display-capture"|"document-domain"|"encrypted-media"|"execution-while-out-of-viewport"|"execution-while-not-rendered"|"fenced-unpartitioned-storage-read"|"focus-without-user-activation"|"fullscreen"|"frobulate"|"gamepad"|"geolocation"|"gyroscope"|"hid"|"identity-credentials-get"|"idle-detection"|"interest-cohort"|"join-ad-interest-group"|"keyboard-map"|"language-detector"|"local-fonts"|"local-network-access"|"magnetometer"|"media-playback-while-not-visible"|"microphone"|"midi"|"on-device-speech-recognition"|"otp-credentials"|"payment"|"picture-in-picture"|"popins"|"private-aggregation"|"private-state-token-issuance"|"private-state-token-redemption"|"publickey-credentials-create"|"publickey-credentials-get"|"record-ad-auction-events"|"rewriter"|"run-ad-auction"|"screen-wake-lock"|"serial"|"shared-autofill"|"shared-storage"|"shared-storage-select-url"|"smart-card"|"speaker-selection"|"storage-access"|"sub-apps"|"summarizer"|"sync-xhr"|"translator"|"unload"|"usb"|"usb-unrestricted"|"vertical-scroll"|"web-app-installation"|"web-printing"|"web-share"|"window-management"|"writer"|"xr-spatial-tracking";
+    export type PermissionsPolicyFeature = "accelerometer"|"all-screens-capture"|"ambient-light-sensor"|"aria-notify"|"attribution-reporting"|"autofill"|"autoplay"|"bluetooth"|"browsing-topics"|"camera"|"captured-surface-control"|"ch-dpr"|"ch-device-memory"|"ch-downlink"|"ch-ect"|"ch-prefers-color-scheme"|"ch-prefers-reduced-motion"|"ch-prefers-reduced-transparency"|"ch-rtt"|"ch-save-data"|"ch-ua"|"ch-ua-arch"|"ch-ua-bitness"|"ch-ua-high-entropy-values"|"ch-ua-platform"|"ch-ua-model"|"ch-ua-mobile"|"ch-ua-form-factors"|"ch-ua-full-version"|"ch-ua-full-version-list"|"ch-ua-platform-version"|"ch-ua-wow64"|"ch-viewport-height"|"ch-viewport-width"|"ch-width"|"clipboard-read"|"clipboard-write"|"compute-pressure"|"controlled-frame"|"cross-origin-isolated"|"deferred-fetch"|"deferred-fetch-minimal"|"device-attributes"|"digital-credentials-create"|"digital-credentials-get"|"direct-sockets"|"direct-sockets-multicast"|"display-capture"|"document-domain"|"encrypted-media"|"execution-while-out-of-viewport"|"execution-while-not-rendered"|"focus-without-user-activation"|"fullscreen"|"frobulate"|"gamepad"|"geolocation"|"gyroscope"|"hid"|"identity-credentials-get"|"idle-detection"|"interest-cohort"|"join-ad-interest-group"|"keyboard-map"|"language-detector"|"language-model"|"local-fonts"|"local-network"|"local-network-access"|"loopback-network"|"magnetometer"|"manual-text"|"media-playback-while-not-visible"|"microphone"|"midi"|"on-device-speech-recognition"|"otp-credentials"|"payment"|"picture-in-picture"|"private-aggregation"|"private-state-token-issuance"|"private-state-token-redemption"|"publickey-credentials-create"|"publickey-credentials-get"|"record-ad-auction-events"|"rewriter"|"run-ad-auction"|"screen-wake-lock"|"serial"|"shared-storage"|"shared-storage-select-url"|"smart-card"|"speaker-selection"|"storage-access"|"sub-apps"|"summarizer"|"sync-xhr"|"tools"|"translator"|"unload"|"usb"|"usb-unrestricted"|"vertical-scroll"|"web-app-installation"|"webnn"|"web-printing"|"web-share"|"window-management"|"writer"|"xr-spatial-tracking";
     /**
      * Reason for a permissions policy feature to be disabled.
      */
@@ -12666,17 +15056,13 @@ https://github.com/WICG/manifest-incubations/blob/gh-pages/scope_extensions-expl
       themeColor?: string;
     }
     /**
-     * Enum of possible auto-response for permission / prompt dialogs.
-     */
-    export type AutoResponseMode = "none"|"autoAccept"|"autoReject"|"autoOptOut";
-    /**
      * The type of a frameNavigated event.
      */
     export type NavigationType = "Navigation"|"BackForwardCacheRestore";
     /**
      * List of not restored reasons for back-forward cache.
      */
-    export type BackForwardCacheNotRestoredReason = "NotPrimaryMainFrame"|"BackForwardCacheDisabled"|"RelatedActiveContentsExist"|"HTTPStatusNotOK"|"SchemeNotHTTPOrHTTPS"|"Loading"|"WasGrantedMediaAccess"|"DisableForRenderFrameHostCalled"|"DomainNotAllowed"|"HTTPMethodNotGET"|"SubframeIsNavigating"|"Timeout"|"CacheLimit"|"JavaScriptExecution"|"RendererProcessKilled"|"RendererProcessCrashed"|"SchedulerTrackedFeatureUsed"|"ConflictingBrowsingInstance"|"CacheFlushed"|"ServiceWorkerVersionActivation"|"SessionRestored"|"ServiceWorkerPostMessage"|"EnteredBackForwardCacheBeforeServiceWorkerHostAdded"|"RenderFrameHostReused_SameSite"|"RenderFrameHostReused_CrossSite"|"ServiceWorkerClaim"|"IgnoreEventAndEvict"|"HaveInnerContents"|"TimeoutPuttingInCache"|"BackForwardCacheDisabledByLowMemory"|"BackForwardCacheDisabledByCommandLine"|"NetworkRequestDatapipeDrainedAsBytesConsumer"|"NetworkRequestRedirected"|"NetworkRequestTimeout"|"NetworkExceedsBufferLimit"|"NavigationCancelledWhileRestoring"|"NotMostRecentNavigationEntry"|"BackForwardCacheDisabledForPrerender"|"UserAgentOverrideDiffers"|"ForegroundCacheLimit"|"BrowsingInstanceNotSwapped"|"BackForwardCacheDisabledForDelegate"|"UnloadHandlerExistsInMainFrame"|"UnloadHandlerExistsInSubFrame"|"ServiceWorkerUnregistration"|"CacheControlNoStore"|"CacheControlNoStoreCookieModified"|"CacheControlNoStoreHTTPOnlyCookieModified"|"NoResponseHead"|"Unknown"|"ActivationNavigationsDisallowedForBug1234857"|"ErrorDocument"|"FencedFramesEmbedder"|"CookieDisabled"|"HTTPAuthRequired"|"CookieFlushed"|"BroadcastChannelOnMessage"|"WebViewSettingsChanged"|"WebViewJavaScriptObjectChanged"|"WebViewMessageListenerInjected"|"WebViewSafeBrowsingAllowlistChanged"|"WebViewDocumentStartJavascriptChanged"|"WebSocket"|"WebTransport"|"WebRTC"|"MainResourceHasCacheControlNoStore"|"MainResourceHasCacheControlNoCache"|"SubresourceHasCacheControlNoStore"|"SubresourceHasCacheControlNoCache"|"ContainsPlugins"|"DocumentLoaded"|"OutstandingNetworkRequestOthers"|"RequestedMIDIPermission"|"RequestedAudioCapturePermission"|"RequestedVideoCapturePermission"|"RequestedBackForwardCacheBlockedSensors"|"RequestedBackgroundWorkPermission"|"BroadcastChannel"|"WebXR"|"SharedWorker"|"WebLocks"|"WebHID"|"WebShare"|"RequestedStorageAccessGrant"|"WebNfc"|"OutstandingNetworkRequestFetch"|"OutstandingNetworkRequestXHR"|"AppBanner"|"Printing"|"WebDatabase"|"PictureInPicture"|"SpeechRecognizer"|"IdleManager"|"PaymentManager"|"SpeechSynthesis"|"KeyboardLock"|"WebOTPService"|"OutstandingNetworkRequestDirectSocket"|"InjectedJavascript"|"InjectedStyleSheet"|"KeepaliveRequest"|"IndexedDBEvent"|"Dummy"|"JsNetworkRequestReceivedCacheControlNoStoreResource"|"WebRTCSticky"|"WebTransportSticky"|"WebSocketSticky"|"SmartCard"|"LiveMediaStreamTrack"|"UnloadHandler"|"ParserAborted"|"ContentSecurityHandler"|"ContentWebAuthenticationAPI"|"ContentFileChooser"|"ContentSerial"|"ContentFileSystemAccess"|"ContentMediaDevicesDispatcherHost"|"ContentWebBluetooth"|"ContentWebUSB"|"ContentMediaSessionService"|"ContentScreenReader"|"ContentDiscarded"|"EmbedderPopupBlockerTabHelper"|"EmbedderSafeBrowsingTriggeredPopupBlocker"|"EmbedderSafeBrowsingThreatDetails"|"EmbedderAppBannerManager"|"EmbedderDomDistillerViewerSource"|"EmbedderDomDistillerSelfDeletingRequestDelegate"|"EmbedderOomInterventionTabHelper"|"EmbedderOfflinePage"|"EmbedderChromePasswordManagerClientBindCredentialManager"|"EmbedderPermissionRequestManager"|"EmbedderModalDialog"|"EmbedderExtensions"|"EmbedderExtensionMessaging"|"EmbedderExtensionMessagingForOpenPort"|"EmbedderExtensionSentMessageToCachedFrame"|"RequestedByWebViewClient"|"PostMessageByWebViewClient"|"CacheControlNoStoreDeviceBoundSessionTerminated"|"CacheLimitPrunedOnModerateMemoryPressure"|"CacheLimitPrunedOnCriticalMemoryPressure";
+    export type BackForwardCacheNotRestoredReason = "NotPrimaryMainFrame"|"BackForwardCacheDisabled"|"RelatedActiveContentsExist"|"HTTPStatusNotOK"|"SchemeNotHTTPOrHTTPS"|"Loading"|"WasGrantedMediaAccess"|"DisableForRenderFrameHostCalled"|"DomainNotAllowed"|"HTTPMethodNotGET"|"SubframeIsNavigating"|"Timeout"|"CacheLimit"|"JavaScriptExecution"|"RendererProcessKilled"|"RendererProcessCrashed"|"SchedulerTrackedFeatureUsed"|"ConflictingBrowsingInstance"|"CacheFlushed"|"ServiceWorkerVersionActivation"|"SessionRestored"|"ServiceWorkerPostMessage"|"EnteredBackForwardCacheBeforeServiceWorkerHostAdded"|"RenderFrameHostReused_SameSite"|"RenderFrameHostReused_CrossSite"|"ServiceWorkerClaim"|"IgnoreEventAndEvict"|"HaveInnerContents"|"TimeoutPuttingInCache"|"BackForwardCacheDisabledByLowMemory"|"BackForwardCacheDisabledByCommandLine"|"NetworkRequestDatapipeDrainedAsBytesConsumer"|"NetworkRequestRedirected"|"NetworkRequestTimeout"|"NetworkExceedsBufferLimit"|"NavigationCancelledWhileRestoring"|"NotMostRecentNavigationEntry"|"BackForwardCacheDisabledForPrerender"|"UserAgentOverrideDiffers"|"ForegroundCacheLimit"|"ForwardCacheDisabled"|"BrowsingInstanceNotSwapped"|"BackForwardCacheDisabledForDelegate"|"UnloadHandlerExistsInMainFrame"|"UnloadHandlerExistsInSubFrame"|"ServiceWorkerUnregistration"|"CacheControlNoStore"|"CacheControlNoStoreCookieModified"|"CacheControlNoStoreHTTPOnlyCookieModified"|"NoResponseHead"|"Unknown"|"ActivationNavigationsDisallowedForBug1234857"|"ErrorDocument"|"FencedFramesEmbedder"|"CookieDisabled"|"HTTPAuthRequired"|"CookieFlushed"|"BroadcastChannelOnMessage"|"WebViewSettingsChanged"|"WebViewJavaScriptObjectChanged"|"WebViewMessageListenerInjected"|"WebViewSafeBrowsingAllowlistChanged"|"WebViewDocumentStartJavascriptChanged"|"WebSocket"|"WebTransport"|"WebRTC"|"MainResourceHasCacheControlNoStore"|"MainResourceHasCacheControlNoCache"|"SubresourceHasCacheControlNoStore"|"SubresourceHasCacheControlNoCache"|"ContainsPlugins"|"DocumentLoaded"|"OutstandingNetworkRequestOthers"|"RequestedMIDIPermission"|"RequestedAudioCapturePermission"|"RequestedVideoCapturePermission"|"RequestedBackForwardCacheBlockedSensors"|"RequestedBackgroundWorkPermission"|"BroadcastChannel"|"WebXR"|"SharedWorker"|"SharedWorkerMessage"|"SharedWorkerWithNoActiveClient"|"WebLocks"|"WebLocksContention"|"WebHID"|"WebBluetooth"|"WebShare"|"RequestedStorageAccessGrant"|"WebNfc"|"OutstandingNetworkRequestFetch"|"OutstandingNetworkRequestXHR"|"AppBanner"|"Printing"|"WebDatabase"|"PictureInPicture"|"SpeechRecognizer"|"IdleManager"|"PaymentManager"|"SpeechSynthesis"|"KeyboardLock"|"WebOTPService"|"OutstandingNetworkRequestDirectSocket"|"InjectedJavascript"|"InjectedStyleSheet"|"KeepaliveRequest"|"IndexedDBEvent"|"Dummy"|"JsNetworkRequestReceivedCacheControlNoStoreResource"|"WebRTCUsedWithCCNS"|"WebTransportUsedWithCCNS"|"WebSocketUsedWithCCNS"|"SmartCard"|"LiveMediaStreamTrack"|"UnloadHandler"|"ParserAborted"|"ContentSecurityHandler"|"ContentWebAuthenticationAPI"|"ContentFileChooser"|"ContentSerial"|"ContentFileSystemAccess"|"ContentMediaDevicesDispatcherHost"|"ContentWebBluetooth"|"ContentWebUSB"|"ContentMediaSessionService"|"ContentScreenReader"|"ContentDiscarded"|"EmbedderPopupBlockerTabHelper"|"EmbedderSafeBrowsingTriggeredPopupBlocker"|"EmbedderSafeBrowsingThreatDetails"|"EmbedderAppBannerManager"|"EmbedderDomDistillerViewerSource"|"EmbedderDomDistillerSelfDeletingRequestDelegate"|"EmbedderOomInterventionTabHelper"|"EmbedderOfflinePage"|"EmbedderChromePasswordManagerClientBindCredentialManager"|"EmbedderPermissionRequestManager"|"EmbedderModalDialog"|"EmbedderExtensions"|"EmbedderExtensionMessaging"|"EmbedderExtensionMessagingForOpenPort"|"EmbedderExtensionSentMessageToCachedFrame"|"EmbedderExtensionFrame"|"RequestedByWebViewClient"|"PostMessageByWebViewClient"|"CacheControlNoStoreDeviceBoundSessionTerminated"|"CacheLimitPrunedOnModerateMemoryPressure"|"CacheLimitPrunedOnCriticalMemoryPressure";
     /**
      * Types of not restored reasons for back-forward cache.
      */
@@ -13117,8 +15503,7 @@ etc.
       userGesture: boolean;
     }
     /**
-     * Issued for every compilation cache generated. Is only available
-if Page.setGenerateCompilationCache is enabled.
+     * Issued for every compilation cache generated.
      */
     export type compilationCacheProducedPayload = {
       url: string;
@@ -13264,6 +15649,15 @@ iframes, shadow DOM, external resources, and element-inline styles.
 option, use with caution.
        */
       grantUniveralAccess?: boolean;
+      /**
+       * An optional content security policy to set for the isolated world.
+If omitted, any existing CSP for the world will be cleared.
+Note that clearing or updating the CSP does not immediately affect the active
+context in the same document because LocalDOMWindow caches the
+ContentSecurityPolicy object. The change takes effect on subsequent
+navigations when a new window context is created.
+       */
+      contentSecurityPolicy?: string;
     }
     export type createIsolatedWorldReturnValue = {
       /**
@@ -13360,17 +15754,18 @@ Only returns values if the feature flag 'WebAppEnableManifestId' is enabled
        */
       recommendedId?: string;
     }
-    export type getAdScriptAncestryIdsParameters = {
+    export type getAdScriptAncestryParameters = {
       frameId: FrameId;
     }
-    export type getAdScriptAncestryIdsReturnValue = {
+    export type getAdScriptAncestryReturnValue = {
       /**
        * The ancestry chain of ad script identifiers leading to this frame's
-creation, ordered from the most immediate script (in the frame creation
+creation, along with the root script's filterlist rule. The ancestry
+chain is ordered from the most immediate script (in the frame creation
 stack) to more distant ancestors (that created the immediately preceding
 script). Only sent if frame is labelled as an ad and ids are available.
        */
-      adScriptAncestryIds: AdScriptId[];
+      adScriptAncestry?: Network.AdAncestry;
     }
     /**
      * Returns present frame tree structure.
@@ -13525,6 +15920,10 @@ as the previously committed loaderId would not change.
        * User friendly error message, present if and only if navigation has failed.
        */
       errorText?: string;
+      /**
+       * Whether the navigation resulted in a download.
+       */
+      isDownload?: boolean;
     }
     /**
      * Navigates current page to the given history entry.
@@ -14042,7 +16441,7 @@ cross-process navigation.
 https://w3c.github.io/secure-payment-confirmation/#sctn-automation-set-spc-transaction-mode
      */
     export type setSPCTransactionModeParameters = {
-      mode: AutoResponseMode;
+      mode: "none"|"autoAccept"|"autoChooseToAuthAnotherWay"|"autoReject"|"autoOptOut";
     }
     export type setSPCTransactionModeReturnValue = {
     }
@@ -14051,7 +16450,7 @@ https://w3c.github.io/secure-payment-confirmation/#sctn-automation-set-spc-trans
 https://html.spec.whatwg.org/multipage/system-state.html#rph-automation
      */
     export type setRPHRegistrationModeParameters = {
-      mode: AutoResponseMode;
+      mode: "none"|"autoAccept"|"autoReject";
     }
     export type setRPHRegistrationModeReturnValue = {
     }
@@ -14107,9 +16506,27 @@ TODO(https://crbug.com/1440085): Remove this once Puppeteer supports tab targets
     }
     export type setPrerenderingAllowedReturnValue = {
     }
+    /**
+     * Get the annotated page content for the main frame.
+This is an experimental command that is subject to change.
+     */
+    export type getAnnotatedPageContentParameters = {
+      /**
+       * Whether to include actionable information. Defaults to true.
+       */
+      includeActionableInformation?: boolean;
+    }
+    export type getAnnotatedPageContentReturnValue = {
+      /**
+       * The annotated page content as a base64 encoded protobuf.
+The format is defined by the `AnnotatedPageContent` message in
+components/optimization_guide/proto/features/common_quality_data.proto
+       */
+      content: binary;
+    }
   }
   
-  export module Performance {
+  export namespace Performance {
     /**
      * Run-time execution metric.
      */
@@ -14186,7 +16603,7 @@ this method while metrics collection is enabled returns an error.
    * Reporting of performance timeline events, as specified in
 https://w3c.github.io/performance-timeline/#dom-performanceobserver.
    */
-  export module PerformanceTimeline {
+  export namespace PerformanceTimeline {
     /**
      * See https://github.com/WICG/LargestContentfulPaint and largest_contentful_paint.idl
      */
@@ -14275,10 +16692,200 @@ Note that not all types exposed to the web platform are currently supported.
     }
   }
   
-  /**
-   * Security
-   */
-  export module Security {
+  export namespace Preload {
+    /**
+     * Unique id
+     */
+    export type RuleSetId = string;
+    /**
+     * Corresponds to SpeculationRuleSet
+     */
+    export interface RuleSet {
+      id: RuleSetId;
+      /**
+       * Identifies a document which the rule set is associated with.
+       */
+      loaderId: Network.LoaderId;
+      /**
+       * Source text of JSON representing the rule set. If it comes from
+`<script>` tag, it is the textContent of the node. Note that it is
+a JSON for valid case.
+
+See also:
+- https://wicg.github.io/nav-speculation/speculation-rules.html
+- https://github.com/WICG/nav-speculation/blob/main/triggers.md
+       */
+      sourceText: string;
+      /**
+       * A speculation rule set is either added through an inline
+`<script>` tag or through an external resource via the
+'Speculation-Rules' HTTP header. For the first case, we include
+the BackendNodeId of the relevant `<script>` tag. For the second
+case, we include the external URL where the rule set was loaded
+from, and also RequestId if Network domain is enabled.
+
+See also:
+- https://wicg.github.io/nav-speculation/speculation-rules.html#speculation-rules-script
+- https://wicg.github.io/nav-speculation/speculation-rules.html#speculation-rules-header
+       */
+      backendNodeId?: DOM.BackendNodeId;
+      url?: string;
+      requestId?: Network.RequestId;
+      /**
+       * Error information
+`errorMessage` is null iff `errorType` is null.
+       */
+      errorType?: RuleSetErrorType;
+      /**
+       * TODO(https://crbug.com/1425354): Replace this property with structured error.
+       */
+      errorMessage?: string;
+      /**
+       * For more details, see:
+https://github.com/WICG/nav-speculation/blob/main/speculation-rules-tags.md
+       */
+      tag?: string;
+    }
+    export type RuleSetErrorType = "SourceIsNotJsonObject"|"InvalidRulesSkipped"|"InvalidRulesetLevelTag";
+    /**
+     * The type of preloading attempted. It corresponds to
+mojom::SpeculationAction (although PrefetchWithSubresources is omitted as it
+isn't being used by clients).
+     */
+    export type SpeculationAction = "Prefetch"|"Prerender"|"PrerenderUntilScript";
+    /**
+     * Corresponds to mojom::SpeculationTargetHint.
+See https://github.com/WICG/nav-speculation/blob/main/triggers.md#window-name-targeting-hints
+     */
+    export type SpeculationTargetHint = "Blank"|"Self";
+    /**
+     * A key that identifies a preloading attempt.
+
+The url used is the url specified by the trigger (i.e. the initial URL), and
+not the final url that is navigated to. For example, prerendering allows
+same-origin main frame navigations during the attempt, but the attempt is
+still keyed with the initial URL.
+     */
+    export interface PreloadingAttemptKey {
+      loaderId: Network.LoaderId;
+      action: SpeculationAction;
+      url: string;
+      formSubmission?: boolean;
+      targetHint?: SpeculationTargetHint;
+    }
+    /**
+     * Lists sources for a preloading attempt, specifically the ids of rule sets
+that had a speculation rule that triggered the attempt, and the
+BackendNodeIds of <a href> or <area href> elements that triggered the
+attempt (in the case of attempts triggered by a document rule). It is
+possible for multiple rule sets and links to trigger a single attempt.
+     */
+    export interface PreloadingAttemptSource {
+      key: PreloadingAttemptKey;
+      ruleSetIds: RuleSetId[];
+      nodeIds: DOM.BackendNodeId[];
+    }
+    /**
+     * Chrome manages different types of preloads together using a
+concept of preloading pipeline. For example, if a site uses a
+SpeculationRules for prerender, Chrome first starts a prefetch and
+then upgrades it to prerender.
+
+CDP events for them are emitted separately but they share
+`PreloadPipelineId`.
+     */
+    export type PreloadPipelineId = string;
+    /**
+     * List of FinalStatus reasons for Prerender2.
+     */
+    export type PrerenderFinalStatus = "Activated"|"Destroyed"|"LowEndDevice"|"InvalidSchemeRedirect"|"InvalidSchemeNavigation"|"NavigationRequestBlockedByCsp"|"MojoBinderPolicy"|"RendererProcessCrashed"|"RendererProcessKilled"|"Download"|"TriggerDestroyed"|"NavigationNotCommitted"|"NavigationBadHttpStatus"|"ClientCertRequested"|"NavigationRequestNetworkError"|"CancelAllHostsForTesting"|"DidFailLoad"|"Stop"|"SslCertificateError"|"LoginAuthRequested"|"UaChangeRequiresReload"|"BlockedByClient"|"AudioOutputDeviceRequested"|"MixedContent"|"TriggerBackgrounded"|"MemoryLimitExceeded"|"DataSaverEnabled"|"TriggerUrlHasEffectiveUrl"|"ActivatedBeforeStarted"|"InactivePageRestriction"|"StartFailed"|"TimeoutBackgrounded"|"CrossSiteRedirectInInitialNavigation"|"CrossSiteNavigationInInitialNavigation"|"SameSiteCrossOriginRedirectNotOptInInInitialNavigation"|"SameSiteCrossOriginNavigationNotOptInInInitialNavigation"|"ActivationNavigationParameterMismatch"|"ActivatedInBackground"|"EmbedderHostDisallowed"|"ActivationNavigationDestroyedBeforeSuccess"|"TabClosedByUserGesture"|"TabClosedWithoutUserGesture"|"PrimaryMainFrameRendererProcessCrashed"|"PrimaryMainFrameRendererProcessKilled"|"ActivationFramePolicyNotCompatible"|"PreloadingDisabled"|"BatterySaverEnabled"|"ActivatedDuringMainFrameNavigation"|"PreloadingUnsupportedByWebContents"|"CrossSiteRedirectInMainFrameNavigation"|"CrossSiteNavigationInMainFrameNavigation"|"SameSiteCrossOriginRedirectNotOptInInMainFrameNavigation"|"SameSiteCrossOriginNavigationNotOptInInMainFrameNavigation"|"MemoryPressureOnTrigger"|"MemoryPressureAfterTriggered"|"PrerenderingDisabledByDevTools"|"SpeculationRuleRemoved"|"ActivatedWithAuxiliaryBrowsingContexts"|"MaxNumOfRunningEagerPrerendersExceeded"|"MaxNumOfRunningNonEagerPrerendersExceeded"|"MaxNumOfRunningEmbedderPrerendersExceeded"|"PrerenderingUrlHasEffectiveUrl"|"RedirectedPrerenderingUrlHasEffectiveUrl"|"ActivationUrlHasEffectiveUrl"|"JavaScriptInterfaceAdded"|"JavaScriptInterfaceRemoved"|"AllPrerenderingCanceled"|"WindowClosed"|"SlowNetwork"|"OtherPrerenderedPageActivated"|"V8OptimizerDisabled"|"PrerenderFailedDuringPrefetch"|"BrowsingDataRemoved"|"PrerenderHostReused"|"FormSubmitWhenPrerendering"|"CrossDocumentRestart";
+    /**
+     * Preloading status values, see also PreloadingTriggeringOutcome. This
+status is shared by prefetchStatusUpdated and prerenderStatusUpdated.
+     */
+    export type PreloadingStatus = "Pending"|"Running"|"Ready"|"Success"|"Failure"|"NotSupported";
+    /**
+     * TODO(https://crbug.com/1384419): revisit the list of PrefetchStatus and
+filter out the ones that aren't necessary to the developers.
+     */
+    export type PrefetchStatus = "PrefetchAllowed"|"PrefetchFailedIneligibleRedirect"|"PrefetchFailedInvalidRedirect"|"PrefetchFailedMIMENotSupported"|"PrefetchFailedNetError"|"PrefetchFailedNon2XX"|"PrefetchEvictedAfterBrowsingDataRemoved"|"PrefetchEvictedAfterCandidateRemoved"|"PrefetchEvictedForNewerPrefetch"|"PrefetchHeldback"|"PrefetchIneligibleRetryAfter"|"PrefetchIsPrivacyDecoy"|"PrefetchIsStale"|"PrefetchNotEligibleBlockedByConnectionAllowlist"|"PrefetchNotEligibleBrowserContextOffTheRecord"|"PrefetchNotEligibleDataSaverEnabled"|"PrefetchNotEligibleExistingProxy"|"PrefetchNotEligibleHostIsNonUnique"|"PrefetchNotEligibleNonDefaultStoragePartition"|"PrefetchNotEligibleSameSiteCrossOriginPrefetchRequiredProxy"|"PrefetchNotEligibleSchemeIsNotHttps"|"PrefetchNotEligibleUserHasCookies"|"PrefetchNotEligibleUserHasServiceWorker"|"PrefetchNotEligibleUserHasServiceWorkerNoFetchHandler"|"PrefetchNotEligibleRedirectFromServiceWorker"|"PrefetchNotEligibleRedirectToServiceWorker"|"PrefetchNotEligibleBatterySaverEnabled"|"PrefetchNotEligiblePreloadingDisabled"|"PrefetchNotFinishedInTime"|"PrefetchNotStarted"|"PrefetchNotUsedCookiesChanged"|"PrefetchProxyNotAvailable"|"PrefetchResponseUsed"|"PrefetchSuccessfulButNotUsed"|"PrefetchNotUsedProbeFailed"|"PrefetchCancelledOnUserNavigation";
+    /**
+     * Information of headers to be displayed when the header mismatch occurred.
+     */
+    export interface PrerenderMismatchedHeaders {
+      headerName: string;
+      initialValue?: string;
+      activationValue?: string;
+    }
+    
+    /**
+     * Upsert. Currently, it is only emitted when a rule set added.
+     */
+    export type ruleSetUpdatedPayload = {
+      ruleSet: RuleSet;
+    }
+    export type ruleSetRemovedPayload = {
+      id: RuleSetId;
+    }
+    /**
+     * Fired when a preload enabled state is updated.
+     */
+    export type preloadEnabledStateUpdatedPayload = {
+      disabledByPreference: boolean;
+      disabledByDataSaver: boolean;
+      disabledByBatterySaver: boolean;
+      disabledByHoldbackPrefetchSpeculationRules: boolean;
+      disabledByHoldbackPrerenderSpeculationRules: boolean;
+    }
+    /**
+     * Fired when a prefetch attempt is updated.
+     */
+    export type prefetchStatusUpdatedPayload = {
+      key: PreloadingAttemptKey;
+      pipelineId: PreloadPipelineId;
+      /**
+       * The frame id of the frame initiating prefetch.
+       */
+      initiatingFrameId: Page.FrameId;
+      prefetchUrl: string;
+      status: PreloadingStatus;
+      prefetchStatus: PrefetchStatus;
+      requestId: Network.RequestId;
+    }
+    /**
+     * Fired when a prerender attempt is updated.
+     */
+    export type prerenderStatusUpdatedPayload = {
+      key: PreloadingAttemptKey;
+      pipelineId: PreloadPipelineId;
+      status: PreloadingStatus;
+      prerenderStatus?: PrerenderFinalStatus;
+      /**
+       * This is used to give users more information about the name of Mojo interface
+that is incompatible with prerender and has caused the cancellation of the attempt.
+       */
+      disallowedMojoInterface?: string;
+      mismatchedHeaders?: PrerenderMismatchedHeaders[];
+    }
+    /**
+     * Send a list of sources for all preloading attempts in a document.
+     */
+    export type preloadingAttemptSourcesUpdatedPayload = {
+      loaderId: Network.LoaderId;
+      preloadingAttemptSources: PreloadingAttemptSource[];
+    }
+    
+    export type enableParameters = {
+    }
+    export type enableReturnValue = {
+    }
+    export type disableParameters = {
+    }
+    export type disableReturnValue = {
+    }
+  }
+  
+  export namespace Security {
     /**
      * An internal certificate ID value.
      */
@@ -14583,7 +17190,7 @@ be handled by the DevTools client and should be answered with `handleCertificate
     }
   }
   
-  export module ServiceWorker {
+  export namespace ServiceWorker {
     export type RegistrationID = string;
     /**
      * ServiceWorker registration.
@@ -14669,11 +17276,6 @@ For cached script it is the last time the cache entry was validated.
     }
     export type enableReturnValue = {
     }
-    export type inspectWorkerParameters = {
-      versionId: string;
-    }
-    export type inspectWorkerReturnValue = {
-    }
     export type setForceUpdateOnPageLoadParameters = {
       forceUpdateOnPageLoad: boolean;
     }
@@ -14710,7 +17312,408 @@ For cached script it is the last time the cache entry was validated.
     }
   }
   
-  export module Storage {
+  export namespace SmartCardEmulation {
+    /**
+     * Indicates the PC/SC error code.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__ErrorCodes.html
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/secauthn/authentication-return-values
+     */
+    export type ResultCode = "success"|"removed-card"|"reset-card"|"unpowered-card"|"unresponsive-card"|"unsupported-card"|"reader-unavailable"|"sharing-violation"|"not-transacted"|"no-smartcard"|"proto-mismatch"|"system-cancelled"|"not-ready"|"cancelled"|"insufficient-buffer"|"invalid-handle"|"invalid-parameter"|"invalid-value"|"no-memory"|"timeout"|"unknown-reader"|"unsupported-feature"|"no-readers-available"|"service-stopped"|"no-service"|"comm-error"|"internal-error"|"server-too-busy"|"unexpected"|"shutdown"|"unknown-card"|"unknown";
+    /**
+     * Maps to the |SCARD_SHARE_*| values.
+     */
+    export type ShareMode = "shared"|"exclusive"|"direct";
+    /**
+     * Indicates what the reader should do with the card.
+     */
+    export type Disposition = "leave-card"|"reset-card"|"unpower-card"|"eject-card";
+    /**
+     * Maps to |SCARD_*| connection state values.
+     */
+    export type ConnectionState = "absent"|"present"|"swallowed"|"powered"|"negotiable"|"specific";
+    /**
+     * Maps to the |SCARD_STATE_*| flags.
+     */
+    export interface ReaderStateFlags {
+      unaware?: boolean;
+      ignore?: boolean;
+      changed?: boolean;
+      unknown?: boolean;
+      unavailable?: boolean;
+      empty?: boolean;
+      present?: boolean;
+      exclusive?: boolean;
+      inuse?: boolean;
+      mute?: boolean;
+      unpowered?: boolean;
+    }
+    /**
+     * Maps to the |SCARD_PROTOCOL_*| flags.
+     */
+    export interface ProtocolSet {
+      t0?: boolean;
+      t1?: boolean;
+      raw?: boolean;
+    }
+    /**
+     * Maps to the |SCARD_PROTOCOL_*| values.
+     */
+    export type Protocol = "t0"|"t1"|"raw";
+    export interface ReaderStateIn {
+      reader: string;
+      currentState: ReaderStateFlags;
+      currentInsertionCount: number;
+    }
+    export interface ReaderStateOut {
+      reader: string;
+      eventState: ReaderStateFlags;
+      eventCount: number;
+      atr: binary;
+    }
+    
+    /**
+     * Fired when |SCardEstablishContext| is called.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#gaa1b8970169fd4883a6dc4a8f43f19b67
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardestablishcontext
+     */
+    export type establishContextRequestedPayload = {
+      requestId: string;
+    }
+    /**
+     * Fired when |SCardReleaseContext| is called.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#ga6aabcba7744c5c9419fdd6404f73a934
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardreleasecontext
+     */
+    export type releaseContextRequestedPayload = {
+      requestId: string;
+      contextId: number;
+    }
+    /**
+     * Fired when |SCardListReaders| is called.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#ga93b07815789b3cf2629d439ecf20f0d9
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardlistreadersa
+     */
+    export type listReadersRequestedPayload = {
+      requestId: string;
+      contextId: number;
+    }
+    /**
+     * Fired when |SCardGetStatusChange| is called. Timeout is specified in milliseconds.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#ga33247d5d1257d59e55647c3bb717db24
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardgetstatuschangea
+     */
+    export type getStatusChangeRequestedPayload = {
+      requestId: string;
+      contextId: number;
+      readerStates: ReaderStateIn[];
+      /**
+       * in milliseconds, if absent, it means "infinite"
+       */
+      timeout?: number;
+    }
+    /**
+     * Fired when |SCardCancel| is called.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#gaacbbc0c6d6c0cbbeb4f4debf6fbeeee6
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardcancel
+     */
+    export type cancelRequestedPayload = {
+      requestId: string;
+      contextId: number;
+    }
+    /**
+     * Fired when |SCardConnect| is called.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#ga4e515829752e0a8dbc4d630696a8d6a5
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardconnecta
+     */
+    export type connectRequestedPayload = {
+      requestId: string;
+      contextId: number;
+      reader: string;
+      shareMode: ShareMode;
+      preferredProtocols: ProtocolSet;
+    }
+    /**
+     * Fired when |SCardDisconnect| is called.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#ga4be198045c73ec0deb79e66c0ca1738a
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scarddisconnect
+     */
+    export type disconnectRequestedPayload = {
+      requestId: string;
+      handle: number;
+      disposition: Disposition;
+    }
+    /**
+     * Fired when |SCardTransmit| is called.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#ga9a2d77242a271310269065e64633ab99
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardtransmit
+     */
+    export type transmitRequestedPayload = {
+      requestId: string;
+      handle: number;
+      data: binary;
+      protocol?: Protocol;
+    }
+    /**
+     * Fired when |SCardControl| is called.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#gac3454d4657110fd7f753b2d3d8f4e32f
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardcontrol
+     */
+    export type controlRequestedPayload = {
+      requestId: string;
+      handle: number;
+      controlCode: number;
+      data: binary;
+    }
+    /**
+     * Fired when |SCardGetAttrib| is called.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#gaacfec51917255b7a25b94c5104961602
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardgetattrib
+     */
+    export type getAttribRequestedPayload = {
+      requestId: string;
+      handle: number;
+      attribId: number;
+    }
+    /**
+     * Fired when |SCardSetAttrib| is called.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#ga060f0038a4ddfd5dd2b8fadf3c3a2e4f
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardsetattrib
+     */
+    export type setAttribRequestedPayload = {
+      requestId: string;
+      handle: number;
+      attribId: number;
+      data: binary;
+    }
+    /**
+     * Fired when |SCardStatus| is called.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#gae49c3c894ad7ac12a5b896bde70d0382
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardstatusa
+     */
+    export type statusRequestedPayload = {
+      requestId: string;
+      handle: number;
+    }
+    /**
+     * Fired when |SCardBeginTransaction| is called.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#gaddb835dce01a0da1d6ca02d33ee7d861
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardbegintransaction
+     */
+    export type beginTransactionRequestedPayload = {
+      requestId: string;
+      handle: number;
+    }
+    /**
+     * Fired when |SCardEndTransaction| is called.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#gae8742473b404363e5c587f570d7e2f3b
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardendtransaction
+     */
+    export type endTransactionRequestedPayload = {
+      requestId: string;
+      handle: number;
+      disposition: Disposition;
+    }
+    
+    /**
+     * Enables the |SmartCardEmulation| domain.
+     */
+    export type enableParameters = {
+    }
+    export type enableReturnValue = {
+    }
+    /**
+     * Disables the |SmartCardEmulation| domain.
+     */
+    export type disableParameters = {
+    }
+    export type disableReturnValue = {
+    }
+    /**
+     * Reports the successful result of a |SCardEstablishContext| call.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#gaa1b8970169fd4883a6dc4a8f43f19b67
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardestablishcontext
+     */
+    export type reportEstablishContextResultParameters = {
+      requestId: string;
+      contextId: number;
+    }
+    export type reportEstablishContextResultReturnValue = {
+    }
+    /**
+     * Reports the successful result of a |SCardReleaseContext| call.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#ga6aabcba7744c5c9419fdd6404f73a934
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardreleasecontext
+     */
+    export type reportReleaseContextResultParameters = {
+      requestId: string;
+    }
+    export type reportReleaseContextResultReturnValue = {
+    }
+    /**
+     * Reports the successful result of a |SCardListReaders| call.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#ga93b07815789b3cf2629d439ecf20f0d9
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardlistreadersa
+     */
+    export type reportListReadersResultParameters = {
+      requestId: string;
+      readers: string[];
+    }
+    export type reportListReadersResultReturnValue = {
+    }
+    /**
+     * Reports the successful result of a |SCardGetStatusChange| call.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#ga33247d5d1257d59e55647c3bb717db24
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardgetstatuschangea
+     */
+    export type reportGetStatusChangeResultParameters = {
+      requestId: string;
+      readerStates: ReaderStateOut[];
+    }
+    export type reportGetStatusChangeResultReturnValue = {
+    }
+    /**
+     * Reports the result of a |SCardBeginTransaction| call.
+On success, this creates a new transaction object.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#gaddb835dce01a0da1d6ca02d33ee7d861
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardbegintransaction
+     */
+    export type reportBeginTransactionResultParameters = {
+      requestId: string;
+      handle: number;
+    }
+    export type reportBeginTransactionResultReturnValue = {
+    }
+    /**
+     * Reports the successful result of a call that returns only a result code.
+Used for: |SCardCancel|, |SCardDisconnect|, |SCardSetAttrib|, |SCardEndTransaction|.
+
+This maps to:
+1. SCardCancel
+   PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#gaacbbc0c6d6c0cbbeb4f4debf6fbeeee6
+   Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardcancel
+
+2. SCardDisconnect
+   PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#ga4be198045c73ec0deb79e66c0ca1738a
+   Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scarddisconnect
+
+3. SCardSetAttrib
+   PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#ga060f0038a4ddfd5dd2b8fadf3c3a2e4f
+   Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardsetattrib
+
+4. SCardEndTransaction
+   PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#gae8742473b404363e5c587f570d7e2f3b
+   Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardendtransaction
+     */
+    export type reportPlainResultParameters = {
+      requestId: string;
+    }
+    export type reportPlainResultReturnValue = {
+    }
+    /**
+     * Reports the successful result of a |SCardConnect| call.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#ga4e515829752e0a8dbc4d630696a8d6a5
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardconnecta
+     */
+    export type reportConnectResultParameters = {
+      requestId: string;
+      handle: number;
+      activeProtocol?: Protocol;
+    }
+    export type reportConnectResultReturnValue = {
+    }
+    /**
+     * Reports the successful result of a call that sends back data on success.
+Used for |SCardTransmit|, |SCardControl|, and |SCardGetAttrib|.
+
+This maps to:
+1. SCardTransmit
+   PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#ga9a2d77242a271310269065e64633ab99
+   Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardtransmit
+
+2. SCardControl
+   PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#gac3454d4657110fd7f753b2d3d8f4e32f
+   Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardcontrol
+
+3. SCardGetAttrib
+   PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#gaacfec51917255b7a25b94c5104961602
+   Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardgetattrib
+     */
+    export type reportDataResultParameters = {
+      requestId: string;
+      data: binary;
+    }
+    export type reportDataResultReturnValue = {
+    }
+    /**
+     * Reports the successful result of a |SCardStatus| call.
+
+This maps to:
+PC/SC Lite: https://pcsclite.apdu.fr/api/group__API.html#gae49c3c894ad7ac12a5b896bde70d0382
+Microsoft: https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardstatusa
+     */
+    export type reportStatusResultParameters = {
+      requestId: string;
+      readerName: string;
+      state: ConnectionState;
+      atr: binary;
+      protocol?: Protocol;
+    }
+    export type reportStatusResultReturnValue = {
+    }
+    /**
+     * Reports an error result for the given request.
+     */
+    export type reportErrorParameters = {
+      requestId: string;
+      resultCode: ResultCode;
+    }
+    export type reportErrorReturnValue = {
+    }
+  }
+  
+  export namespace Storage {
     export type SerializedStorageKey = string;
     /**
      * Enum of possible storage types.
@@ -14903,15 +17906,10 @@ Present only for SharedStorageAccessMethod: set.
        */
       ignoreIfPresent?: boolean;
       /**
-       * If the method is called on a shared storage worklet, or as part of
-a shared storage worklet script, it will have a number for the
-associated worklet, denoting the (0-indexed) order of the worklet's
+       * A number denoting the (0-based) order of the worklet's
 creation relative to all other shared storage worklets created by
 documents using the current storage partition.
-Present only for SharedStorageAccessMethods: addModule, createWorklet,
-run, selectURL, and any other SharedStorageAccessMethod when the
-SharedStorageAccessScope is sharedStorageWorklet.
-TODO(crbug.com/401011862): Pass this only for addModule & createWorklet.
+Present only for SharedStorageAccessMethods: addModule, createWorklet.
        */
       workletOrdinal?: number;
       /**
@@ -14960,159 +17958,6 @@ Present only for SharedStorageAccessMethod: batchUpdate.
       persistent: boolean;
       durability: StorageBucketsDurability;
     }
-    export type AttributionReportingSourceType = "navigation"|"event";
-    export type UnsignedInt64AsBase10 = string;
-    export type UnsignedInt128AsBase16 = string;
-    export type SignedInt64AsBase10 = string;
-    export interface AttributionReportingFilterDataEntry {
-      key: string;
-      values: string[];
-    }
-    export interface AttributionReportingFilterConfig {
-      filterValues: AttributionReportingFilterDataEntry[];
-      /**
-       * duration in seconds
-       */
-      lookbackWindow?: number;
-    }
-    export interface AttributionReportingFilterPair {
-      filters: AttributionReportingFilterConfig[];
-      notFilters: AttributionReportingFilterConfig[];
-    }
-    export interface AttributionReportingAggregationKeysEntry {
-      key: string;
-      value: UnsignedInt128AsBase16;
-    }
-    export interface AttributionReportingEventReportWindows {
-      /**
-       * duration in seconds
-       */
-      start: number;
-      /**
-       * duration in seconds
-       */
-      ends: number[];
-    }
-    export type AttributionReportingTriggerDataMatching = "exact"|"modulus";
-    export interface AttributionReportingAggregatableDebugReportingData {
-      keyPiece: UnsignedInt128AsBase16;
-      /**
-       * number instead of integer because not all uint32 can be represented by
-int
-       */
-      value: number;
-      types: string[];
-    }
-    export interface AttributionReportingAggregatableDebugReportingConfig {
-      /**
-       * number instead of integer because not all uint32 can be represented by
-int, only present for source registrations
-       */
-      budget?: number;
-      keyPiece: UnsignedInt128AsBase16;
-      debugData: AttributionReportingAggregatableDebugReportingData[];
-      aggregationCoordinatorOrigin?: string;
-    }
-    export interface AttributionScopesData {
-      values: string[];
-      /**
-       * number instead of integer because not all uint32 can be represented by
-int
-       */
-      limit: number;
-      maxEventStates: number;
-    }
-    export interface AttributionReportingNamedBudgetDef {
-      name: string;
-      budget: number;
-    }
-    export interface AttributionReportingSourceRegistration {
-      time: Network.TimeSinceEpoch;
-      /**
-       * duration in seconds
-       */
-      expiry: number;
-      /**
-       * number instead of integer because not all uint32 can be represented by
-int
-       */
-      triggerData: number[];
-      eventReportWindows: AttributionReportingEventReportWindows;
-      /**
-       * duration in seconds
-       */
-      aggregatableReportWindow: number;
-      type: AttributionReportingSourceType;
-      sourceOrigin: string;
-      reportingOrigin: string;
-      destinationSites: string[];
-      eventId: UnsignedInt64AsBase10;
-      priority: SignedInt64AsBase10;
-      filterData: AttributionReportingFilterDataEntry[];
-      aggregationKeys: AttributionReportingAggregationKeysEntry[];
-      debugKey?: UnsignedInt64AsBase10;
-      triggerDataMatching: AttributionReportingTriggerDataMatching;
-      destinationLimitPriority: SignedInt64AsBase10;
-      aggregatableDebugReportingConfig: AttributionReportingAggregatableDebugReportingConfig;
-      scopesData?: AttributionScopesData;
-      maxEventLevelReports: number;
-      namedBudgets: AttributionReportingNamedBudgetDef[];
-      debugReporting: boolean;
-      eventLevelEpsilon: number;
-    }
-    export type AttributionReportingSourceRegistrationResult = "success"|"internalError"|"insufficientSourceCapacity"|"insufficientUniqueDestinationCapacity"|"excessiveReportingOrigins"|"prohibitedByBrowserPolicy"|"successNoised"|"destinationReportingLimitReached"|"destinationGlobalLimitReached"|"destinationBothLimitsReached"|"reportingOriginsPerSiteLimitReached"|"exceedsMaxChannelCapacity"|"exceedsMaxScopesChannelCapacity"|"exceedsMaxTriggerStateCardinality"|"exceedsMaxEventStatesLimit"|"destinationPerDayReportingLimitReached";
-    export type AttributionReportingSourceRegistrationTimeConfig = "include"|"exclude";
-    export interface AttributionReportingAggregatableValueDictEntry {
-      key: string;
-      /**
-       * number instead of integer because not all uint32 can be represented by
-int
-       */
-      value: number;
-      filteringId: UnsignedInt64AsBase10;
-    }
-    export interface AttributionReportingAggregatableValueEntry {
-      values: AttributionReportingAggregatableValueDictEntry[];
-      filters: AttributionReportingFilterPair;
-    }
-    export interface AttributionReportingEventTriggerData {
-      data: UnsignedInt64AsBase10;
-      priority: SignedInt64AsBase10;
-      dedupKey?: UnsignedInt64AsBase10;
-      filters: AttributionReportingFilterPair;
-    }
-    export interface AttributionReportingAggregatableTriggerData {
-      keyPiece: UnsignedInt128AsBase16;
-      sourceKeys: string[];
-      filters: AttributionReportingFilterPair;
-    }
-    export interface AttributionReportingAggregatableDedupKey {
-      dedupKey?: UnsignedInt64AsBase10;
-      filters: AttributionReportingFilterPair;
-    }
-    export interface AttributionReportingNamedBudgetCandidate {
-      name?: string;
-      filters: AttributionReportingFilterPair;
-    }
-    export interface AttributionReportingTriggerRegistration {
-      filters: AttributionReportingFilterPair;
-      debugKey?: UnsignedInt64AsBase10;
-      aggregatableDedupKeys: AttributionReportingAggregatableDedupKey[];
-      eventTriggerData: AttributionReportingEventTriggerData[];
-      aggregatableTriggerData: AttributionReportingAggregatableTriggerData[];
-      aggregatableValues: AttributionReportingAggregatableValueEntry[];
-      aggregatableFilteringIdMaxBytes: number;
-      debugReporting: boolean;
-      aggregationCoordinatorOrigin?: string;
-      sourceRegistrationTimeConfig: AttributionReportingSourceRegistrationTimeConfig;
-      triggerContextId?: string;
-      aggregatableDebugReportingConfig: AttributionReportingAggregatableDebugReportingConfig;
-      scopes: string[];
-      namedBudgets: AttributionReportingNamedBudgetCandidate[];
-    }
-    export type AttributionReportingEventLevelResult = "success"|"successDroppedLowerPriority"|"internalError"|"noCapacityForAttributionDestination"|"noMatchingSources"|"deduplicated"|"excessiveAttributions"|"priorityTooLow"|"neverAttributedSource"|"excessiveReportingOrigins"|"noMatchingSourceFilterData"|"prohibitedByBrowserPolicy"|"noMatchingConfigurations"|"excessiveReports"|"falselyAttributedSource"|"reportWindowPassed"|"notRegistered"|"reportWindowNotStarted"|"noMatchingTriggerData";
-    export type AttributionReportingAggregatableResult = "success"|"internalError"|"noCapacityForAttributionDestination"|"noMatchingSources"|"excessiveAttributions"|"excessiveReportingOrigins"|"noHistograms"|"insufficientBudget"|"insufficientNamedBudget"|"noMatchingSourceFilterData"|"notRegistered"|"prohibitedByBrowserPolicy"|"deduplicated"|"reportWindowPassed"|"excessiveReports";
-    export type AttributionReportingReportResult = "sent"|"prohibited"|"failedToAssemble"|"expired";
     /**
      * A single Related Website Set object.
      */
@@ -15345,34 +18190,25 @@ associated shared storage worklet.
     export type storageBucketDeletedPayload = {
       bucketId: string;
     }
-    export type attributionReportingSourceRegisteredPayload = {
-      registration: AttributionReportingSourceRegistration;
-      result: AttributionReportingSourceRegistrationResult;
-    }
-    export type attributionReportingTriggerRegisteredPayload = {
-      registration: AttributionReportingTriggerRegistration;
-      eventLevel: AttributionReportingEventLevelResult;
-      aggregatable: AttributionReportingAggregatableResult;
-    }
-    export type attributionReportingReportSentPayload = {
-      url: string;
-      body: { [key: string]: string };
-      result: AttributionReportingReportResult;
-      /**
-       * If result is `sent`, populated with net/HTTP status.
-       */
-      netError?: number;
-      netErrorName?: string;
-      httpStatusCode?: number;
-    }
     
     /**
      * Returns a storage key given a frame id.
+Deprecated. Please use Storage.getStorageKey instead.
      */
     export type getStorageKeyForFrameParameters = {
       frameId: Page.FrameId;
     }
     export type getStorageKeyForFrameReturnValue = {
+      storageKey: SerializedStorageKey;
+    }
+    /**
+     * Returns storage key for the given frame. If no frame ID is provided,
+the storage key of the target executing this command is returned.
+     */
+    export type getStorageKeyParameters = {
+      frameId?: Page.FrameId;
+    }
+    export type getStorageKeyReturnValue = {
       storageKey: SerializedStorageKey;
     }
     /**
@@ -15729,37 +18565,6 @@ interestGroupAuctionNetworkRequestCreated.
       deletedSites: string[];
     }
     /**
-     * https://wicg.github.io/attribution-reporting-api/
-     */
-    export type setAttributionReportingLocalTestingModeParameters = {
-      /**
-       * If enabled, noise is suppressed and reports are sent immediately.
-       */
-      enabled: boolean;
-    }
-    export type setAttributionReportingLocalTestingModeReturnValue = {
-    }
-    /**
-     * Enables/disables issuing of Attribution Reporting events.
-     */
-    export type setAttributionReportingTrackingParameters = {
-      enable: boolean;
-    }
-    export type setAttributionReportingTrackingReturnValue = {
-    }
-    /**
-     * Sends all pending Attribution Reports immediately, regardless of their
-scheduled report time.
-     */
-    export type sendPendingAttributionReportsParameters = {
-    }
-    export type sendPendingAttributionReportsReturnValue = {
-      /**
-       * The number of reports that were sent.
-       */
-      numSent: number;
-    }
-    /**
      * Returns the effective Related Website Sets in use by this profile for the browser
 session. The effective Related Website Sets will not change during a browser session.
      */
@@ -15767,28 +18572,6 @@ session. The effective Related Website Sets will not change during a browser ses
     }
     export type getRelatedWebsiteSetsReturnValue = {
       sets: RelatedWebsiteSet[];
-    }
-    /**
-     * Returns the list of URLs from a page and its embedded resources that match
-existing grace period URL pattern rules.
-https://developers.google.com/privacy-sandbox/cookies/temporary-exceptions/grace-period
-     */
-    export type getAffectedUrlsForThirdPartyCookieMetadataParameters = {
-      /**
-       * The URL of the page currently being visited.
-       */
-      firstPartyUrl: string;
-      /**
-       * The list of embedded resource URLs from the page.
-       */
-      thirdPartyUrls: string[];
-    }
-    export type getAffectedUrlsForThirdPartyCookieMetadataReturnValue = {
-      /**
-       * Array of matching URLs. If there is a primary pattern match for the first-
-party URL, only the first-party URL is returned in the array.
-       */
-      matchedUrls: string[];
     }
     export type setProtectedAudienceKAnonymityParameters = {
       owner: string;
@@ -15802,7 +18585,7 @@ party URL, only the first-party URL is returned in the array.
   /**
    * The SystemInfo domain defines methods and events for querying low-level system information.
    */
-  export module SystemInfo {
+  export namespace SystemInfo {
     /**
      * Describes a single graphics processor (GPU).
      */
@@ -15901,28 +18684,6 @@ resolution and maximum framerate.
      */
     export type ImageType = "jpeg"|"webp"|"unknown";
     /**
-     * Describes a supported image decoding profile with its associated minimum and
-maximum resolutions and subsampling.
-     */
-    export interface ImageDecodeAcceleratorCapability {
-      /**
-       * Image coded, e.g. Jpeg.
-       */
-      imageType: ImageType;
-      /**
-       * Maximum supported dimensions of the image in pixels.
-       */
-      maxDimensions: Size;
-      /**
-       * Minimum supported dimensions of the image in pixels.
-       */
-      minDimensions: Size;
-      /**
-       * Optional array of supported subsampling formats, e.g. 4:2:0, if known.
-       */
-      subsamplings: SubsamplingFormat[];
-    }
-    /**
      * Provides information about the GPU(s) on the system.
      */
     export interface GPUInfo {
@@ -15950,10 +18711,6 @@ maximum resolutions and subsampling.
        * Supported accelerated video encoding capabilities.
        */
       videoEncoding: VideoEncodeAcceleratorCapability[];
-      /**
-       * Supported accelerated image decoding capabilities.
-       */
-      imageDecoding: ImageDecodeAcceleratorCapability[];
     }
     /**
      * Represents process info.
@@ -16026,7 +18783,7 @@ supported.
   /**
    * Supports additional targets discovery and allows to attach to them.
    */
-  export module Target {
+  export namespace Target {
     export type TargetID = string;
     /**
      * Unique identifier of attached debugging session.
@@ -16045,6 +18802,10 @@ supported.
        */
       attached: boolean;
       /**
+       * Id of the parent target, if any. For example, "iframe" target may have a "page" parent.
+       */
+      parentId?: TargetID;
+      /**
        * Opener target Id
        */
       openerId?: TargetID;
@@ -16056,12 +18817,22 @@ supported.
        * Frame id of originating window (is only set if target has an opener).
        */
       openerFrameId?: Page.FrameId;
+      /**
+       * Id of the parent frame, present for "iframe" and "worker" targets. For nested workers,
+this is the "ancestor" frame that created the first worker in the nested chain.
+       */
+      parentFrameId?: Page.FrameId;
       browserContextId?: Browser.BrowserContextID;
       /**
        * Provides additional details for specific target types. For example, for
 the type of "page", this may be set to "prerender".
        */
       subtype?: string;
+      /**
+       * Embedder-specific target metadata. This is only set for targets of
+type "tab".
+       */
+      embedderData?: { [key: string]: string };
     }
     /**
      * A filter used by target query/discovery/auto-attach operations.
@@ -16279,6 +19050,10 @@ Parts of the URL other than those constituting origin are ignored.
        * An array of browser context ids.
        */
       browserContextIds: Browser.BrowserContextID[];
+      /**
+       * The id of the default browser context if available.
+       */
+      defaultBrowserContextId?: Browser.BrowserContextID;
     }
     /**
      * Creates a new page.
@@ -16337,6 +19112,14 @@ present in the tab UI strip. Cannot be created with `forTab: true`, `newWindow: 
 `background: false`. The life-time of the tab is limited to the life-time of the session.
        */
       hidden?: boolean;
+      /**
+       * If specified, determines whether the new target should be focused.
+By default, the focus behavior depends on the `background` parameter:
+- If `background` is false (default) and `focus` is omitted, the new target is focused and the browser window is brought to the foreground.
+- If `background` is false and `focus` is false, the target is opened but the browser window's focus remains unchanged (e.g., if the window was in the background, it stays there).
+- If `background` is true, setting `focus` to true is not supported and will result in an error.
+       */
+      focus?: boolean;
     }
     export type createTargetReturnValue = {
       /**
@@ -16495,12 +19278,49 @@ to run paused targets.
     }
     export type setRemoteLocationsReturnValue = {
     }
+    /**
+     * Gets the targetId of the DevTools page target opened for the given target
+(if any).
+     */
+    export type getDevToolsTargetParameters = {
+      /**
+       * Page or tab target ID.
+       */
+      targetId: TargetID;
+    }
+    export type getDevToolsTargetReturnValue = {
+      /**
+       * The targetId of DevTools page target if exists.
+       */
+      targetId?: TargetID;
+    }
+    /**
+     * Opens a DevTools window for the target.
+     */
+    export type openDevToolsParameters = {
+      /**
+       * This can be the page or tab target ID.
+       */
+      targetId: TargetID;
+      /**
+       * The id of the panel we want DevTools to open initially. Currently
+supported panels are elements, console, network, sources, resources,
+timeline, chrome-recorder, heap-profiler, lighthouse, and security.
+       */
+      panelId?: string;
+    }
+    export type openDevToolsReturnValue = {
+      /**
+       * The targetId of DevTools page target.
+       */
+      targetId: TargetID;
+    }
   }
   
   /**
    * The Tethering domain defines methods and events for browser port binding.
    */
-  export module Tethering {
+  export namespace Tethering {
     
     /**
      * Informs that port was successfully bound and got a specified connection id.
@@ -16540,14 +19360,14 @@ to run paused targets.
     }
   }
   
-  export module Tracing {
+  export namespace Tracing {
     /**
      * Configuration for memory dump. Used only when "memory-infra" category is enabled.
      */
     export type MemoryDumpConfig = { [key: string]: string };
     export interface TraceConfig {
       /**
-       * Controls how the trace buffer stores data.
+       * Controls how the trace buffer stores data. The default is `recordUntilFull`.
        */
       recordMode?: "recordUntilFull"|"recordContinuously"|"recordAsMuchAsPossible"|"echoToConsole";
       /**
@@ -16674,6 +19494,17 @@ buffer wrapped around.
       categories: string[];
     }
     /**
+     * Return a descriptor for all available tracing categories.
+     */
+    export type getTrackEventDescriptorParameters = {
+    }
+    export type getTrackEventDescriptorReturnValue = {
+      /**
+       * Base64-encoded serialized perfetto.protos.TrackEventDescriptor protobuf message.
+       */
+      descriptor: binary;
+    }
+    /**
      * Record a clock sync marker in the trace.
      */
     export type recordClockSyncMarkerParameters = {
@@ -16749,382 +19580,23 @@ are ignored.
        * Backend type (defaults to `auto`)
        */
       tracingBackend?: TracingBackend;
+      /**
+       * Maximum width and height (in pixels) of each captured screenshot.
+Only used when the `disabled-by-default-devtools.screenshot` category is
+enabled. Defaults to 500. The combined memory footprint of screenshots
+(`screenshotMaxSize` * `screenshotMaxSize` * 4 * `screenshotMaxCount`)
+is clamped to the existing per-session budget.
+       */
+      screenshotMaxSize?: number;
+      /**
+       * Maximum number of screenshots captured during a single tracing session.
+Only used when the `disabled-by-default-devtools.screenshot` category is
+enabled. Defaults to 450. Clamped together with `screenshotMaxSize` to
+stay within the per-session screenshot memory budget.
+       */
+      screenshotMaxCount?: number;
     }
     export type startReturnValue = {
-    }
-  }
-  
-  /**
-   * A domain for letting clients substitute browser's network layer with client code.
-   */
-  export module Fetch {
-    /**
-     * Unique request identifier.
-Note that this does not identify individual HTTP requests that are part of
-a network request.
-     */
-    export type RequestId = string;
-    /**
-     * Stages of the request to handle. Request will intercept before the request is
-sent. Response will intercept after the response is received (but before response
-body is received).
-     */
-    export type RequestStage = "Request"|"Response";
-    export interface RequestPattern {
-      /**
-       * Wildcards (`'*'` -> zero or more, `'?'` -> exactly one) are allowed. Escape character is
-backslash. Omitting is equivalent to `"*"`.
-       */
-      urlPattern?: string;
-      /**
-       * If set, only requests for matching resource types will be intercepted.
-       */
-      resourceType?: Network.ResourceType;
-      /**
-       * Stage at which to begin intercepting requests. Default is Request.
-       */
-      requestStage?: RequestStage;
-    }
-    /**
-     * Response HTTP header entry
-     */
-    export interface HeaderEntry {
-      name: string;
-      value: string;
-    }
-    /**
-     * Authorization challenge for HTTP status code 401 or 407.
-     */
-    export interface AuthChallenge {
-      /**
-       * Source of the authentication challenge.
-       */
-      source?: "Server"|"Proxy";
-      /**
-       * Origin of the challenger.
-       */
-      origin: string;
-      /**
-       * The authentication scheme used, such as basic or digest
-       */
-      scheme: string;
-      /**
-       * The realm of the challenge. May be empty.
-       */
-      realm: string;
-    }
-    /**
-     * Response to an AuthChallenge.
-     */
-    export interface AuthChallengeResponse {
-      /**
-       * The decision on what to do in response to the authorization challenge.  Default means
-deferring to the default behavior of the net stack, which will likely either the Cancel
-authentication or display a popup dialog box.
-       */
-      response: "Default"|"CancelAuth"|"ProvideCredentials";
-      /**
-       * The username to provide, possibly empty. Should only be set if response is
-ProvideCredentials.
-       */
-      username?: string;
-      /**
-       * The password to provide, possibly empty. Should only be set if response is
-ProvideCredentials.
-       */
-      password?: string;
-    }
-    
-    /**
-     * Issued when the domain is enabled and the request URL matches the
-specified filter. The request is paused until the client responds
-with one of continueRequest, failRequest or fulfillRequest.
-The stage of the request can be determined by presence of responseErrorReason
-and responseStatusCode -- the request is at the response stage if either
-of these fields is present and in the request stage otherwise.
-Redirect responses and subsequent requests are reported similarly to regular
-responses and requests. Redirect responses may be distinguished by the value
-of `responseStatusCode` (which is one of 301, 302, 303, 307, 308) along with
-presence of the `location` header. Requests resulting from a redirect will
-have `redirectedRequestId` field set.
-     */
-    export type requestPausedPayload = {
-      /**
-       * Each request the page makes will have a unique id.
-       */
-      requestId: RequestId;
-      /**
-       * The details of the request.
-       */
-      request: Network.Request;
-      /**
-       * The id of the frame that initiated the request.
-       */
-      frameId: Page.FrameId;
-      /**
-       * How the requested resource will be used.
-       */
-      resourceType: Network.ResourceType;
-      /**
-       * Response error if intercepted at response stage.
-       */
-      responseErrorReason?: Network.ErrorReason;
-      /**
-       * Response code if intercepted at response stage.
-       */
-      responseStatusCode?: number;
-      /**
-       * Response status text if intercepted at response stage.
-       */
-      responseStatusText?: string;
-      /**
-       * Response headers if intercepted at the response stage.
-       */
-      responseHeaders?: HeaderEntry[];
-      /**
-       * If the intercepted request had a corresponding Network.requestWillBeSent event fired for it,
-then this networkId will be the same as the requestId present in the requestWillBeSent event.
-       */
-      networkId?: Network.RequestId;
-      /**
-       * If the request is due to a redirect response from the server, the id of the request that
-has caused the redirect.
-       */
-      redirectedRequestId?: RequestId;
-    }
-    /**
-     * Issued when the domain is enabled with handleAuthRequests set to true.
-The request is paused until client responds with continueWithAuth.
-     */
-    export type authRequiredPayload = {
-      /**
-       * Each request the page makes will have a unique id.
-       */
-      requestId: RequestId;
-      /**
-       * The details of the request.
-       */
-      request: Network.Request;
-      /**
-       * The id of the frame that initiated the request.
-       */
-      frameId: Page.FrameId;
-      /**
-       * How the requested resource will be used.
-       */
-      resourceType: Network.ResourceType;
-      /**
-       * Details of the Authorization Challenge encountered.
-If this is set, client should respond with continueRequest that
-contains AuthChallengeResponse.
-       */
-      authChallenge: AuthChallenge;
-    }
-    
-    /**
-     * Disables the fetch domain.
-     */
-    export type disableParameters = {
-    }
-    export type disableReturnValue = {
-    }
-    /**
-     * Enables issuing of requestPaused events. A request will be paused until client
-calls one of failRequest, fulfillRequest or continueRequest/continueWithAuth.
-     */
-    export type enableParameters = {
-      /**
-       * If specified, only requests matching any of these patterns will produce
-fetchRequested event and will be paused until clients response. If not set,
-all requests will be affected.
-       */
-      patterns?: RequestPattern[];
-      /**
-       * If true, authRequired events will be issued and requests will be paused
-expecting a call to continueWithAuth.
-       */
-      handleAuthRequests?: boolean;
-    }
-    export type enableReturnValue = {
-    }
-    /**
-     * Causes the request to fail with specified reason.
-     */
-    export type failRequestParameters = {
-      /**
-       * An id the client received in requestPaused event.
-       */
-      requestId: RequestId;
-      /**
-       * Causes the request to fail with the given reason.
-       */
-      errorReason: Network.ErrorReason;
-    }
-    export type failRequestReturnValue = {
-    }
-    /**
-     * Provides response to the request.
-     */
-    export type fulfillRequestParameters = {
-      /**
-       * An id the client received in requestPaused event.
-       */
-      requestId: RequestId;
-      /**
-       * An HTTP response code.
-       */
-      responseCode: number;
-      /**
-       * Response headers.
-       */
-      responseHeaders?: HeaderEntry[];
-      /**
-       * Alternative way of specifying response headers as a \0-separated
-series of name: value pairs. Prefer the above method unless you
-need to represent some non-UTF8 values that can't be transmitted
-over the protocol as text.
-       */
-      binaryResponseHeaders?: binary;
-      /**
-       * A response body. If absent, original response body will be used if
-the request is intercepted at the response stage and empty body
-will be used if the request is intercepted at the request stage.
-       */
-      body?: binary;
-      /**
-       * A textual representation of responseCode.
-If absent, a standard phrase matching responseCode is used.
-       */
-      responsePhrase?: string;
-    }
-    export type fulfillRequestReturnValue = {
-    }
-    /**
-     * Continues the request, optionally modifying some of its parameters.
-     */
-    export type continueRequestParameters = {
-      /**
-       * An id the client received in requestPaused event.
-       */
-      requestId: RequestId;
-      /**
-       * If set, the request url will be modified in a way that's not observable by page.
-       */
-      url?: string;
-      /**
-       * If set, the request method is overridden.
-       */
-      method?: string;
-      /**
-       * If set, overrides the post data in the request.
-       */
-      postData?: binary;
-      /**
-       * If set, overrides the request headers. Note that the overrides do not
-extend to subsequent redirect hops, if a redirect happens. Another override
-may be applied to a different request produced by a redirect.
-       */
-      headers?: HeaderEntry[];
-      /**
-       * If set, overrides response interception behavior for this request.
-       */
-      interceptResponse?: boolean;
-    }
-    export type continueRequestReturnValue = {
-    }
-    /**
-     * Continues a request supplying authChallengeResponse following authRequired event.
-     */
-    export type continueWithAuthParameters = {
-      /**
-       * An id the client received in authRequired event.
-       */
-      requestId: RequestId;
-      /**
-       * Response to  with an authChallenge.
-       */
-      authChallengeResponse: AuthChallengeResponse;
-    }
-    export type continueWithAuthReturnValue = {
-    }
-    /**
-     * Continues loading of the paused response, optionally modifying the
-response headers. If either responseCode or headers are modified, all of them
-must be present.
-     */
-    export type continueResponseParameters = {
-      /**
-       * An id the client received in requestPaused event.
-       */
-      requestId: RequestId;
-      /**
-       * An HTTP response code. If absent, original response code will be used.
-       */
-      responseCode?: number;
-      /**
-       * A textual representation of responseCode.
-If absent, a standard phrase matching responseCode is used.
-       */
-      responsePhrase?: string;
-      /**
-       * Response headers. If absent, original response headers will be used.
-       */
-      responseHeaders?: HeaderEntry[];
-      /**
-       * Alternative way of specifying response headers as a \0-separated
-series of name: value pairs. Prefer the above method unless you
-need to represent some non-UTF8 values that can't be transmitted
-over the protocol as text.
-       */
-      binaryResponseHeaders?: binary;
-    }
-    export type continueResponseReturnValue = {
-    }
-    /**
-     * Causes the body of the response to be received from the server and
-returned as a single string. May only be issued for a request that
-is paused in the Response stage and is mutually exclusive with
-takeResponseBodyForInterceptionAsStream. Calling other methods that
-affect the request or disabling fetch domain before body is received
-results in an undefined behavior.
-Note that the response body is not available for redirects. Requests
-paused in the _redirect received_ state may be differentiated by
-`responseCode` and presence of `location` response header, see
-comments to `requestPaused` for details.
-     */
-    export type getResponseBodyParameters = {
-      /**
-       * Identifier for the intercepted request to get body for.
-       */
-      requestId: RequestId;
-    }
-    export type getResponseBodyReturnValue = {
-      /**
-       * Response body.
-       */
-      body: string;
-      /**
-       * True, if content was sent as base64.
-       */
-      base64Encoded: boolean;
-    }
-    /**
-     * Returns a handle to the stream representing the response body.
-The request must be paused in the HeadersReceived stage.
-Note that after this command the request can't be continued
-as is -- client either needs to cancel it or to provide the
-response body.
-The stream only supports sequential read, IO.read will fail if the position
-is specified.
-This method is mutually exclusive with getResponseBody.
-Calling other methods that affect the request or disabling fetch
-domain before body is received results in an undefined behavior.
-     */
-    export type takeResponseBodyAsStreamParameters = {
-      requestId: RequestId;
-    }
-    export type takeResponseBodyAsStreamReturnValue = {
-      stream: IO.StreamHandle;
     }
   }
   
@@ -17132,7 +19604,7 @@ domain before body is received results in an undefined behavior.
    * This domain allows inspection of Web Audio API.
 https://webaudio.github.io/web-audio-api/
    */
-  export module WebAudio {
+  export namespace WebAudio {
     /**
      * An unique ID for a graph object (AudioContext, AudioNode, AudioParam) in Web Audio API
      */
@@ -17369,10 +19841,10 @@ capacity and glitch may occur.
    * This domain allows configuring virtual authenticators to test the WebAuthn
 API.
    */
-  export module WebAuthn {
+  export namespace WebAuthn {
     export type AuthenticatorId = string;
     export type AuthenticatorProtocol = "u2f"|"ctap2";
-    export type Ctap2Version = "ctap2_0"|"ctap2_1";
+    export type Ctap2Version = "ctap2_0"|"ctap2_1"|"ctap2_2";
     export type AuthenticatorTransport = "usb"|"nfc"|"ble"|"cable"|"internal";
     export interface VirtualAuthenticatorOptions {
       protocol: AuthenticatorProtocol;
@@ -17413,6 +19885,18 @@ https://w3c.github.io/webauthn/#prf-extension
 Defaults to false.
        */
       hasPrf?: boolean;
+      /**
+       * If set to true, the authenticator will support the hmac-secret extension.
+https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-20210615.html#sctn-hmac-secret-extension
+Defaults to false.
+       */
+      hasHmacSecret?: boolean;
+      /**
+       * If set to true, the authenticator will support the hmac-secret-mc extension.
+https://fidoalliance.org/specs/fido-v2.2-rd-20241003/fido-client-to-authenticator-protocol-v2.2-rd-20241003.html#sctn-hmac-secret-make-cred-extension
+Defaults to false.
+       */
+      hasHmacSecretMc?: boolean;
       /**
        * If set to true, tests of user presence will succeed immediately.
 Otherwise, they will not be resolved. Defaults to true.
@@ -17663,938 +20147,196 @@ https://w3c.github.io/webauthn/#sctn-automation-set-credential-properties
     }
   }
   
-  /**
-   * This domain allows detailed inspection of media elements
-   */
-  export module Media {
+  export namespace WebMCP {
     /**
-     * Players will get an ID that is unique within the agent context.
+     * Tool annotations
      */
-    export type PlayerId = string;
-    export type Timestamp = number;
-    /**
-     * Have one type per entry in MediaLogRecord::Type
-Corresponds to kMessage
-     */
-    export interface PlayerMessage {
+    export interface Annotation {
       /**
-       * Keep in sync with MediaLogMessageLevel
-We are currently keeping the message level 'error' separate from the
-PlayerError type because right now they represent different things,
-this one being a DVLOG(ERROR) style log message that gets printed
-based on what log level is selected in the UI, and the other is a
-representation of a media::PipelineStatus object. Soon however we're
-going to be moving away from using PipelineStatus for errors and
-introducing a new error type which should hopefully let us integrate
-the error log level into the PlayerError type.
+       * A hint indicating that the tool does not modify any state.
        */
-      level: "error"|"warning"|"info"|"debug";
-      message: string;
-    }
-    /**
-     * Corresponds to kMediaPropertyChange
-     */
-    export interface PlayerProperty {
-      name: string;
-      value: string;
-    }
-    /**
-     * Corresponds to kMediaEventTriggered
-     */
-    export interface PlayerEvent {
-      timestamp: Timestamp;
-      value: string;
-    }
-    /**
-     * Represents logged source line numbers reported in an error.
-NOTE: file and line are from chromium c++ implementation code, not js.
-     */
-    export interface PlayerErrorSourceLocation {
-      file: string;
-      line: number;
-    }
-    /**
-     * Corresponds to kMediaError
-     */
-    export interface PlayerError {
-      errorType: string;
+      readOnly?: boolean;
       /**
-       * Code is the numeric enum entry for a specific set of error codes, such
-as PipelineStatusCodes in media/base/pipeline_status.h
+       * A hint indicating that the tool output may contain untrusted content, ex: UGC, 3rd party data.
        */
-      code: number;
+      untrustedContent?: boolean;
       /**
-       * A trace of where this error was caused / where it passed through.
+       * If the declarative tool was declared with the autosubmit attribute.
        */
-      stack: PlayerErrorSourceLocation[];
+      autosubmit?: boolean;
+    }
+    /**
+     * Represents the status of a tool invocation.
+     */
+    export type InvocationStatus = "Completed"|"Canceled"|"Error";
+    /**
+     * Definition of a tool that can be invoked.
+     */
+    export interface Tool {
       /**
-       * Errors potentially have a root cause error, ie, a DecoderError might be
-caused by an WindowsError
-       */
-      cause: PlayerError[];
-      /**
-       * Extra data attached to an error, such as an HRESULT, Video Codec, etc.
-       */
-      data: { [key: string]: string };
-    }
-    
-    /**
-     * This can be called multiple times, and can be used to set / override /
-remove player properties. A null propValue indicates removal.
-     */
-    export type playerPropertiesChangedPayload = {
-      playerId: PlayerId;
-      properties: PlayerProperty[];
-    }
-    /**
-     * Send events as a list, allowing them to be batched on the browser for less
-congestion. If batched, events must ALWAYS be in chronological order.
-     */
-    export type playerEventsAddedPayload = {
-      playerId: PlayerId;
-      events: PlayerEvent[];
-    }
-    /**
-     * Send a list of any messages that need to be delivered.
-     */
-    export type playerMessagesLoggedPayload = {
-      playerId: PlayerId;
-      messages: PlayerMessage[];
-    }
-    /**
-     * Send a list of any errors that need to be delivered.
-     */
-    export type playerErrorsRaisedPayload = {
-      playerId: PlayerId;
-      errors: PlayerError[];
-    }
-    /**
-     * Called whenever a player is created, or when a new agent joins and receives
-a list of active players. If an agent is restored, it will receive the full
-list of player ids and all events again.
-     */
-    export type playersCreatedPayload = {
-      players: PlayerId[];
-    }
-    
-    /**
-     * Enables the Media domain
-     */
-    export type enableParameters = {
-    }
-    export type enableReturnValue = {
-    }
-    /**
-     * Disables the Media domain.
-     */
-    export type disableParameters = {
-    }
-    export type disableReturnValue = {
-    }
-  }
-  
-  export module DeviceAccess {
-    /**
-     * Device request id.
-     */
-    export type RequestId = string;
-    /**
-     * A device id.
-     */
-    export type DeviceId = string;
-    /**
-     * Device information displayed in a user prompt to select a device.
-     */
-    export interface PromptDevice {
-      id: DeviceId;
-      /**
-       * Display name as it appears in a device request user prompt.
+       * Tool name.
        */
       name: string;
-    }
-    
-    /**
-     * A device request opened a user prompt to select a device. Respond with the
-selectPrompt or cancelPrompt command.
-     */
-    export type deviceRequestPromptedPayload = {
-      id: RequestId;
-      devices: PromptDevice[];
-    }
-    
-    /**
-     * Enable events in this domain.
-     */
-    export type enableParameters = {
-    }
-    export type enableReturnValue = {
-    }
-    /**
-     * Disable events in this domain.
-     */
-    export type disableParameters = {
-    }
-    export type disableReturnValue = {
-    }
-    /**
-     * Select a device in response to a DeviceAccess.deviceRequestPrompted event.
-     */
-    export type selectPromptParameters = {
-      id: RequestId;
-      deviceId: DeviceId;
-    }
-    export type selectPromptReturnValue = {
-    }
-    /**
-     * Cancel a prompt in response to a DeviceAccess.deviceRequestPrompted event.
-     */
-    export type cancelPromptParameters = {
-      id: RequestId;
-    }
-    export type cancelPromptReturnValue = {
-    }
-  }
-  
-  export module Preload {
-    /**
-     * Unique id
-     */
-    export type RuleSetId = string;
-    /**
-     * Corresponds to SpeculationRuleSet
-     */
-    export interface RuleSet {
-      id: RuleSetId;
       /**
-       * Identifies a document which the rule set is associated with.
+       * Tool description.
        */
-      loaderId: Network.LoaderId;
+      description: string;
       /**
-       * Source text of JSON representing the rule set. If it comes from
-`<script>` tag, it is the textContent of the node. Note that it is
-a JSON for valid case.
-
-See also:
-- https://wicg.github.io/nav-speculation/speculation-rules.html
-- https://github.com/WICG/nav-speculation/blob/main/triggers.md
+       * Schema for the tool's input parameters.
        */
-      sourceText: string;
+      inputSchema?: { [key: string]: string };
       /**
-       * A speculation rule set is either added through an inline
-`<script>` tag or through an external resource via the
-'Speculation-Rules' HTTP header. For the first case, we include
-the BackendNodeId of the relevant `<script>` tag. For the second
-case, we include the external URL where the rule set was loaded
-from, and also RequestId if Network domain is enabled.
-
-See also:
-- https://wicg.github.io/nav-speculation/speculation-rules.html#speculation-rules-script
-- https://wicg.github.io/nav-speculation/speculation-rules.html#speculation-rules-header
+       * Optional annotations for the tool.
+       */
+      annotations?: Annotation;
+      /**
+       * Frame identifier associated with the tool registration.
+       */
+      frameId: Page.FrameId;
+      /**
+       * Optional node ID for declarative tools.
        */
       backendNodeId?: DOM.BackendNodeId;
-      url?: string;
-      requestId?: Network.RequestId;
       /**
-       * Error information
-`errorMessage` is null iff `errorType` is null.
+       * The stack trace at the time of the registration.
        */
-      errorType?: RuleSetErrorType;
+      stackTrace?: Runtime.StackTrace;
+    }
+    /**
+     * Definition of a tool that was removed.
+     */
+    export interface RemovedTool {
       /**
-       * TODO(https://crbug.com/1425354): Replace this property with structured error.
+       * Tool name.
        */
-      errorMessage?: string;
-    }
-    export type RuleSetErrorType = "SourceIsNotJsonObject"|"InvalidRulesSkipped";
-    /**
-     * The type of preloading attempted. It corresponds to
-mojom::SpeculationAction (although PrefetchWithSubresources is omitted as it
-isn't being used by clients).
-     */
-    export type SpeculationAction = "Prefetch"|"Prerender";
-    /**
-     * Corresponds to mojom::SpeculationTargetHint.
-See https://github.com/WICG/nav-speculation/blob/main/triggers.md#window-name-targeting-hints
-     */
-    export type SpeculationTargetHint = "Blank"|"Self";
-    /**
-     * A key that identifies a preloading attempt.
-
-The url used is the url specified by the trigger (i.e. the initial URL), and
-not the final url that is navigated to. For example, prerendering allows
-same-origin main frame navigations during the attempt, but the attempt is
-still keyed with the initial URL.
-     */
-    export interface PreloadingAttemptKey {
-      loaderId: Network.LoaderId;
-      action: SpeculationAction;
-      url: string;
-      targetHint?: SpeculationTargetHint;
-    }
-    /**
-     * Lists sources for a preloading attempt, specifically the ids of rule sets
-that had a speculation rule that triggered the attempt, and the
-BackendNodeIds of <a href> or <area href> elements that triggered the
-attempt (in the case of attempts triggered by a document rule). It is
-possible for multiple rule sets and links to trigger a single attempt.
-     */
-    export interface PreloadingAttemptSource {
-      key: PreloadingAttemptKey;
-      ruleSetIds: RuleSetId[];
-      nodeIds: DOM.BackendNodeId[];
-    }
-    /**
-     * Chrome manages different types of preloads together using a
-concept of preloading pipeline. For example, if a site uses a
-SpeculationRules for prerender, Chrome first starts a prefetch and
-then upgrades it to prerender.
-
-CDP events for them are emitted separately but they share
-`PreloadPipelineId`.
-     */
-    export type PreloadPipelineId = string;
-    /**
-     * List of FinalStatus reasons for Prerender2.
-     */
-    export type PrerenderFinalStatus = "Activated"|"Destroyed"|"LowEndDevice"|"InvalidSchemeRedirect"|"InvalidSchemeNavigation"|"NavigationRequestBlockedByCsp"|"MojoBinderPolicy"|"RendererProcessCrashed"|"RendererProcessKilled"|"Download"|"TriggerDestroyed"|"NavigationNotCommitted"|"NavigationBadHttpStatus"|"ClientCertRequested"|"NavigationRequestNetworkError"|"CancelAllHostsForTesting"|"DidFailLoad"|"Stop"|"SslCertificateError"|"LoginAuthRequested"|"UaChangeRequiresReload"|"BlockedByClient"|"AudioOutputDeviceRequested"|"MixedContent"|"TriggerBackgrounded"|"MemoryLimitExceeded"|"DataSaverEnabled"|"TriggerUrlHasEffectiveUrl"|"ActivatedBeforeStarted"|"InactivePageRestriction"|"StartFailed"|"TimeoutBackgrounded"|"CrossSiteRedirectInInitialNavigation"|"CrossSiteNavigationInInitialNavigation"|"SameSiteCrossOriginRedirectNotOptInInInitialNavigation"|"SameSiteCrossOriginNavigationNotOptInInInitialNavigation"|"ActivationNavigationParameterMismatch"|"ActivatedInBackground"|"EmbedderHostDisallowed"|"ActivationNavigationDestroyedBeforeSuccess"|"TabClosedByUserGesture"|"TabClosedWithoutUserGesture"|"PrimaryMainFrameRendererProcessCrashed"|"PrimaryMainFrameRendererProcessKilled"|"ActivationFramePolicyNotCompatible"|"PreloadingDisabled"|"BatterySaverEnabled"|"ActivatedDuringMainFrameNavigation"|"PreloadingUnsupportedByWebContents"|"CrossSiteRedirectInMainFrameNavigation"|"CrossSiteNavigationInMainFrameNavigation"|"SameSiteCrossOriginRedirectNotOptInInMainFrameNavigation"|"SameSiteCrossOriginNavigationNotOptInInMainFrameNavigation"|"MemoryPressureOnTrigger"|"MemoryPressureAfterTriggered"|"PrerenderingDisabledByDevTools"|"SpeculationRuleRemoved"|"ActivatedWithAuxiliaryBrowsingContexts"|"MaxNumOfRunningEagerPrerendersExceeded"|"MaxNumOfRunningNonEagerPrerendersExceeded"|"MaxNumOfRunningEmbedderPrerendersExceeded"|"PrerenderingUrlHasEffectiveUrl"|"RedirectedPrerenderingUrlHasEffectiveUrl"|"ActivationUrlHasEffectiveUrl"|"JavaScriptInterfaceAdded"|"JavaScriptInterfaceRemoved"|"AllPrerenderingCanceled"|"WindowClosed"|"SlowNetwork"|"OtherPrerenderedPageActivated"|"V8OptimizerDisabled"|"PrerenderFailedDuringPrefetch"|"BrowsingDataRemoved";
-    /**
-     * Preloading status values, see also PreloadingTriggeringOutcome. This
-status is shared by prefetchStatusUpdated and prerenderStatusUpdated.
-     */
-    export type PreloadingStatus = "Pending"|"Running"|"Ready"|"Success"|"Failure"|"NotSupported";
-    /**
-     * TODO(https://crbug.com/1384419): revisit the list of PrefetchStatus and
-filter out the ones that aren't necessary to the developers.
-     */
-    export type PrefetchStatus = "PrefetchAllowed"|"PrefetchFailedIneligibleRedirect"|"PrefetchFailedInvalidRedirect"|"PrefetchFailedMIMENotSupported"|"PrefetchFailedNetError"|"PrefetchFailedNon2XX"|"PrefetchEvictedAfterBrowsingDataRemoved"|"PrefetchEvictedAfterCandidateRemoved"|"PrefetchEvictedForNewerPrefetch"|"PrefetchHeldback"|"PrefetchIneligibleRetryAfter"|"PrefetchIsPrivacyDecoy"|"PrefetchIsStale"|"PrefetchNotEligibleBrowserContextOffTheRecord"|"PrefetchNotEligibleDataSaverEnabled"|"PrefetchNotEligibleExistingProxy"|"PrefetchNotEligibleHostIsNonUnique"|"PrefetchNotEligibleNonDefaultStoragePartition"|"PrefetchNotEligibleSameSiteCrossOriginPrefetchRequiredProxy"|"PrefetchNotEligibleSchemeIsNotHttps"|"PrefetchNotEligibleUserHasCookies"|"PrefetchNotEligibleUserHasServiceWorker"|"PrefetchNotEligibleUserHasServiceWorkerNoFetchHandler"|"PrefetchNotEligibleRedirectFromServiceWorker"|"PrefetchNotEligibleRedirectToServiceWorker"|"PrefetchNotEligibleBatterySaverEnabled"|"PrefetchNotEligiblePreloadingDisabled"|"PrefetchNotFinishedInTime"|"PrefetchNotStarted"|"PrefetchNotUsedCookiesChanged"|"PrefetchProxyNotAvailable"|"PrefetchResponseUsed"|"PrefetchSuccessfulButNotUsed"|"PrefetchNotUsedProbeFailed";
-    /**
-     * Information of headers to be displayed when the header mismatch occurred.
-     */
-    export interface PrerenderMismatchedHeaders {
-      headerName: string;
-      initialValue?: string;
-      activationValue?: string;
-    }
-    
-    /**
-     * Upsert. Currently, it is only emitted when a rule set added.
-     */
-    export type ruleSetUpdatedPayload = {
-      ruleSet: RuleSet;
-    }
-    export type ruleSetRemovedPayload = {
-      id: RuleSetId;
-    }
-    /**
-     * Fired when a preload enabled state is updated.
-     */
-    export type preloadEnabledStateUpdatedPayload = {
-      disabledByPreference: boolean;
-      disabledByDataSaver: boolean;
-      disabledByBatterySaver: boolean;
-      disabledByHoldbackPrefetchSpeculationRules: boolean;
-      disabledByHoldbackPrerenderSpeculationRules: boolean;
-    }
-    /**
-     * Fired when a prefetch attempt is updated.
-     */
-    export type prefetchStatusUpdatedPayload = {
-      key: PreloadingAttemptKey;
-      pipelineId: PreloadPipelineId;
-      /**
-       * The frame id of the frame initiating prefetch.
-       */
-      initiatingFrameId: Page.FrameId;
-      prefetchUrl: string;
-      status: PreloadingStatus;
-      prefetchStatus: PrefetchStatus;
-      requestId: Network.RequestId;
-    }
-    /**
-     * Fired when a prerender attempt is updated.
-     */
-    export type prerenderStatusUpdatedPayload = {
-      key: PreloadingAttemptKey;
-      pipelineId: PreloadPipelineId;
-      status: PreloadingStatus;
-      prerenderStatus?: PrerenderFinalStatus;
-      /**
-       * This is used to give users more information about the name of Mojo interface
-that is incompatible with prerender and has caused the cancellation of the attempt.
-       */
-      disallowedMojoInterface?: string;
-      mismatchedHeaders?: PrerenderMismatchedHeaders[];
-    }
-    /**
-     * Send a list of sources for all preloading attempts in a document.
-     */
-    export type preloadingAttemptSourcesUpdatedPayload = {
-      loaderId: Network.LoaderId;
-      preloadingAttemptSources: PreloadingAttemptSource[];
-    }
-    
-    export type enableParameters = {
-    }
-    export type enableReturnValue = {
-    }
-    export type disableParameters = {
-    }
-    export type disableReturnValue = {
-    }
-  }
-  
-  /**
-   * This domain allows interacting with the FedCM dialog.
-   */
-  export module FedCm {
-    /**
-     * Whether this is a sign-up or sign-in action for this account, i.e.
-whether this account has ever been used to sign in to this RP before.
-     */
-    export type LoginState = "SignIn"|"SignUp";
-    /**
-     * The types of FedCM dialogs.
-     */
-    export type DialogType = "AccountChooser"|"AutoReauthn"|"ConfirmIdpLogin"|"Error";
-    /**
-     * The buttons on the FedCM dialog.
-     */
-    export type DialogButton = "ConfirmIdpLoginContinue"|"ErrorGotIt"|"ErrorMoreDetails";
-    /**
-     * The URLs that each account has
-     */
-    export type AccountUrlType = "TermsOfService"|"PrivacyPolicy";
-    /**
-     * Corresponds to IdentityRequestAccount
-     */
-    export interface Account {
-      accountId: string;
-      email: string;
       name: string;
-      givenName: string;
-      pictureUrl: string;
-      idpConfigUrl: string;
-      idpLoginUrl: string;
-      loginState: LoginState;
       /**
-       * These two are only set if the loginState is signUp
+       * Frame identifier associated with the tool registration.
        */
-      termsOfServiceUrl?: string;
-      privacyPolicyUrl?: string;
-    }
-    
-    export type dialogShownPayload = {
-      dialogId: string;
-      dialogType: DialogType;
-      accounts: Account[];
-      /**
-       * These exist primarily so that the caller can verify the
-RP context was used appropriately.
-       */
-      title: string;
-      subtitle?: string;
-    }
-    /**
-     * Triggered when a dialog is closed, either by user action, JS abort,
-or a command below.
-     */
-    export type dialogClosedPayload = {
-      dialogId: string;
-    }
-    
-    export type enableParameters = {
-      /**
-       * Allows callers to disable the promise rejection delay that would
-normally happen, if this is unimportant to what's being tested.
-(step 4 of https://fedidcg.github.io/FedCM/#browser-api-rp-sign-in)
-       */
-      disableRejectionDelay?: boolean;
-    }
-    export type enableReturnValue = {
-    }
-    export type disableParameters = {
-    }
-    export type disableReturnValue = {
-    }
-    export type selectAccountParameters = {
-      dialogId: string;
-      accountIndex: number;
-    }
-    export type selectAccountReturnValue = {
-    }
-    export type clickDialogButtonParameters = {
-      dialogId: string;
-      dialogButton: DialogButton;
-    }
-    export type clickDialogButtonReturnValue = {
-    }
-    export type openUrlParameters = {
-      dialogId: string;
-      accountIndex: number;
-      accountUrlType: AccountUrlType;
-    }
-    export type openUrlReturnValue = {
-    }
-    export type dismissDialogParameters = {
-      dialogId: string;
-      triggerCooldown?: boolean;
-    }
-    export type dismissDialogReturnValue = {
-    }
-    /**
-     * Resets the cooldown time, if any, to allow the next FedCM call to show
-a dialog even if one was recently dismissed by the user.
-     */
-    export type resetCooldownParameters = {
-    }
-    export type resetCooldownReturnValue = {
-    }
-  }
-  
-  /**
-   * This domain allows interacting with the browser to control PWAs.
-   */
-  export module PWA {
-    /**
-     * The following types are the replica of
-https://crsrc.org/c/chrome/browser/web_applications/proto/web_app_os_integration_state.proto;drc=9910d3be894c8f142c977ba1023f30a656bc13fc;l=67
-     */
-    export interface FileHandlerAccept {
-      /**
-       * New name of the mimetype according to
-https://www.iana.org/assignments/media-types/media-types.xhtml
-       */
-      mediaType: string;
-      fileExtensions: string[];
-    }
-    export interface FileHandler {
-      action: string;
-      accepts: FileHandlerAccept[];
-      displayName: string;
-    }
-    /**
-     * If user prefers opening the app in browser or an app window.
-     */
-    export type DisplayMode = "standalone"|"browser";
-    
-    
-    /**
-     * Returns the following OS state for the given manifest id.
-     */
-    export type getOsAppStateParameters = {
-      /**
-       * The id from the webapp's manifest file, commonly it's the url of the
-site installing the webapp. See
-https://web.dev/learn/pwa/web-app-manifest.
-       */
-      manifestId: string;
-    }
-    export type getOsAppStateReturnValue = {
-      badgeCount: number;
-      fileHandlers: FileHandler[];
-    }
-    /**
-     * Installs the given manifest identity, optionally using the given install_url
-or IWA bundle location.
-
-TODO(crbug.com/337872319) Support IWA to meet the following specific
-requirement.
-IWA-specific install description: If the manifest_id is isolated-app://,
-install_url_or_bundle_url is required, and can be either an http(s) URL or
-file:// URL pointing to a signed web bundle (.swbn). The .swbn file's
-signing key must correspond to manifest_id. If Chrome is not in IWA dev
-mode, the installation will fail, regardless of the state of the allowlist.
-     */
-    export type installParameters = {
-      manifestId: string;
-      /**
-       * The location of the app or bundle overriding the one derived from the
-manifestId.
-       */
-      installUrlOrBundleUrl?: string;
-    }
-    export type installReturnValue = {
-    }
-    /**
-     * Uninstalls the given manifest_id and closes any opened app windows.
-     */
-    export type uninstallParameters = {
-      manifestId: string;
-    }
-    export type uninstallReturnValue = {
-    }
-    /**
-     * Launches the installed web app, or an url in the same web app instead of the
-default start url if it is provided. Returns a page Target.TargetID which
-can be used to attach to via Target.attachToTarget or similar APIs.
-     */
-    export type launchParameters = {
-      manifestId: string;
-      url?: string;
-    }
-    export type launchReturnValue = {
-      /**
-       * ID of the tab target created as a result.
-       */
-      targetId: Target.TargetID;
-    }
-    /**
-     * Opens one or more local files from an installed web app identified by its
-manifestId. The web app needs to have file handlers registered to process
-the files. The API returns one or more page Target.TargetIDs which can be
-used to attach to via Target.attachToTarget or similar APIs.
-If some files in the parameters cannot be handled by the web app, they will
-be ignored. If none of the files can be handled, this API returns an error.
-If no files are provided as the parameter, this API also returns an error.
-
-According to the definition of the file handlers in the manifest file, one
-Target.TargetID may represent a page handling one or more files. The order
-of the returned Target.TargetIDs is not guaranteed.
-
-TODO(crbug.com/339454034): Check the existences of the input files.
-     */
-    export type launchFilesInAppParameters = {
-      manifestId: string;
-      files: string[];
-    }
-    export type launchFilesInAppReturnValue = {
-      /**
-       * IDs of the tab targets created as the result.
-       */
-      targetIds: Target.TargetID[];
-    }
-    /**
-     * Opens the current page in its web app identified by the manifest id, needs
-to be called on a page target. This function returns immediately without
-waiting for the app to finish loading.
-     */
-    export type openCurrentPageInAppParameters = {
-      manifestId: string;
-    }
-    export type openCurrentPageInAppReturnValue = {
-    }
-    /**
-     * Changes user settings of the web app identified by its manifestId. If the
-app was not installed, this command returns an error. Unset parameters will
-be ignored; unrecognized values will cause an error.
-
-Unlike the ones defined in the manifest files of the web apps, these
-settings are provided by the browser and controlled by the users, they
-impact the way the browser handling the web apps.
-
-See the comment of each parameter.
-     */
-    export type changeAppUserSettingsParameters = {
-      manifestId: string;
-      /**
-       * If user allows the links clicked on by the user in the app's scope, or
-extended scope if the manifest has scope extensions and the flags
-`DesktopPWAsLinkCapturingWithScopeExtensions` and
-`WebAppEnableScopeExtensions` are enabled.
-
-Note, the API does not support resetting the linkCapturing to the
-initial value, uninstalling and installing the web app again will reset
-it.
-
-TODO(crbug.com/339453269): Setting this value on ChromeOS is not
-supported yet.
-       */
-      linkCapturing?: boolean;
-      displayMode?: DisplayMode;
-    }
-    export type changeAppUserSettingsReturnValue = {
-    }
-  }
-  
-  /**
-   * This domain allows configuring virtual Bluetooth devices to test
-the web-bluetooth API.
-   */
-  export module BluetoothEmulation {
-    /**
-     * Indicates the various states of Central.
-     */
-    export type CentralState = "absent"|"powered-off"|"powered-on";
-    /**
-     * Indicates the various types of GATT event.
-     */
-    export type GATTOperationType = "connection"|"discovery";
-    /**
-     * Indicates the various types of characteristic write.
-     */
-    export type CharacteristicWriteType = "write-default-deprecated"|"write-with-response"|"write-without-response";
-    /**
-     * Indicates the various types of characteristic operation.
-     */
-    export type CharacteristicOperationType = "read"|"write"|"subscribe-to-notifications"|"unsubscribe-from-notifications";
-    /**
-     * Indicates the various types of descriptor operation.
-     */
-    export type DescriptorOperationType = "read"|"write";
-    /**
-     * Stores the manufacturer data
-     */
-    export interface ManufacturerData {
-      /**
-       * Company identifier
-https://bitbucket.org/bluetooth-SIG/public/src/main/assigned_numbers/company_identifiers/company_identifiers.yaml
-https://usb.org/developers
-       */
-      key: number;
-      /**
-       * Manufacturer-specific data
-       */
-      data: binary;
-    }
-    /**
-     * Stores the byte data of the advertisement packet sent by a Bluetooth device.
-     */
-    export interface ScanRecord {
-      name?: string;
-      uuids?: string[];
-      /**
-       * Stores the external appearance description of the device.
-       */
-      appearance?: number;
-      /**
-       * Stores the transmission power of a broadcasting device.
-       */
-      txPower?: number;
-      /**
-       * Key is the company identifier and the value is an array of bytes of
-manufacturer specific data.
-       */
-      manufacturerData?: ManufacturerData[];
-    }
-    /**
-     * Stores the advertisement packet information that is sent by a Bluetooth device.
-     */
-    export interface ScanEntry {
-      deviceAddress: string;
-      rssi: number;
-      scanRecord: ScanRecord;
-    }
-    /**
-     * Describes the properties of a characteristic. This follows Bluetooth Core
-Specification BT 4.2 Vol 3 Part G 3.3.1. Characteristic Properties.
-     */
-    export interface CharacteristicProperties {
-      broadcast?: boolean;
-      read?: boolean;
-      writeWithoutResponse?: boolean;
-      write?: boolean;
-      notify?: boolean;
-      indicate?: boolean;
-      authenticatedSignedWrites?: boolean;
-      extendedProperties?: boolean;
+      frameId: Page.FrameId;
     }
     
     /**
-     * Event for when a GATT operation of |type| to the peripheral with |address|
-happened.
+     * Event fired when new tools are added.
      */
-    export type gattOperationReceivedPayload = {
-      address: string;
-      type: GATTOperationType;
+    export type toolsAddedPayload = {
+      /**
+       * Array of tools that were added.
+       */
+      tools: Tool[];
     }
     /**
-     * Event for when a characteristic operation of |type| to the characteristic
-respresented by |characteristicId| happened. |data| and |writeType| is
-expected to exist when |type| is write.
+     * Event fired when tools are removed.
      */
-    export type characteristicOperationReceivedPayload = {
-      characteristicId: string;
-      type: CharacteristicOperationType;
-      data?: binary;
-      writeType?: CharacteristicWriteType;
+    export type toolsRemovedPayload = {
+      /**
+       * Array of tools that were removed.
+       */
+      tools: RemovedTool[];
     }
     /**
-     * Event for when a descriptor operation of |type| to the descriptor
-respresented by |descriptorId| happened. |data| is expected to exist when
-|type| is write.
+     * Event fired when a tool invocation starts.
      */
-    export type descriptorOperationReceivedPayload = {
-      descriptorId: string;
-      type: DescriptorOperationType;
-      data?: binary;
+    export type toolInvokedPayload = {
+      /**
+       * Name of the tool to invoke.
+       */
+      toolName: string;
+      /**
+       * Frame id
+       */
+      frameId: Page.FrameId;
+      /**
+       * Invocation identifier.
+       */
+      invocationId: string;
+      /**
+       * The input parameters used for the invocation.
+       */
+      input: string;
+    }
+    /**
+     * Event fired when a tool invocation completes or fails.
+     */
+    export type toolRespondedPayload = {
+      /**
+       * Invocation identifier.
+       */
+      invocationId: string;
+      /**
+       * Status of the invocation.
+       */
+      status: InvocationStatus;
+      /**
+       * Output or error delivered as delivered to the agent. Missing if `status` is anything other than Completed.
+Note: The output is untrusted and poses a prompt injection risk. Clients should treat this as potentially malicious user input.
+       */
+      output?: any;
+      /**
+       * Error text for protocol users.
+       */
+      errorText?: string;
+      /**
+       * The exception object, if the javascript tool threw an error>
+       */
+      exception?: Runtime.RemoteObject;
     }
     
     /**
-     * Enable the BluetoothEmulation domain.
+     * Enables the WebMCP domain, allowing events to be sent. Enabling the domain will trigger a toolsAdded event for
+all currently registered tools.
      */
     export type enableParameters = {
-      /**
-       * State of the simulated central.
-       */
-      state: CentralState;
-      /**
-       * If the simulated central supports low-energy.
-       */
-      leSupported: boolean;
     }
     export type enableReturnValue = {
     }
     /**
-     * Set the state of the simulated central.
-     */
-    export type setSimulatedCentralStateParameters = {
-      /**
-       * State of the simulated central.
-       */
-      state: CentralState;
-    }
-    export type setSimulatedCentralStateReturnValue = {
-    }
-    /**
-     * Disable the BluetoothEmulation domain.
+     * Disables the WebMCP domain.
      */
     export type disableParameters = {
     }
     export type disableReturnValue = {
     }
     /**
-     * Simulates a peripheral with |address|, |name| and |knownServiceUuids|
-that has already been connected to the system.
+     * Invokes a registered tool.
      */
-    export type simulatePreconnectedPeripheralParameters = {
-      address: string;
-      name: string;
-      manufacturerData: ManufacturerData[];
-      knownServiceUuids: string[];
-    }
-    export type simulatePreconnectedPeripheralReturnValue = {
-    }
-    /**
-     * Simulates an advertisement packet described in |entry| being received by
-the central.
-     */
-    export type simulateAdvertisementParameters = {
-      entry: ScanEntry;
-    }
-    export type simulateAdvertisementReturnValue = {
-    }
-    /**
-     * Simulates the response code from the peripheral with |address| for a
-GATT operation of |type|. The |code| value follows the HCI Error Codes from
-Bluetooth Core Specification Vol 2 Part D 1.3 List Of Error Codes.
-     */
-    export type simulateGATTOperationResponseParameters = {
-      address: string;
-      type: GATTOperationType;
-      code: number;
-    }
-    export type simulateGATTOperationResponseReturnValue = {
-    }
-    /**
-     * Simulates the response from the characteristic with |characteristicId| for a
-characteristic operation of |type|. The |code| value follows the Error
-Codes from Bluetooth Core Specification Vol 3 Part F 3.4.1.1 Error Response.
-The |data| is expected to exist when simulating a successful read operation
-response.
-     */
-    export type simulateCharacteristicOperationResponseParameters = {
-      characteristicId: string;
-      type: CharacteristicOperationType;
-      code: number;
-      data?: binary;
-    }
-    export type simulateCharacteristicOperationResponseReturnValue = {
-    }
-    /**
-     * Simulates the response from the descriptor with |descriptorId| for a
-descriptor operation of |type|. The |code| value follows the Error
-Codes from Bluetooth Core Specification Vol 3 Part F 3.4.1.1 Error Response.
-The |data| is expected to exist when simulating a successful read operation
-response.
-     */
-    export type simulateDescriptorOperationResponseParameters = {
-      descriptorId: string;
-      type: DescriptorOperationType;
-      code: number;
-      data?: binary;
-    }
-    export type simulateDescriptorOperationResponseReturnValue = {
-    }
-    /**
-     * Adds a service with |serviceUuid| to the peripheral with |address|.
-     */
-    export type addServiceParameters = {
-      address: string;
-      serviceUuid: string;
-    }
-    export type addServiceReturnValue = {
+    export type invokeToolParameters = {
       /**
-       * An identifier that uniquely represents this service.
+       * Frame in which to invoke the tool.
        */
-      serviceId: string;
-    }
-    /**
-     * Removes the service respresented by |serviceId| from the simulated central.
-     */
-    export type removeServiceParameters = {
-      serviceId: string;
-    }
-    export type removeServiceReturnValue = {
-    }
-    /**
-     * Adds a characteristic with |characteristicUuid| and |properties| to the
-service represented by |serviceId|.
-     */
-    export type addCharacteristicParameters = {
-      serviceId: string;
-      characteristicUuid: string;
-      properties: CharacteristicProperties;
-    }
-    export type addCharacteristicReturnValue = {
+      frameId: Page.FrameId;
       /**
-       * An identifier that uniquely represents this characteristic.
+       * Name of the tool to invoke.
        */
-      characteristicId: string;
-    }
-    /**
-     * Removes the characteristic respresented by |characteristicId| from the
-simulated central.
-     */
-    export type removeCharacteristicParameters = {
-      characteristicId: string;
-    }
-    export type removeCharacteristicReturnValue = {
-    }
-    /**
-     * Adds a descriptor with |descriptorUuid| to the characteristic respresented
-by |characteristicId|.
-     */
-    export type addDescriptorParameters = {
-      characteristicId: string;
-      descriptorUuid: string;
-    }
-    export type addDescriptorReturnValue = {
+      toolName: string;
       /**
-       * An identifier that uniquely represents this descriptor.
+       * Input parameters for the tool, matching the tool's inputSchema.
        */
-      descriptorId: string;
+      input: { [key: string]: string };
+    }
+    export type invokeToolReturnValue = {
+      /**
+       * Unique identifier for this invocation. Response is sent before tool events.
+       */
+      invocationId: string;
     }
     /**
-     * Removes the descriptor with |descriptorId| from the simulated central.
+     * Cancels a pending tool invocation.
      */
-    export type removeDescriptorParameters = {
-      descriptorId: string;
+    export type cancelInvocationParameters = {
+      /**
+       * Invocation identifier to cancel.
+       */
+      invocationId: string;
     }
-    export type removeDescriptorReturnValue = {
-    }
-    /**
-     * Simulates a GATT disconnection from the peripheral with |address|.
-     */
-    export type simulateGATTDisconnectionParameters = {
-      address: string;
-    }
-    export type simulateGATTDisconnectionReturnValue = {
+    export type cancelInvocationReturnValue = {
     }
   }
   
   /**
    * This domain is deprecated - use Runtime or Log instead.
    */
-  export module Console {
+  export namespace Console {
     /**
      * Console message.
      */
@@ -18663,7 +20405,7 @@ by |characteristicId|.
    * Debugger domain exposes JavaScript debugging capabilities. It allows setting and removing
 breakpoints, stepping through execution, exploring stack traces, etc.
    */
-  export module Debugger {
+  export namespace Debugger {
     /**
      * Breakpoint identifier.
      */
@@ -19690,7 +21432,7 @@ before next pause.
     }
   }
   
-  export module HeapProfiler {
+  export namespace HeapProfiler {
     /**
      * Heap snapshot object id.
      */
@@ -19836,6 +21578,10 @@ default value is 32768 bytes.
        */
       samplingInterval?: number;
       /**
+       * Maximum stack depth. The default value is 128.
+       */
+      stackDepth?: number;
+      /**
        * By default, the sampling heap profiler reports only objects which are
 still alive when the profile is returned via getSamplingProfile or
 stopSampling, which is useful for determining what functions contribute
@@ -19915,7 +21661,7 @@ Deprecated in favor of `exposeInternals`.
     }
   }
   
-  export module Profiler {
+  export namespace Profiler {
     /**
      * Profile node. Holds callsite information, execution statistics and child nodes.
      */
@@ -20185,7 +21931,7 @@ and unique identifier that can be used for further object reference. Original ob
 maintained in memory unless they are either explicitly released or are released along with the
 other objects in their object group.
    */
-  export module Runtime {
+  export namespace Runtime {
     /**
      * Unique script identifier.
      */
@@ -20242,7 +21988,7 @@ per value in the scope of one CDP call.
 NOTE: If you change anything here, make sure to also update
 `subtype` in `ObjectPreview` and `PropertyPreview` below.
        */
-      subtype?: "array"|"null"|"node"|"regexp"|"date"|"map"|"set"|"weakmap"|"weakset"|"iterator"|"generator"|"error"|"proxy"|"promise"|"typedarray"|"arraybuffer"|"dataview"|"webassemblymemory"|"wasmvalue";
+      subtype?: "array"|"null"|"node"|"regexp"|"date"|"map"|"set"|"weakmap"|"weakset"|"iterator"|"generator"|"error"|"proxy"|"promise"|"typedarray"|"arraybuffer"|"dataview"|"webassemblymemory"|"wasmvalue"|"trustedtype";
       /**
        * Object class (constructor) name. Specified for `object` type values only.
        */
@@ -20298,7 +22044,7 @@ The result value is json ML array.
       /**
        * Object subtype hint. Specified for `object` type values only.
        */
-      subtype?: "array"|"null"|"node"|"regexp"|"date"|"map"|"set"|"weakmap"|"weakset"|"iterator"|"generator"|"error"|"proxy"|"promise"|"typedarray"|"arraybuffer"|"dataview"|"webassemblymemory"|"wasmvalue";
+      subtype?: "array"|"null"|"node"|"regexp"|"date"|"map"|"set"|"weakmap"|"weakset"|"iterator"|"generator"|"error"|"proxy"|"promise"|"typedarray"|"arraybuffer"|"dataview"|"webassemblymemory"|"wasmvalue"|"trustedtype";
       /**
        * String representation of the object.
        */
@@ -20336,7 +22082,7 @@ The result value is json ML array.
       /**
        * Object subtype hint. Specified for `object` type values only.
        */
-      subtype?: "array"|"null"|"node"|"regexp"|"date"|"map"|"set"|"weakmap"|"weakset"|"iterator"|"generator"|"error"|"proxy"|"promise"|"typedarray"|"arraybuffer"|"dataview"|"webassemblymemory"|"wasmvalue";
+      subtype?: "array"|"null"|"node"|"regexp"|"date"|"map"|"set"|"weakmap"|"weakset"|"iterator"|"generator"|"error"|"proxy"|"promise"|"typedarray"|"arraybuffer"|"dataview"|"webassemblymemory"|"wasmvalue"|"trustedtype";
     }
     export interface EntryPreview {
       /**
@@ -21244,7 +22990,7 @@ Error was thrown.
   /**
    * This domain is deprecated.
    */
-  export module Schema {
+  export namespace Schema {
     /**
      * Description of the protocol domain.
      */
@@ -21273,7 +23019,7 @@ Error was thrown.
     }
   }
   
-  export interface Events {
+  export type Events = {
     "Accessibility.loadComplete": Accessibility.loadCompletePayload;
     "Accessibility.nodesUpdated": Accessibility.nodesUpdatedPayload;
     "Animation.animationCanceled": Animation.animationCanceledPayload;
@@ -21284,6 +23030,9 @@ Error was thrown.
     "Autofill.addressFormFilled": Autofill.addressFormFilledPayload;
     "BackgroundService.recordingStateChanged": BackgroundService.recordingStateChangedPayload;
     "BackgroundService.backgroundServiceEventReceived": BackgroundService.backgroundServiceEventReceivedPayload;
+    "BluetoothEmulation.gattOperationReceived": BluetoothEmulation.gattOperationReceivedPayload;
+    "BluetoothEmulation.characteristicOperationReceived": BluetoothEmulation.characteristicOperationReceivedPayload;
+    "BluetoothEmulation.descriptorOperationReceived": BluetoothEmulation.descriptorOperationReceivedPayload;
     "Browser.downloadWillBegin": Browser.downloadWillBeginPayload;
     "Browser.downloadProgress": Browser.downloadProgressPayload;
     "CSS.fontsUpdated": CSS.fontsUpdatedPayload;
@@ -21295,6 +23044,7 @@ Error was thrown.
     "Cast.sinksUpdated": Cast.sinksUpdatedPayload;
     "Cast.issueUpdated": Cast.issueUpdatedPayload;
     "DOM.attributeModified": DOM.attributeModifiedPayload;
+    "DOM.adoptedStyleSheetsModified": DOM.adoptedStyleSheetsModifiedPayload;
     "DOM.attributeRemoved": DOM.attributeRemovedPayload;
     "DOM.characterDataModified": DOM.characterDataModifiedPayload;
     "DOM.childNodeCountUpdated": DOM.childNodeCountUpdatedPayload;
@@ -21306,6 +23056,8 @@ Error was thrown.
     "DOM.pseudoElementAdded": DOM.pseudoElementAddedPayload;
     "DOM.topLayerElementsUpdated": DOM.topLayerElementsUpdatedPayload;
     "DOM.scrollableFlagUpdated": DOM.scrollableFlagUpdatedPayload;
+    "DOM.adRelatedStateUpdated": DOM.adRelatedStateUpdatedPayload;
+    "DOM.affectedByStartingStylesFlagUpdated": DOM.affectedByStartingStylesFlagUpdatedPayload;
     "DOM.pseudoElementRemoved": DOM.pseudoElementRemovedPayload;
     "DOM.setChildNodes": DOM.setChildNodesPayload;
     "DOM.shadowRootPopped": DOM.shadowRootPoppedPayload;
@@ -21314,14 +23066,26 @@ Error was thrown.
     "DOMStorage.domStorageItemRemoved": DOMStorage.domStorageItemRemovedPayload;
     "DOMStorage.domStorageItemUpdated": DOMStorage.domStorageItemUpdatedPayload;
     "DOMStorage.domStorageItemsCleared": DOMStorage.domStorageItemsClearedPayload;
+    "DeviceAccess.deviceRequestPrompted": DeviceAccess.deviceRequestPromptedPayload;
     "Emulation.virtualTimeBudgetExpired": Emulation.virtualTimeBudgetExpiredPayload;
+    "Emulation.screenOrientationLockChanged": Emulation.screenOrientationLockChangedPayload;
+    "FedCm.dialogShown": FedCm.dialogShownPayload;
+    "FedCm.dialogClosed": FedCm.dialogClosedPayload;
+    "Fetch.requestPaused": Fetch.requestPausedPayload;
+    "Fetch.authRequired": Fetch.authRequiredPayload;
     "Input.dragIntercepted": Input.dragInterceptedPayload;
     "Inspector.detached": Inspector.detachedPayload;
     "Inspector.targetCrashed": Inspector.targetCrashedPayload;
     "Inspector.targetReloadedAfterCrash": Inspector.targetReloadedAfterCrashPayload;
+    "Inspector.workerScriptLoaded": Inspector.workerScriptLoadedPayload;
     "LayerTree.layerPainted": LayerTree.layerPaintedPayload;
     "LayerTree.layerTreeDidChange": LayerTree.layerTreeDidChangePayload;
     "Log.entryAdded": Log.entryAddedPayload;
+    "Media.playerPropertiesChanged": Media.playerPropertiesChangedPayload;
+    "Media.playerEventsAdded": Media.playerEventsAddedPayload;
+    "Media.playerMessagesLogged": Media.playerMessagesLoggedPayload;
+    "Media.playerErrorsRaised": Media.playerErrorsRaisedPayload;
+    "Media.playerCreated": Media.playerCreatedPayload;
     "Network.dataReceived": Network.dataReceivedPayload;
     "Network.eventSourceMessageReceived": Network.eventSourceMessageReceivedPayload;
     "Network.loadingFailed": Network.loadingFailedPayload;
@@ -21348,6 +23112,8 @@ Error was thrown.
     "Network.directTCPSocketClosed": Network.directTCPSocketClosedPayload;
     "Network.directTCPSocketChunkSent": Network.directTCPSocketChunkSentPayload;
     "Network.directTCPSocketChunkReceived": Network.directTCPSocketChunkReceivedPayload;
+    "Network.directUDPSocketJoinedMulticastGroup": Network.directUDPSocketJoinedMulticastGroupPayload;
+    "Network.directUDPSocketLeftMulticastGroup": Network.directUDPSocketLeftMulticastGroupPayload;
     "Network.directUDPSocketCreated": Network.directUDPSocketCreatedPayload;
     "Network.directUDPSocketOpened": Network.directUDPSocketOpenedPayload;
     "Network.directUDPSocketAborted": Network.directUDPSocketAbortedPayload;
@@ -21359,16 +23125,16 @@ Error was thrown.
     "Network.responseReceivedEarlyHints": Network.responseReceivedEarlyHintsPayload;
     "Network.trustTokenOperationDone": Network.trustTokenOperationDonePayload;
     "Network.policyUpdated": Network.policyUpdatedPayload;
-    "Network.subresourceWebBundleMetadataReceived": Network.subresourceWebBundleMetadataReceivedPayload;
-    "Network.subresourceWebBundleMetadataError": Network.subresourceWebBundleMetadataErrorPayload;
-    "Network.subresourceWebBundleInnerResponseParsed": Network.subresourceWebBundleInnerResponseParsedPayload;
-    "Network.subresourceWebBundleInnerResponseError": Network.subresourceWebBundleInnerResponseErrorPayload;
     "Network.reportingApiReportAdded": Network.reportingApiReportAddedPayload;
     "Network.reportingApiReportUpdated": Network.reportingApiReportUpdatedPayload;
     "Network.reportingApiEndpointsChangedForOrigin": Network.reportingApiEndpointsChangedForOriginPayload;
+    "Network.deviceBoundSessionsAdded": Network.deviceBoundSessionsAddedPayload;
+    "Network.deviceBoundSessionEventOccurred": Network.deviceBoundSessionEventOccurredPayload;
     "Overlay.inspectNodeRequested": Overlay.inspectNodeRequestedPayload;
     "Overlay.nodeHighlightRequested": Overlay.nodeHighlightRequestedPayload;
     "Overlay.screenshotRequested": Overlay.screenshotRequestedPayload;
+    "Overlay.inspectPanelShowRequested": Overlay.inspectPanelShowRequestedPayload;
+    "Overlay.inspectedElementWindowRestored": Overlay.inspectedElementWindowRestoredPayload;
     "Overlay.inspectModeCanceled": Overlay.inspectModeCanceledPayload;
     "Page.domContentEventFired": Page.domContentEventFiredPayload;
     "Page.fileChooserOpened": Page.fileChooserOpenedPayload;
@@ -21400,12 +23166,32 @@ Error was thrown.
     "Page.compilationCacheProduced": Page.compilationCacheProducedPayload;
     "Performance.metrics": Performance.metricsPayload;
     "PerformanceTimeline.timelineEventAdded": PerformanceTimeline.timelineEventAddedPayload;
+    "Preload.ruleSetUpdated": Preload.ruleSetUpdatedPayload;
+    "Preload.ruleSetRemoved": Preload.ruleSetRemovedPayload;
+    "Preload.preloadEnabledStateUpdated": Preload.preloadEnabledStateUpdatedPayload;
+    "Preload.prefetchStatusUpdated": Preload.prefetchStatusUpdatedPayload;
+    "Preload.prerenderStatusUpdated": Preload.prerenderStatusUpdatedPayload;
+    "Preload.preloadingAttemptSourcesUpdated": Preload.preloadingAttemptSourcesUpdatedPayload;
     "Security.certificateError": Security.certificateErrorPayload;
     "Security.visibleSecurityStateChanged": Security.visibleSecurityStateChangedPayload;
     "Security.securityStateChanged": Security.securityStateChangedPayload;
     "ServiceWorker.workerErrorReported": ServiceWorker.workerErrorReportedPayload;
     "ServiceWorker.workerRegistrationUpdated": ServiceWorker.workerRegistrationUpdatedPayload;
     "ServiceWorker.workerVersionUpdated": ServiceWorker.workerVersionUpdatedPayload;
+    "SmartCardEmulation.establishContextRequested": SmartCardEmulation.establishContextRequestedPayload;
+    "SmartCardEmulation.releaseContextRequested": SmartCardEmulation.releaseContextRequestedPayload;
+    "SmartCardEmulation.listReadersRequested": SmartCardEmulation.listReadersRequestedPayload;
+    "SmartCardEmulation.getStatusChangeRequested": SmartCardEmulation.getStatusChangeRequestedPayload;
+    "SmartCardEmulation.cancelRequested": SmartCardEmulation.cancelRequestedPayload;
+    "SmartCardEmulation.connectRequested": SmartCardEmulation.connectRequestedPayload;
+    "SmartCardEmulation.disconnectRequested": SmartCardEmulation.disconnectRequestedPayload;
+    "SmartCardEmulation.transmitRequested": SmartCardEmulation.transmitRequestedPayload;
+    "SmartCardEmulation.controlRequested": SmartCardEmulation.controlRequestedPayload;
+    "SmartCardEmulation.getAttribRequested": SmartCardEmulation.getAttribRequestedPayload;
+    "SmartCardEmulation.setAttribRequested": SmartCardEmulation.setAttribRequestedPayload;
+    "SmartCardEmulation.statusRequested": SmartCardEmulation.statusRequestedPayload;
+    "SmartCardEmulation.beginTransactionRequested": SmartCardEmulation.beginTransactionRequestedPayload;
+    "SmartCardEmulation.endTransactionRequested": SmartCardEmulation.endTransactionRequestedPayload;
     "Storage.cacheStorageContentUpdated": Storage.cacheStorageContentUpdatedPayload;
     "Storage.cacheStorageListUpdated": Storage.cacheStorageListUpdatedPayload;
     "Storage.indexedDBContentUpdated": Storage.indexedDBContentUpdatedPayload;
@@ -21417,9 +23203,6 @@ Error was thrown.
     "Storage.sharedStorageWorkletOperationExecutionFinished": Storage.sharedStorageWorkletOperationExecutionFinishedPayload;
     "Storage.storageBucketCreatedOrUpdated": Storage.storageBucketCreatedOrUpdatedPayload;
     "Storage.storageBucketDeleted": Storage.storageBucketDeletedPayload;
-    "Storage.attributionReportingSourceRegistered": Storage.attributionReportingSourceRegisteredPayload;
-    "Storage.attributionReportingTriggerRegistered": Storage.attributionReportingTriggerRegisteredPayload;
-    "Storage.attributionReportingReportSent": Storage.attributionReportingReportSentPayload;
     "Target.attachedToTarget": Target.attachedToTargetPayload;
     "Target.detachedFromTarget": Target.detachedFromTargetPayload;
     "Target.receivedMessageFromTarget": Target.receivedMessageFromTargetPayload;
@@ -21431,8 +23214,6 @@ Error was thrown.
     "Tracing.bufferUsage": Tracing.bufferUsagePayload;
     "Tracing.dataCollected": Tracing.dataCollectedPayload;
     "Tracing.tracingComplete": Tracing.tracingCompletePayload;
-    "Fetch.requestPaused": Fetch.requestPausedPayload;
-    "Fetch.authRequired": Fetch.authRequiredPayload;
     "WebAudio.contextCreated": WebAudio.contextCreatedPayload;
     "WebAudio.contextWillBeDestroyed": WebAudio.contextWillBeDestroyedPayload;
     "WebAudio.contextChanged": WebAudio.contextChangedPayload;
@@ -21450,23 +23231,10 @@ Error was thrown.
     "WebAuthn.credentialDeleted": WebAuthn.credentialDeletedPayload;
     "WebAuthn.credentialUpdated": WebAuthn.credentialUpdatedPayload;
     "WebAuthn.credentialAsserted": WebAuthn.credentialAssertedPayload;
-    "Media.playerPropertiesChanged": Media.playerPropertiesChangedPayload;
-    "Media.playerEventsAdded": Media.playerEventsAddedPayload;
-    "Media.playerMessagesLogged": Media.playerMessagesLoggedPayload;
-    "Media.playerErrorsRaised": Media.playerErrorsRaisedPayload;
-    "Media.playersCreated": Media.playersCreatedPayload;
-    "DeviceAccess.deviceRequestPrompted": DeviceAccess.deviceRequestPromptedPayload;
-    "Preload.ruleSetUpdated": Preload.ruleSetUpdatedPayload;
-    "Preload.ruleSetRemoved": Preload.ruleSetRemovedPayload;
-    "Preload.preloadEnabledStateUpdated": Preload.preloadEnabledStateUpdatedPayload;
-    "Preload.prefetchStatusUpdated": Preload.prefetchStatusUpdatedPayload;
-    "Preload.prerenderStatusUpdated": Preload.prerenderStatusUpdatedPayload;
-    "Preload.preloadingAttemptSourcesUpdated": Preload.preloadingAttemptSourcesUpdatedPayload;
-    "FedCm.dialogShown": FedCm.dialogShownPayload;
-    "FedCm.dialogClosed": FedCm.dialogClosedPayload;
-    "BluetoothEmulation.gattOperationReceived": BluetoothEmulation.gattOperationReceivedPayload;
-    "BluetoothEmulation.characteristicOperationReceived": BluetoothEmulation.characteristicOperationReceivedPayload;
-    "BluetoothEmulation.descriptorOperationReceived": BluetoothEmulation.descriptorOperationReceivedPayload;
+    "WebMCP.toolsAdded": WebMCP.toolsAddedPayload;
+    "WebMCP.toolsRemoved": WebMCP.toolsRemovedPayload;
+    "WebMCP.toolInvoked": WebMCP.toolInvokedPayload;
+    "WebMCP.toolResponded": WebMCP.toolRespondedPayload;
     "Console.messageAdded": Console.messageAddedPayload;
     "Debugger.breakpointResolved": Debugger.breakpointResolvedPayload;
     "Debugger.paused": Debugger.pausedPayload;
@@ -21490,6 +23258,245 @@ Error was thrown.
     "Runtime.executionContextsCleared": Runtime.executionContextsClearedPayload;
     "Runtime.inspectRequested": Runtime.inspectRequestedPayload;
   }
+  export type EventMap = {
+    ["Accessibility.loadComplete"]: [Accessibility.loadCompletePayload];
+    ["Accessibility.nodesUpdated"]: [Accessibility.nodesUpdatedPayload];
+    ["Animation.animationCanceled"]: [Animation.animationCanceledPayload];
+    ["Animation.animationCreated"]: [Animation.animationCreatedPayload];
+    ["Animation.animationStarted"]: [Animation.animationStartedPayload];
+    ["Animation.animationUpdated"]: [Animation.animationUpdatedPayload];
+    ["Audits.issueAdded"]: [Audits.issueAddedPayload];
+    ["Autofill.addressFormFilled"]: [Autofill.addressFormFilledPayload];
+    ["BackgroundService.recordingStateChanged"]: [BackgroundService.recordingStateChangedPayload];
+    ["BackgroundService.backgroundServiceEventReceived"]: [BackgroundService.backgroundServiceEventReceivedPayload];
+    ["BluetoothEmulation.gattOperationReceived"]: [BluetoothEmulation.gattOperationReceivedPayload];
+    ["BluetoothEmulation.characteristicOperationReceived"]: [BluetoothEmulation.characteristicOperationReceivedPayload];
+    ["BluetoothEmulation.descriptorOperationReceived"]: [BluetoothEmulation.descriptorOperationReceivedPayload];
+    ["Browser.downloadWillBegin"]: [Browser.downloadWillBeginPayload];
+    ["Browser.downloadProgress"]: [Browser.downloadProgressPayload];
+    ["CSS.fontsUpdated"]: [CSS.fontsUpdatedPayload];
+    ["CSS.mediaQueryResultChanged"]: [CSS.mediaQueryResultChangedPayload];
+    ["CSS.styleSheetAdded"]: [CSS.styleSheetAddedPayload];
+    ["CSS.styleSheetChanged"]: [CSS.styleSheetChangedPayload];
+    ["CSS.styleSheetRemoved"]: [CSS.styleSheetRemovedPayload];
+    ["CSS.computedStyleUpdated"]: [CSS.computedStyleUpdatedPayload];
+    ["Cast.sinksUpdated"]: [Cast.sinksUpdatedPayload];
+    ["Cast.issueUpdated"]: [Cast.issueUpdatedPayload];
+    ["DOM.attributeModified"]: [DOM.attributeModifiedPayload];
+    ["DOM.adoptedStyleSheetsModified"]: [DOM.adoptedStyleSheetsModifiedPayload];
+    ["DOM.attributeRemoved"]: [DOM.attributeRemovedPayload];
+    ["DOM.characterDataModified"]: [DOM.characterDataModifiedPayload];
+    ["DOM.childNodeCountUpdated"]: [DOM.childNodeCountUpdatedPayload];
+    ["DOM.childNodeInserted"]: [DOM.childNodeInsertedPayload];
+    ["DOM.childNodeRemoved"]: [DOM.childNodeRemovedPayload];
+    ["DOM.distributedNodesUpdated"]: [DOM.distributedNodesUpdatedPayload];
+    ["DOM.documentUpdated"]: [DOM.documentUpdatedPayload];
+    ["DOM.inlineStyleInvalidated"]: [DOM.inlineStyleInvalidatedPayload];
+    ["DOM.pseudoElementAdded"]: [DOM.pseudoElementAddedPayload];
+    ["DOM.topLayerElementsUpdated"]: [DOM.topLayerElementsUpdatedPayload];
+    ["DOM.scrollableFlagUpdated"]: [DOM.scrollableFlagUpdatedPayload];
+    ["DOM.adRelatedStateUpdated"]: [DOM.adRelatedStateUpdatedPayload];
+    ["DOM.affectedByStartingStylesFlagUpdated"]: [DOM.affectedByStartingStylesFlagUpdatedPayload];
+    ["DOM.pseudoElementRemoved"]: [DOM.pseudoElementRemovedPayload];
+    ["DOM.setChildNodes"]: [DOM.setChildNodesPayload];
+    ["DOM.shadowRootPopped"]: [DOM.shadowRootPoppedPayload];
+    ["DOM.shadowRootPushed"]: [DOM.shadowRootPushedPayload];
+    ["DOMStorage.domStorageItemAdded"]: [DOMStorage.domStorageItemAddedPayload];
+    ["DOMStorage.domStorageItemRemoved"]: [DOMStorage.domStorageItemRemovedPayload];
+    ["DOMStorage.domStorageItemUpdated"]: [DOMStorage.domStorageItemUpdatedPayload];
+    ["DOMStorage.domStorageItemsCleared"]: [DOMStorage.domStorageItemsClearedPayload];
+    ["DeviceAccess.deviceRequestPrompted"]: [DeviceAccess.deviceRequestPromptedPayload];
+    ["Emulation.virtualTimeBudgetExpired"]: [Emulation.virtualTimeBudgetExpiredPayload];
+    ["Emulation.screenOrientationLockChanged"]: [Emulation.screenOrientationLockChangedPayload];
+    ["FedCm.dialogShown"]: [FedCm.dialogShownPayload];
+    ["FedCm.dialogClosed"]: [FedCm.dialogClosedPayload];
+    ["Fetch.requestPaused"]: [Fetch.requestPausedPayload];
+    ["Fetch.authRequired"]: [Fetch.authRequiredPayload];
+    ["Input.dragIntercepted"]: [Input.dragInterceptedPayload];
+    ["Inspector.detached"]: [Inspector.detachedPayload];
+    ["Inspector.targetCrashed"]: [Inspector.targetCrashedPayload];
+    ["Inspector.targetReloadedAfterCrash"]: [Inspector.targetReloadedAfterCrashPayload];
+    ["Inspector.workerScriptLoaded"]: [Inspector.workerScriptLoadedPayload];
+    ["LayerTree.layerPainted"]: [LayerTree.layerPaintedPayload];
+    ["LayerTree.layerTreeDidChange"]: [LayerTree.layerTreeDidChangePayload];
+    ["Log.entryAdded"]: [Log.entryAddedPayload];
+    ["Media.playerPropertiesChanged"]: [Media.playerPropertiesChangedPayload];
+    ["Media.playerEventsAdded"]: [Media.playerEventsAddedPayload];
+    ["Media.playerMessagesLogged"]: [Media.playerMessagesLoggedPayload];
+    ["Media.playerErrorsRaised"]: [Media.playerErrorsRaisedPayload];
+    ["Media.playerCreated"]: [Media.playerCreatedPayload];
+    ["Network.dataReceived"]: [Network.dataReceivedPayload];
+    ["Network.eventSourceMessageReceived"]: [Network.eventSourceMessageReceivedPayload];
+    ["Network.loadingFailed"]: [Network.loadingFailedPayload];
+    ["Network.loadingFinished"]: [Network.loadingFinishedPayload];
+    ["Network.requestIntercepted"]: [Network.requestInterceptedPayload];
+    ["Network.requestServedFromCache"]: [Network.requestServedFromCachePayload];
+    ["Network.requestWillBeSent"]: [Network.requestWillBeSentPayload];
+    ["Network.resourceChangedPriority"]: [Network.resourceChangedPriorityPayload];
+    ["Network.signedExchangeReceived"]: [Network.signedExchangeReceivedPayload];
+    ["Network.responseReceived"]: [Network.responseReceivedPayload];
+    ["Network.webSocketClosed"]: [Network.webSocketClosedPayload];
+    ["Network.webSocketCreated"]: [Network.webSocketCreatedPayload];
+    ["Network.webSocketFrameError"]: [Network.webSocketFrameErrorPayload];
+    ["Network.webSocketFrameReceived"]: [Network.webSocketFrameReceivedPayload];
+    ["Network.webSocketFrameSent"]: [Network.webSocketFrameSentPayload];
+    ["Network.webSocketHandshakeResponseReceived"]: [Network.webSocketHandshakeResponseReceivedPayload];
+    ["Network.webSocketWillSendHandshakeRequest"]: [Network.webSocketWillSendHandshakeRequestPayload];
+    ["Network.webTransportCreated"]: [Network.webTransportCreatedPayload];
+    ["Network.webTransportConnectionEstablished"]: [Network.webTransportConnectionEstablishedPayload];
+    ["Network.webTransportClosed"]: [Network.webTransportClosedPayload];
+    ["Network.directTCPSocketCreated"]: [Network.directTCPSocketCreatedPayload];
+    ["Network.directTCPSocketOpened"]: [Network.directTCPSocketOpenedPayload];
+    ["Network.directTCPSocketAborted"]: [Network.directTCPSocketAbortedPayload];
+    ["Network.directTCPSocketClosed"]: [Network.directTCPSocketClosedPayload];
+    ["Network.directTCPSocketChunkSent"]: [Network.directTCPSocketChunkSentPayload];
+    ["Network.directTCPSocketChunkReceived"]: [Network.directTCPSocketChunkReceivedPayload];
+    ["Network.directUDPSocketJoinedMulticastGroup"]: [Network.directUDPSocketJoinedMulticastGroupPayload];
+    ["Network.directUDPSocketLeftMulticastGroup"]: [Network.directUDPSocketLeftMulticastGroupPayload];
+    ["Network.directUDPSocketCreated"]: [Network.directUDPSocketCreatedPayload];
+    ["Network.directUDPSocketOpened"]: [Network.directUDPSocketOpenedPayload];
+    ["Network.directUDPSocketAborted"]: [Network.directUDPSocketAbortedPayload];
+    ["Network.directUDPSocketClosed"]: [Network.directUDPSocketClosedPayload];
+    ["Network.directUDPSocketChunkSent"]: [Network.directUDPSocketChunkSentPayload];
+    ["Network.directUDPSocketChunkReceived"]: [Network.directUDPSocketChunkReceivedPayload];
+    ["Network.requestWillBeSentExtraInfo"]: [Network.requestWillBeSentExtraInfoPayload];
+    ["Network.responseReceivedExtraInfo"]: [Network.responseReceivedExtraInfoPayload];
+    ["Network.responseReceivedEarlyHints"]: [Network.responseReceivedEarlyHintsPayload];
+    ["Network.trustTokenOperationDone"]: [Network.trustTokenOperationDonePayload];
+    ["Network.policyUpdated"]: [Network.policyUpdatedPayload];
+    ["Network.reportingApiReportAdded"]: [Network.reportingApiReportAddedPayload];
+    ["Network.reportingApiReportUpdated"]: [Network.reportingApiReportUpdatedPayload];
+    ["Network.reportingApiEndpointsChangedForOrigin"]: [Network.reportingApiEndpointsChangedForOriginPayload];
+    ["Network.deviceBoundSessionsAdded"]: [Network.deviceBoundSessionsAddedPayload];
+    ["Network.deviceBoundSessionEventOccurred"]: [Network.deviceBoundSessionEventOccurredPayload];
+    ["Overlay.inspectNodeRequested"]: [Overlay.inspectNodeRequestedPayload];
+    ["Overlay.nodeHighlightRequested"]: [Overlay.nodeHighlightRequestedPayload];
+    ["Overlay.screenshotRequested"]: [Overlay.screenshotRequestedPayload];
+    ["Overlay.inspectPanelShowRequested"]: [Overlay.inspectPanelShowRequestedPayload];
+    ["Overlay.inspectedElementWindowRestored"]: [Overlay.inspectedElementWindowRestoredPayload];
+    ["Overlay.inspectModeCanceled"]: [Overlay.inspectModeCanceledPayload];
+    ["Page.domContentEventFired"]: [Page.domContentEventFiredPayload];
+    ["Page.fileChooserOpened"]: [Page.fileChooserOpenedPayload];
+    ["Page.frameAttached"]: [Page.frameAttachedPayload];
+    ["Page.frameClearedScheduledNavigation"]: [Page.frameClearedScheduledNavigationPayload];
+    ["Page.frameDetached"]: [Page.frameDetachedPayload];
+    ["Page.frameSubtreeWillBeDetached"]: [Page.frameSubtreeWillBeDetachedPayload];
+    ["Page.frameNavigated"]: [Page.frameNavigatedPayload];
+    ["Page.documentOpened"]: [Page.documentOpenedPayload];
+    ["Page.frameResized"]: [Page.frameResizedPayload];
+    ["Page.frameStartedNavigating"]: [Page.frameStartedNavigatingPayload];
+    ["Page.frameRequestedNavigation"]: [Page.frameRequestedNavigationPayload];
+    ["Page.frameScheduledNavigation"]: [Page.frameScheduledNavigationPayload];
+    ["Page.frameStartedLoading"]: [Page.frameStartedLoadingPayload];
+    ["Page.frameStoppedLoading"]: [Page.frameStoppedLoadingPayload];
+    ["Page.downloadWillBegin"]: [Page.downloadWillBeginPayload];
+    ["Page.downloadProgress"]: [Page.downloadProgressPayload];
+    ["Page.interstitialHidden"]: [Page.interstitialHiddenPayload];
+    ["Page.interstitialShown"]: [Page.interstitialShownPayload];
+    ["Page.javascriptDialogClosed"]: [Page.javascriptDialogClosedPayload];
+    ["Page.javascriptDialogOpening"]: [Page.javascriptDialogOpeningPayload];
+    ["Page.lifecycleEvent"]: [Page.lifecycleEventPayload];
+    ["Page.backForwardCacheNotUsed"]: [Page.backForwardCacheNotUsedPayload];
+    ["Page.loadEventFired"]: [Page.loadEventFiredPayload];
+    ["Page.navigatedWithinDocument"]: [Page.navigatedWithinDocumentPayload];
+    ["Page.screencastFrame"]: [Page.screencastFramePayload];
+    ["Page.screencastVisibilityChanged"]: [Page.screencastVisibilityChangedPayload];
+    ["Page.windowOpen"]: [Page.windowOpenPayload];
+    ["Page.compilationCacheProduced"]: [Page.compilationCacheProducedPayload];
+    ["Performance.metrics"]: [Performance.metricsPayload];
+    ["PerformanceTimeline.timelineEventAdded"]: [PerformanceTimeline.timelineEventAddedPayload];
+    ["Preload.ruleSetUpdated"]: [Preload.ruleSetUpdatedPayload];
+    ["Preload.ruleSetRemoved"]: [Preload.ruleSetRemovedPayload];
+    ["Preload.preloadEnabledStateUpdated"]: [Preload.preloadEnabledStateUpdatedPayload];
+    ["Preload.prefetchStatusUpdated"]: [Preload.prefetchStatusUpdatedPayload];
+    ["Preload.prerenderStatusUpdated"]: [Preload.prerenderStatusUpdatedPayload];
+    ["Preload.preloadingAttemptSourcesUpdated"]: [Preload.preloadingAttemptSourcesUpdatedPayload];
+    ["Security.certificateError"]: [Security.certificateErrorPayload];
+    ["Security.visibleSecurityStateChanged"]: [Security.visibleSecurityStateChangedPayload];
+    ["Security.securityStateChanged"]: [Security.securityStateChangedPayload];
+    ["ServiceWorker.workerErrorReported"]: [ServiceWorker.workerErrorReportedPayload];
+    ["ServiceWorker.workerRegistrationUpdated"]: [ServiceWorker.workerRegistrationUpdatedPayload];
+    ["ServiceWorker.workerVersionUpdated"]: [ServiceWorker.workerVersionUpdatedPayload];
+    ["SmartCardEmulation.establishContextRequested"]: [SmartCardEmulation.establishContextRequestedPayload];
+    ["SmartCardEmulation.releaseContextRequested"]: [SmartCardEmulation.releaseContextRequestedPayload];
+    ["SmartCardEmulation.listReadersRequested"]: [SmartCardEmulation.listReadersRequestedPayload];
+    ["SmartCardEmulation.getStatusChangeRequested"]: [SmartCardEmulation.getStatusChangeRequestedPayload];
+    ["SmartCardEmulation.cancelRequested"]: [SmartCardEmulation.cancelRequestedPayload];
+    ["SmartCardEmulation.connectRequested"]: [SmartCardEmulation.connectRequestedPayload];
+    ["SmartCardEmulation.disconnectRequested"]: [SmartCardEmulation.disconnectRequestedPayload];
+    ["SmartCardEmulation.transmitRequested"]: [SmartCardEmulation.transmitRequestedPayload];
+    ["SmartCardEmulation.controlRequested"]: [SmartCardEmulation.controlRequestedPayload];
+    ["SmartCardEmulation.getAttribRequested"]: [SmartCardEmulation.getAttribRequestedPayload];
+    ["SmartCardEmulation.setAttribRequested"]: [SmartCardEmulation.setAttribRequestedPayload];
+    ["SmartCardEmulation.statusRequested"]: [SmartCardEmulation.statusRequestedPayload];
+    ["SmartCardEmulation.beginTransactionRequested"]: [SmartCardEmulation.beginTransactionRequestedPayload];
+    ["SmartCardEmulation.endTransactionRequested"]: [SmartCardEmulation.endTransactionRequestedPayload];
+    ["Storage.cacheStorageContentUpdated"]: [Storage.cacheStorageContentUpdatedPayload];
+    ["Storage.cacheStorageListUpdated"]: [Storage.cacheStorageListUpdatedPayload];
+    ["Storage.indexedDBContentUpdated"]: [Storage.indexedDBContentUpdatedPayload];
+    ["Storage.indexedDBListUpdated"]: [Storage.indexedDBListUpdatedPayload];
+    ["Storage.interestGroupAccessed"]: [Storage.interestGroupAccessedPayload];
+    ["Storage.interestGroupAuctionEventOccurred"]: [Storage.interestGroupAuctionEventOccurredPayload];
+    ["Storage.interestGroupAuctionNetworkRequestCreated"]: [Storage.interestGroupAuctionNetworkRequestCreatedPayload];
+    ["Storage.sharedStorageAccessed"]: [Storage.sharedStorageAccessedPayload];
+    ["Storage.sharedStorageWorkletOperationExecutionFinished"]: [Storage.sharedStorageWorkletOperationExecutionFinishedPayload];
+    ["Storage.storageBucketCreatedOrUpdated"]: [Storage.storageBucketCreatedOrUpdatedPayload];
+    ["Storage.storageBucketDeleted"]: [Storage.storageBucketDeletedPayload];
+    ["Target.attachedToTarget"]: [Target.attachedToTargetPayload];
+    ["Target.detachedFromTarget"]: [Target.detachedFromTargetPayload];
+    ["Target.receivedMessageFromTarget"]: [Target.receivedMessageFromTargetPayload];
+    ["Target.targetCreated"]: [Target.targetCreatedPayload];
+    ["Target.targetDestroyed"]: [Target.targetDestroyedPayload];
+    ["Target.targetCrashed"]: [Target.targetCrashedPayload];
+    ["Target.targetInfoChanged"]: [Target.targetInfoChangedPayload];
+    ["Tethering.accepted"]: [Tethering.acceptedPayload];
+    ["Tracing.bufferUsage"]: [Tracing.bufferUsagePayload];
+    ["Tracing.dataCollected"]: [Tracing.dataCollectedPayload];
+    ["Tracing.tracingComplete"]: [Tracing.tracingCompletePayload];
+    ["WebAudio.contextCreated"]: [WebAudio.contextCreatedPayload];
+    ["WebAudio.contextWillBeDestroyed"]: [WebAudio.contextWillBeDestroyedPayload];
+    ["WebAudio.contextChanged"]: [WebAudio.contextChangedPayload];
+    ["WebAudio.audioListenerCreated"]: [WebAudio.audioListenerCreatedPayload];
+    ["WebAudio.audioListenerWillBeDestroyed"]: [WebAudio.audioListenerWillBeDestroyedPayload];
+    ["WebAudio.audioNodeCreated"]: [WebAudio.audioNodeCreatedPayload];
+    ["WebAudio.audioNodeWillBeDestroyed"]: [WebAudio.audioNodeWillBeDestroyedPayload];
+    ["WebAudio.audioParamCreated"]: [WebAudio.audioParamCreatedPayload];
+    ["WebAudio.audioParamWillBeDestroyed"]: [WebAudio.audioParamWillBeDestroyedPayload];
+    ["WebAudio.nodesConnected"]: [WebAudio.nodesConnectedPayload];
+    ["WebAudio.nodesDisconnected"]: [WebAudio.nodesDisconnectedPayload];
+    ["WebAudio.nodeParamConnected"]: [WebAudio.nodeParamConnectedPayload];
+    ["WebAudio.nodeParamDisconnected"]: [WebAudio.nodeParamDisconnectedPayload];
+    ["WebAuthn.credentialAdded"]: [WebAuthn.credentialAddedPayload];
+    ["WebAuthn.credentialDeleted"]: [WebAuthn.credentialDeletedPayload];
+    ["WebAuthn.credentialUpdated"]: [WebAuthn.credentialUpdatedPayload];
+    ["WebAuthn.credentialAsserted"]: [WebAuthn.credentialAssertedPayload];
+    ["WebMCP.toolsAdded"]: [WebMCP.toolsAddedPayload];
+    ["WebMCP.toolsRemoved"]: [WebMCP.toolsRemovedPayload];
+    ["WebMCP.toolInvoked"]: [WebMCP.toolInvokedPayload];
+    ["WebMCP.toolResponded"]: [WebMCP.toolRespondedPayload];
+    ["Console.messageAdded"]: [Console.messageAddedPayload];
+    ["Debugger.breakpointResolved"]: [Debugger.breakpointResolvedPayload];
+    ["Debugger.paused"]: [Debugger.pausedPayload];
+    ["Debugger.resumed"]: [Debugger.resumedPayload];
+    ["Debugger.scriptFailedToParse"]: [Debugger.scriptFailedToParsePayload];
+    ["Debugger.scriptParsed"]: [Debugger.scriptParsedPayload];
+    ["HeapProfiler.addHeapSnapshotChunk"]: [HeapProfiler.addHeapSnapshotChunkPayload];
+    ["HeapProfiler.heapStatsUpdate"]: [HeapProfiler.heapStatsUpdatePayload];
+    ["HeapProfiler.lastSeenObjectId"]: [HeapProfiler.lastSeenObjectIdPayload];
+    ["HeapProfiler.reportHeapSnapshotProgress"]: [HeapProfiler.reportHeapSnapshotProgressPayload];
+    ["HeapProfiler.resetProfiles"]: [HeapProfiler.resetProfilesPayload];
+    ["Profiler.consoleProfileFinished"]: [Profiler.consoleProfileFinishedPayload];
+    ["Profiler.consoleProfileStarted"]: [Profiler.consoleProfileStartedPayload];
+    ["Profiler.preciseCoverageDeltaUpdate"]: [Profiler.preciseCoverageDeltaUpdatePayload];
+    ["Runtime.bindingCalled"]: [Runtime.bindingCalledPayload];
+    ["Runtime.consoleAPICalled"]: [Runtime.consoleAPICalledPayload];
+    ["Runtime.exceptionRevoked"]: [Runtime.exceptionRevokedPayload];
+    ["Runtime.exceptionThrown"]: [Runtime.exceptionThrownPayload];
+    ["Runtime.executionContextCreated"]: [Runtime.executionContextCreatedPayload];
+    ["Runtime.executionContextDestroyed"]: [Runtime.executionContextDestroyedPayload];
+    ["Runtime.executionContextsCleared"]: [Runtime.executionContextsClearedPayload];
+    ["Runtime.inspectRequested"]: [Runtime.inspectRequestedPayload];
+  }
   export interface CommandParameters {
     "Accessibility.disable": Accessibility.disableParameters;
     "Accessibility.enable": Accessibility.enableParameters;
@@ -21499,6 +23506,7 @@ Error was thrown.
     "Accessibility.getAXNodeAndAncestors": Accessibility.getAXNodeAndAncestorsParameters;
     "Accessibility.getChildAXNodes": Accessibility.getChildAXNodesParameters;
     "Accessibility.queryAXTree": Accessibility.queryAXTreeParameters;
+    "Ads.getAdMetrics": Ads.getAdMetricsParameters;
     "Animation.disable": Animation.disableParameters;
     "Animation.enable": Animation.enableParameters;
     "Animation.getCurrentTime": Animation.getCurrentTimeParameters;
@@ -21512,14 +23520,7 @@ Error was thrown.
     "Audits.getEncodedResponse": Audits.getEncodedResponseParameters;
     "Audits.disable": Audits.disableParameters;
     "Audits.enable": Audits.enableParameters;
-    "Audits.checkContrast": Audits.checkContrastParameters;
     "Audits.checkFormsIssues": Audits.checkFormsIssuesParameters;
-    "Extensions.loadUnpacked": Extensions.loadUnpackedParameters;
-    "Extensions.uninstall": Extensions.uninstallParameters;
-    "Extensions.getStorageItems": Extensions.getStorageItemsParameters;
-    "Extensions.removeStorageItems": Extensions.removeStorageItemsParameters;
-    "Extensions.clearStorageItems": Extensions.clearStorageItemsParameters;
-    "Extensions.setStorageItems": Extensions.setStorageItemsParameters;
     "Autofill.trigger": Autofill.triggerParameters;
     "Autofill.setAddresses": Autofill.setAddressesParameters;
     "Autofill.disable": Autofill.disableParameters;
@@ -21528,6 +23529,21 @@ Error was thrown.
     "BackgroundService.stopObserving": BackgroundService.stopObservingParameters;
     "BackgroundService.setRecording": BackgroundService.setRecordingParameters;
     "BackgroundService.clearEvents": BackgroundService.clearEventsParameters;
+    "BluetoothEmulation.enable": BluetoothEmulation.enableParameters;
+    "BluetoothEmulation.setSimulatedCentralState": BluetoothEmulation.setSimulatedCentralStateParameters;
+    "BluetoothEmulation.disable": BluetoothEmulation.disableParameters;
+    "BluetoothEmulation.simulatePreconnectedPeripheral": BluetoothEmulation.simulatePreconnectedPeripheralParameters;
+    "BluetoothEmulation.simulateAdvertisement": BluetoothEmulation.simulateAdvertisementParameters;
+    "BluetoothEmulation.simulateGATTOperationResponse": BluetoothEmulation.simulateGATTOperationResponseParameters;
+    "BluetoothEmulation.simulateCharacteristicOperationResponse": BluetoothEmulation.simulateCharacteristicOperationResponseParameters;
+    "BluetoothEmulation.simulateDescriptorOperationResponse": BluetoothEmulation.simulateDescriptorOperationResponseParameters;
+    "BluetoothEmulation.addService": BluetoothEmulation.addServiceParameters;
+    "BluetoothEmulation.removeService": BluetoothEmulation.removeServiceParameters;
+    "BluetoothEmulation.addCharacteristic": BluetoothEmulation.addCharacteristicParameters;
+    "BluetoothEmulation.removeCharacteristic": BluetoothEmulation.removeCharacteristicParameters;
+    "BluetoothEmulation.addDescriptor": BluetoothEmulation.addDescriptorParameters;
+    "BluetoothEmulation.removeDescriptor": BluetoothEmulation.removeDescriptorParameters;
+    "BluetoothEmulation.simulateGATTDisconnection": BluetoothEmulation.simulateGATTDisconnectionParameters;
     "Browser.setPermission": Browser.setPermissionParameters;
     "Browser.grantPermissions": Browser.grantPermissionsParameters;
     "Browser.resetPermissions": Browser.resetPermissionsParameters;
@@ -21543,6 +23559,7 @@ Error was thrown.
     "Browser.getWindowBounds": Browser.getWindowBoundsParameters;
     "Browser.getWindowForTarget": Browser.getWindowForTargetParameters;
     "Browser.setWindowBounds": Browser.setWindowBoundsParameters;
+    "Browser.setContentsSize": Browser.setContentsSizeParameters;
     "Browser.setDockTile": Browser.setDockTileParameters;
     "Browser.executeBrowserCommand": Browser.executeBrowserCommandParameters;
     "Browser.addPrivacySandboxEnrollmentOverride": Browser.addPrivacySandboxEnrollmentOverrideParameters;
@@ -21561,6 +23578,7 @@ Error was thrown.
     "CSS.getInlineStylesForNode": CSS.getInlineStylesForNodeParameters;
     "CSS.getAnimatedStylesForNode": CSS.getAnimatedStylesForNodeParameters;
     "CSS.getMatchedStylesForNode": CSS.getMatchedStylesForNodeParameters;
+    "CSS.getEnvironmentVariables": CSS.getEnvironmentVariablesParameters;
     "CSS.getMediaQueries": CSS.getMediaQueriesParameters;
     "CSS.getPlatformFontsForNode": CSS.getPlatformFontsForNodeParameters;
     "CSS.getStyleSheetText": CSS.getStyleSheetTextParameters;
@@ -21574,7 +23592,9 @@ Error was thrown.
     "CSS.setKeyframeKey": CSS.setKeyframeKeyParameters;
     "CSS.setMediaText": CSS.setMediaTextParameters;
     "CSS.setContainerQueryText": CSS.setContainerQueryTextParameters;
+    "CSS.setContainerQueryConditionText": CSS.setContainerQueryConditionTextParameters;
     "CSS.setSupportsText": CSS.setSupportsTextParameters;
+    "CSS.setNavigationText": CSS.setNavigationTextParameters;
     "CSS.setScopeText": CSS.setScopeTextParameters;
     "CSS.setRuleSelector": CSS.setRuleSelectorParameters;
     "CSS.setStyleSheetText": CSS.setStyleSheetTextParameters;
@@ -21594,6 +23614,7 @@ Error was thrown.
     "Cast.startDesktopMirroring": Cast.startDesktopMirroringParameters;
     "Cast.startTabMirroring": Cast.startTabMirroringParameters;
     "Cast.stopCasting": Cast.stopCastingParameters;
+    "CrashReportContext.getEntries": CrashReportContext.getEntriesParameters;
     "DOM.collectClassNamesFromSubtree": DOM.collectClassNamesFromSubtreeParameters;
     "DOM.copyTo": DOM.copyToParameters;
     "DOM.describeNode": DOM.describeNodeParameters;
@@ -21646,6 +23667,7 @@ Error was thrown.
     "DOM.getContainerForNode": DOM.getContainerForNodeParameters;
     "DOM.getQueryingDescendantsForContainer": DOM.getQueryingDescendantsForContainerParameters;
     "DOM.getAnchorElement": DOM.getAnchorElementParameters;
+    "DOM.forceShowPopover": DOM.forceShowPopoverParameters;
     "DOMDebugger.getEventListeners": DOMDebugger.getEventListenersParameters;
     "DOMDebugger.removeDOMBreakpoint": DOMDebugger.removeDOMBreakpointParameters;
     "DOMDebugger.removeEventListenerBreakpoint": DOMDebugger.removeEventListenerBreakpointParameters;
@@ -21656,9 +23678,6 @@ Error was thrown.
     "DOMDebugger.setEventListenerBreakpoint": DOMDebugger.setEventListenerBreakpointParameters;
     "DOMDebugger.setInstrumentationBreakpoint": DOMDebugger.setInstrumentationBreakpointParameters;
     "DOMDebugger.setXHRBreakpoint": DOMDebugger.setXHRBreakpointParameters;
-    "EventBreakpoints.setInstrumentationBreakpoint": EventBreakpoints.setInstrumentationBreakpointParameters;
-    "EventBreakpoints.removeInstrumentationBreakpoint": EventBreakpoints.removeInstrumentationBreakpointParameters;
-    "EventBreakpoints.disable": EventBreakpoints.disableParameters;
     "DOMSnapshot.disable": DOMSnapshot.disableParameters;
     "DOMSnapshot.enable": DOMSnapshot.enableParameters;
     "DOMSnapshot.getSnapshot": DOMSnapshot.getSnapshotParameters;
@@ -21669,6 +23688,10 @@ Error was thrown.
     "DOMStorage.getDOMStorageItems": DOMStorage.getDOMStorageItemsParameters;
     "DOMStorage.removeDOMStorageItem": DOMStorage.removeDOMStorageItemParameters;
     "DOMStorage.setDOMStorageItem": DOMStorage.setDOMStorageItemParameters;
+    "DeviceAccess.enable": DeviceAccess.enableParameters;
+    "DeviceAccess.disable": DeviceAccess.disableParameters;
+    "DeviceAccess.selectPrompt": DeviceAccess.selectPromptParameters;
+    "DeviceAccess.cancelPrompt": DeviceAccess.cancelPromptParameters;
     "DeviceOrientation.clearDeviceOrientationOverride": DeviceOrientation.clearDeviceOrientationOverrideParameters;
     "DeviceOrientation.setDeviceOrientationOverride": DeviceOrientation.setDeviceOrientationOverrideParameters;
     "Emulation.canEmulate": Emulation.canEmulateParameters;
@@ -21690,13 +23713,13 @@ Error was thrown.
     "Emulation.setEmitTouchEventsForMouse": Emulation.setEmitTouchEventsForMouseParameters;
     "Emulation.setEmulatedMedia": Emulation.setEmulatedMediaParameters;
     "Emulation.setEmulatedVisionDeficiency": Emulation.setEmulatedVisionDeficiencyParameters;
+    "Emulation.setEmulatedOSTextScale": Emulation.setEmulatedOSTextScaleParameters;
     "Emulation.setGeolocationOverride": Emulation.setGeolocationOverrideParameters;
     "Emulation.getOverriddenSensorInformation": Emulation.getOverriddenSensorInformationParameters;
     "Emulation.setSensorOverrideEnabled": Emulation.setSensorOverrideEnabledParameters;
     "Emulation.setSensorOverrideReadings": Emulation.setSensorOverrideReadingsParameters;
     "Emulation.setPressureSourceOverrideEnabled": Emulation.setPressureSourceOverrideEnabledParameters;
     "Emulation.setPressureStateOverride": Emulation.setPressureStateOverrideParameters;
-    "Emulation.setPressureDataOverride": Emulation.setPressureDataOverrideParameters;
     "Emulation.setIdleOverride": Emulation.setIdleOverrideParameters;
     "Emulation.clearIdleOverride": Emulation.clearIdleOverrideParameters;
     "Emulation.setNavigatorOverrides": Emulation.setNavigatorOverridesParameters;
@@ -21708,17 +23731,50 @@ Error was thrown.
     "Emulation.setTimezoneOverride": Emulation.setTimezoneOverrideParameters;
     "Emulation.setVisibleSize": Emulation.setVisibleSizeParameters;
     "Emulation.setDisabledImageTypes": Emulation.setDisabledImageTypesParameters;
+    "Emulation.setDataSaverOverride": Emulation.setDataSaverOverrideParameters;
     "Emulation.setHardwareConcurrencyOverride": Emulation.setHardwareConcurrencyOverrideParameters;
     "Emulation.setUserAgentOverride": Emulation.setUserAgentOverrideParameters;
     "Emulation.setAutomationOverride": Emulation.setAutomationOverrideParameters;
     "Emulation.setSmallViewportHeightDifferenceOverride": Emulation.setSmallViewportHeightDifferenceOverrideParameters;
+    "Emulation.getScreenInfos": Emulation.getScreenInfosParameters;
+    "Emulation.addScreen": Emulation.addScreenParameters;
+    "Emulation.updateScreen": Emulation.updateScreenParameters;
+    "Emulation.removeScreen": Emulation.removeScreenParameters;
+    "Emulation.setPrimaryScreen": Emulation.setPrimaryScreenParameters;
+    "EventBreakpoints.setInstrumentationBreakpoint": EventBreakpoints.setInstrumentationBreakpointParameters;
+    "EventBreakpoints.removeInstrumentationBreakpoint": EventBreakpoints.removeInstrumentationBreakpointParameters;
+    "EventBreakpoints.disable": EventBreakpoints.disableParameters;
+    "Extensions.triggerAction": Extensions.triggerActionParameters;
+    "Extensions.loadUnpacked": Extensions.loadUnpackedParameters;
+    "Extensions.getExtensions": Extensions.getExtensionsParameters;
+    "Extensions.uninstall": Extensions.uninstallParameters;
+    "Extensions.getStorageItems": Extensions.getStorageItemsParameters;
+    "Extensions.removeStorageItems": Extensions.removeStorageItemsParameters;
+    "Extensions.clearStorageItems": Extensions.clearStorageItemsParameters;
+    "Extensions.setStorageItems": Extensions.setStorageItemsParameters;
+    "FedCm.enable": FedCm.enableParameters;
+    "FedCm.disable": FedCm.disableParameters;
+    "FedCm.selectAccount": FedCm.selectAccountParameters;
+    "FedCm.clickDialogButton": FedCm.clickDialogButtonParameters;
+    "FedCm.openUrl": FedCm.openUrlParameters;
+    "FedCm.dismissDialog": FedCm.dismissDialogParameters;
+    "FedCm.resetCooldown": FedCm.resetCooldownParameters;
+    "Fetch.disable": Fetch.disableParameters;
+    "Fetch.enable": Fetch.enableParameters;
+    "Fetch.failRequest": Fetch.failRequestParameters;
+    "Fetch.fulfillRequest": Fetch.fulfillRequestParameters;
+    "Fetch.continueRequest": Fetch.continueRequestParameters;
+    "Fetch.continueWithAuth": Fetch.continueWithAuthParameters;
+    "Fetch.continueResponse": Fetch.continueResponseParameters;
+    "Fetch.getResponseBody": Fetch.getResponseBodyParameters;
+    "Fetch.takeResponseBodyAsStream": Fetch.takeResponseBodyAsStreamParameters;
+    "FileSystem.getDirectory": FileSystem.getDirectoryParameters;
     "HeadlessExperimental.beginFrame": HeadlessExperimental.beginFrameParameters;
     "HeadlessExperimental.disable": HeadlessExperimental.disableParameters;
     "HeadlessExperimental.enable": HeadlessExperimental.enableParameters;
     "IO.close": IO.closeParameters;
     "IO.read": IO.readParameters;
     "IO.resolveBlob": IO.resolveBlobParameters;
-    "FileSystem.getDirectory": FileSystem.getDirectoryParameters;
     "IndexedDB.clearObjectStore": IndexedDB.clearObjectStoreParameters;
     "IndexedDB.deleteDatabase": IndexedDB.deleteDatabaseParameters;
     "IndexedDB.deleteObjectStoreEntries": IndexedDB.deleteObjectStoreEntriesParameters;
@@ -21757,6 +23813,8 @@ Error was thrown.
     "Log.enable": Log.enableParameters;
     "Log.startViolationsReport": Log.startViolationsReportParameters;
     "Log.stopViolationsReport": Log.stopViolationsReportParameters;
+    "Media.enable": Media.enableParameters;
+    "Media.disable": Media.disableParameters;
     "Memory.getDOMCounters": Memory.getDOMCountersParameters;
     "Memory.getDOMCountersForLeakDetection": Memory.getDOMCountersForLeakDetectionParameters;
     "Memory.prepareForLeakDetection": Memory.prepareForLeakDetectionParameters;
@@ -21779,7 +23837,10 @@ Error was thrown.
     "Network.deleteCookies": Network.deleteCookiesParameters;
     "Network.disable": Network.disableParameters;
     "Network.emulateNetworkConditions": Network.emulateNetworkConditionsParameters;
+    "Network.emulateNetworkConditionsByRule": Network.emulateNetworkConditionsByRuleParameters;
+    "Network.overrideNetworkState": Network.overrideNetworkStateParameters;
     "Network.enable": Network.enableParameters;
+    "Network.configureDurableMessages": Network.configureDurableMessagesParameters;
     "Network.getAllCookies": Network.getAllCookiesParameters;
     "Network.getCertificate": Network.getCertificateParameters;
     "Network.getCookies": Network.getCookiesParameters;
@@ -21801,6 +23862,9 @@ Error was thrown.
     "Network.streamResourceContent": Network.streamResourceContentParameters;
     "Network.getSecurityIsolationStatus": Network.getSecurityIsolationStatusParameters;
     "Network.enableReportingApi": Network.enableReportingApiParameters;
+    "Network.enableDeviceBoundSessions": Network.enableDeviceBoundSessionsParameters;
+    "Network.deleteDeviceBoundSession": Network.deleteDeviceBoundSessionParameters;
+    "Network.fetchSchemefulSite": Network.fetchSchemefulSiteParameters;
     "Network.loadNetworkResource": Network.loadNetworkResourceParameters;
     "Network.setCookieControls": Network.setCookieControlsParameters;
     "Overlay.disable": Overlay.disableParameters;
@@ -21823,6 +23887,7 @@ Error was thrown.
     "Overlay.setShowFlexOverlays": Overlay.setShowFlexOverlaysParameters;
     "Overlay.setShowScrollSnapOverlays": Overlay.setShowScrollSnapOverlaysParameters;
     "Overlay.setShowContainerQueryOverlays": Overlay.setShowContainerQueryOverlaysParameters;
+    "Overlay.setShowInspectedElementAnchor": Overlay.setShowInspectedElementAnchorParameters;
     "Overlay.setShowPaintRects": Overlay.setShowPaintRectsParameters;
     "Overlay.setShowLayoutShiftRegions": Overlay.setShowLayoutShiftRegionsParameters;
     "Overlay.setShowScrollBottleneckRects": Overlay.setShowScrollBottleneckRectsParameters;
@@ -21830,8 +23895,16 @@ Error was thrown.
     "Overlay.setShowWebVitals": Overlay.setShowWebVitalsParameters;
     "Overlay.setShowViewportSizeOnResize": Overlay.setShowViewportSizeOnResizeParameters;
     "Overlay.setShowHinge": Overlay.setShowHingeParameters;
+    "Overlay.setShowDisplayCutout": Overlay.setShowDisplayCutoutParameters;
     "Overlay.setShowIsolatedElements": Overlay.setShowIsolatedElementsParameters;
     "Overlay.setShowWindowControlsOverlay": Overlay.setShowWindowControlsOverlayParameters;
+    "PWA.getOsAppState": PWA.getOsAppStateParameters;
+    "PWA.install": PWA.installParameters;
+    "PWA.uninstall": PWA.uninstallParameters;
+    "PWA.launch": PWA.launchParameters;
+    "PWA.launchFilesInApp": PWA.launchFilesInAppParameters;
+    "PWA.openCurrentPageInApp": PWA.openCurrentPageInAppParameters;
+    "PWA.changeAppUserSettings": PWA.changeAppUserSettingsParameters;
     "Page.addScriptToEvaluateOnLoad": Page.addScriptToEvaluateOnLoadParameters;
     "Page.addScriptToEvaluateOnNewDocument": Page.addScriptToEvaluateOnNewDocumentParameters;
     "Page.bringToFront": Page.bringToFrontParameters;
@@ -21848,7 +23921,7 @@ Error was thrown.
     "Page.getInstallabilityErrors": Page.getInstallabilityErrorsParameters;
     "Page.getManifestIcons": Page.getManifestIconsParameters;
     "Page.getAppId": Page.getAppIdParameters;
-    "Page.getAdScriptAncestryIds": Page.getAdScriptAncestryIdsParameters;
+    "Page.getAdScriptAncestry": Page.getAdScriptAncestryParameters;
     "Page.getFrameTree": Page.getFrameTreeParameters;
     "Page.getLayoutMetrics": Page.getLayoutMetricsParameters;
     "Page.getNavigationHistory": Page.getNavigationHistoryParameters;
@@ -21892,11 +23965,14 @@ Error was thrown.
     "Page.waitForDebugger": Page.waitForDebuggerParameters;
     "Page.setInterceptFileChooserDialog": Page.setInterceptFileChooserDialogParameters;
     "Page.setPrerenderingAllowed": Page.setPrerenderingAllowedParameters;
+    "Page.getAnnotatedPageContent": Page.getAnnotatedPageContentParameters;
     "Performance.disable": Performance.disableParameters;
     "Performance.enable": Performance.enableParameters;
     "Performance.setTimeDomain": Performance.setTimeDomainParameters;
     "Performance.getMetrics": Performance.getMetricsParameters;
     "PerformanceTimeline.enable": PerformanceTimeline.enableParameters;
+    "Preload.enable": Preload.enableParameters;
+    "Preload.disable": Preload.disableParameters;
     "Security.disable": Security.disableParameters;
     "Security.enable": Security.enableParameters;
     "Security.setIgnoreCertificateErrors": Security.setIgnoreCertificateErrorsParameters;
@@ -21907,7 +23983,6 @@ Error was thrown.
     "ServiceWorker.dispatchSyncEvent": ServiceWorker.dispatchSyncEventParameters;
     "ServiceWorker.dispatchPeriodicSyncEvent": ServiceWorker.dispatchPeriodicSyncEventParameters;
     "ServiceWorker.enable": ServiceWorker.enableParameters;
-    "ServiceWorker.inspectWorker": ServiceWorker.inspectWorkerParameters;
     "ServiceWorker.setForceUpdateOnPageLoad": ServiceWorker.setForceUpdateOnPageLoadParameters;
     "ServiceWorker.skipWaiting": ServiceWorker.skipWaitingParameters;
     "ServiceWorker.startWorker": ServiceWorker.startWorkerParameters;
@@ -21915,7 +23990,20 @@ Error was thrown.
     "ServiceWorker.stopWorker": ServiceWorker.stopWorkerParameters;
     "ServiceWorker.unregister": ServiceWorker.unregisterParameters;
     "ServiceWorker.updateRegistration": ServiceWorker.updateRegistrationParameters;
+    "SmartCardEmulation.enable": SmartCardEmulation.enableParameters;
+    "SmartCardEmulation.disable": SmartCardEmulation.disableParameters;
+    "SmartCardEmulation.reportEstablishContextResult": SmartCardEmulation.reportEstablishContextResultParameters;
+    "SmartCardEmulation.reportReleaseContextResult": SmartCardEmulation.reportReleaseContextResultParameters;
+    "SmartCardEmulation.reportListReadersResult": SmartCardEmulation.reportListReadersResultParameters;
+    "SmartCardEmulation.reportGetStatusChangeResult": SmartCardEmulation.reportGetStatusChangeResultParameters;
+    "SmartCardEmulation.reportBeginTransactionResult": SmartCardEmulation.reportBeginTransactionResultParameters;
+    "SmartCardEmulation.reportPlainResult": SmartCardEmulation.reportPlainResultParameters;
+    "SmartCardEmulation.reportConnectResult": SmartCardEmulation.reportConnectResultParameters;
+    "SmartCardEmulation.reportDataResult": SmartCardEmulation.reportDataResultParameters;
+    "SmartCardEmulation.reportStatusResult": SmartCardEmulation.reportStatusResultParameters;
+    "SmartCardEmulation.reportError": SmartCardEmulation.reportErrorParameters;
     "Storage.getStorageKeyForFrame": Storage.getStorageKeyForFrameParameters;
+    "Storage.getStorageKey": Storage.getStorageKeyParameters;
     "Storage.clearDataForOrigin": Storage.clearDataForOriginParameters;
     "Storage.clearDataForStorageKey": Storage.clearDataForStorageKeyParameters;
     "Storage.getCookies": Storage.getCookiesParameters;
@@ -21946,11 +24034,7 @@ Error was thrown.
     "Storage.setStorageBucketTracking": Storage.setStorageBucketTrackingParameters;
     "Storage.deleteStorageBucket": Storage.deleteStorageBucketParameters;
     "Storage.runBounceTrackingMitigations": Storage.runBounceTrackingMitigationsParameters;
-    "Storage.setAttributionReportingLocalTestingMode": Storage.setAttributionReportingLocalTestingModeParameters;
-    "Storage.setAttributionReportingTracking": Storage.setAttributionReportingTrackingParameters;
-    "Storage.sendPendingAttributionReports": Storage.sendPendingAttributionReportsParameters;
     "Storage.getRelatedWebsiteSets": Storage.getRelatedWebsiteSetsParameters;
-    "Storage.getAffectedUrlsForThirdPartyCookieMetadata": Storage.getAffectedUrlsForThirdPartyCookieMetadataParameters;
     "Storage.setProtectedAudienceKAnonymity": Storage.setProtectedAudienceKAnonymityParameters;
     "SystemInfo.getInfo": SystemInfo.getInfoParameters;
     "SystemInfo.getFeatureState": SystemInfo.getFeatureStateParameters;
@@ -21972,22 +24056,16 @@ Error was thrown.
     "Target.autoAttachRelated": Target.autoAttachRelatedParameters;
     "Target.setDiscoverTargets": Target.setDiscoverTargetsParameters;
     "Target.setRemoteLocations": Target.setRemoteLocationsParameters;
+    "Target.getDevToolsTarget": Target.getDevToolsTargetParameters;
+    "Target.openDevTools": Target.openDevToolsParameters;
     "Tethering.bind": Tethering.bindParameters;
     "Tethering.unbind": Tethering.unbindParameters;
     "Tracing.end": Tracing.endParameters;
     "Tracing.getCategories": Tracing.getCategoriesParameters;
+    "Tracing.getTrackEventDescriptor": Tracing.getTrackEventDescriptorParameters;
     "Tracing.recordClockSyncMarker": Tracing.recordClockSyncMarkerParameters;
     "Tracing.requestMemoryDump": Tracing.requestMemoryDumpParameters;
     "Tracing.start": Tracing.startParameters;
-    "Fetch.disable": Fetch.disableParameters;
-    "Fetch.enable": Fetch.enableParameters;
-    "Fetch.failRequest": Fetch.failRequestParameters;
-    "Fetch.fulfillRequest": Fetch.fulfillRequestParameters;
-    "Fetch.continueRequest": Fetch.continueRequestParameters;
-    "Fetch.continueWithAuth": Fetch.continueWithAuthParameters;
-    "Fetch.continueResponse": Fetch.continueResponseParameters;
-    "Fetch.getResponseBody": Fetch.getResponseBodyParameters;
-    "Fetch.takeResponseBodyAsStream": Fetch.takeResponseBodyAsStreamParameters;
     "WebAudio.enable": WebAudio.enableParameters;
     "WebAudio.disable": WebAudio.disableParameters;
     "WebAudio.getRealtimeData": WebAudio.getRealtimeDataParameters;
@@ -22004,43 +24082,10 @@ Error was thrown.
     "WebAuthn.setUserVerified": WebAuthn.setUserVerifiedParameters;
     "WebAuthn.setAutomaticPresenceSimulation": WebAuthn.setAutomaticPresenceSimulationParameters;
     "WebAuthn.setCredentialProperties": WebAuthn.setCredentialPropertiesParameters;
-    "Media.enable": Media.enableParameters;
-    "Media.disable": Media.disableParameters;
-    "DeviceAccess.enable": DeviceAccess.enableParameters;
-    "DeviceAccess.disable": DeviceAccess.disableParameters;
-    "DeviceAccess.selectPrompt": DeviceAccess.selectPromptParameters;
-    "DeviceAccess.cancelPrompt": DeviceAccess.cancelPromptParameters;
-    "Preload.enable": Preload.enableParameters;
-    "Preload.disable": Preload.disableParameters;
-    "FedCm.enable": FedCm.enableParameters;
-    "FedCm.disable": FedCm.disableParameters;
-    "FedCm.selectAccount": FedCm.selectAccountParameters;
-    "FedCm.clickDialogButton": FedCm.clickDialogButtonParameters;
-    "FedCm.openUrl": FedCm.openUrlParameters;
-    "FedCm.dismissDialog": FedCm.dismissDialogParameters;
-    "FedCm.resetCooldown": FedCm.resetCooldownParameters;
-    "PWA.getOsAppState": PWA.getOsAppStateParameters;
-    "PWA.install": PWA.installParameters;
-    "PWA.uninstall": PWA.uninstallParameters;
-    "PWA.launch": PWA.launchParameters;
-    "PWA.launchFilesInApp": PWA.launchFilesInAppParameters;
-    "PWA.openCurrentPageInApp": PWA.openCurrentPageInAppParameters;
-    "PWA.changeAppUserSettings": PWA.changeAppUserSettingsParameters;
-    "BluetoothEmulation.enable": BluetoothEmulation.enableParameters;
-    "BluetoothEmulation.setSimulatedCentralState": BluetoothEmulation.setSimulatedCentralStateParameters;
-    "BluetoothEmulation.disable": BluetoothEmulation.disableParameters;
-    "BluetoothEmulation.simulatePreconnectedPeripheral": BluetoothEmulation.simulatePreconnectedPeripheralParameters;
-    "BluetoothEmulation.simulateAdvertisement": BluetoothEmulation.simulateAdvertisementParameters;
-    "BluetoothEmulation.simulateGATTOperationResponse": BluetoothEmulation.simulateGATTOperationResponseParameters;
-    "BluetoothEmulation.simulateCharacteristicOperationResponse": BluetoothEmulation.simulateCharacteristicOperationResponseParameters;
-    "BluetoothEmulation.simulateDescriptorOperationResponse": BluetoothEmulation.simulateDescriptorOperationResponseParameters;
-    "BluetoothEmulation.addService": BluetoothEmulation.addServiceParameters;
-    "BluetoothEmulation.removeService": BluetoothEmulation.removeServiceParameters;
-    "BluetoothEmulation.addCharacteristic": BluetoothEmulation.addCharacteristicParameters;
-    "BluetoothEmulation.removeCharacteristic": BluetoothEmulation.removeCharacteristicParameters;
-    "BluetoothEmulation.addDescriptor": BluetoothEmulation.addDescriptorParameters;
-    "BluetoothEmulation.removeDescriptor": BluetoothEmulation.removeDescriptorParameters;
-    "BluetoothEmulation.simulateGATTDisconnection": BluetoothEmulation.simulateGATTDisconnectionParameters;
+    "WebMCP.enable": WebMCP.enableParameters;
+    "WebMCP.disable": WebMCP.disableParameters;
+    "WebMCP.invokeTool": WebMCP.invokeToolParameters;
+    "WebMCP.cancelInvocation": WebMCP.cancelInvocationParameters;
     "Console.clearMessages": Console.clearMessagesParameters;
     "Console.disable": Console.disableParameters;
     "Console.enable": Console.enableParameters;
@@ -22132,6 +24177,7 @@ Error was thrown.
     "Accessibility.getAXNodeAndAncestors": Accessibility.getAXNodeAndAncestorsReturnValue;
     "Accessibility.getChildAXNodes": Accessibility.getChildAXNodesReturnValue;
     "Accessibility.queryAXTree": Accessibility.queryAXTreeReturnValue;
+    "Ads.getAdMetrics": Ads.getAdMetricsReturnValue;
     "Animation.disable": Animation.disableReturnValue;
     "Animation.enable": Animation.enableReturnValue;
     "Animation.getCurrentTime": Animation.getCurrentTimeReturnValue;
@@ -22145,14 +24191,7 @@ Error was thrown.
     "Audits.getEncodedResponse": Audits.getEncodedResponseReturnValue;
     "Audits.disable": Audits.disableReturnValue;
     "Audits.enable": Audits.enableReturnValue;
-    "Audits.checkContrast": Audits.checkContrastReturnValue;
     "Audits.checkFormsIssues": Audits.checkFormsIssuesReturnValue;
-    "Extensions.loadUnpacked": Extensions.loadUnpackedReturnValue;
-    "Extensions.uninstall": Extensions.uninstallReturnValue;
-    "Extensions.getStorageItems": Extensions.getStorageItemsReturnValue;
-    "Extensions.removeStorageItems": Extensions.removeStorageItemsReturnValue;
-    "Extensions.clearStorageItems": Extensions.clearStorageItemsReturnValue;
-    "Extensions.setStorageItems": Extensions.setStorageItemsReturnValue;
     "Autofill.trigger": Autofill.triggerReturnValue;
     "Autofill.setAddresses": Autofill.setAddressesReturnValue;
     "Autofill.disable": Autofill.disableReturnValue;
@@ -22161,6 +24200,21 @@ Error was thrown.
     "BackgroundService.stopObserving": BackgroundService.stopObservingReturnValue;
     "BackgroundService.setRecording": BackgroundService.setRecordingReturnValue;
     "BackgroundService.clearEvents": BackgroundService.clearEventsReturnValue;
+    "BluetoothEmulation.enable": BluetoothEmulation.enableReturnValue;
+    "BluetoothEmulation.setSimulatedCentralState": BluetoothEmulation.setSimulatedCentralStateReturnValue;
+    "BluetoothEmulation.disable": BluetoothEmulation.disableReturnValue;
+    "BluetoothEmulation.simulatePreconnectedPeripheral": BluetoothEmulation.simulatePreconnectedPeripheralReturnValue;
+    "BluetoothEmulation.simulateAdvertisement": BluetoothEmulation.simulateAdvertisementReturnValue;
+    "BluetoothEmulation.simulateGATTOperationResponse": BluetoothEmulation.simulateGATTOperationResponseReturnValue;
+    "BluetoothEmulation.simulateCharacteristicOperationResponse": BluetoothEmulation.simulateCharacteristicOperationResponseReturnValue;
+    "BluetoothEmulation.simulateDescriptorOperationResponse": BluetoothEmulation.simulateDescriptorOperationResponseReturnValue;
+    "BluetoothEmulation.addService": BluetoothEmulation.addServiceReturnValue;
+    "BluetoothEmulation.removeService": BluetoothEmulation.removeServiceReturnValue;
+    "BluetoothEmulation.addCharacteristic": BluetoothEmulation.addCharacteristicReturnValue;
+    "BluetoothEmulation.removeCharacteristic": BluetoothEmulation.removeCharacteristicReturnValue;
+    "BluetoothEmulation.addDescriptor": BluetoothEmulation.addDescriptorReturnValue;
+    "BluetoothEmulation.removeDescriptor": BluetoothEmulation.removeDescriptorReturnValue;
+    "BluetoothEmulation.simulateGATTDisconnection": BluetoothEmulation.simulateGATTDisconnectionReturnValue;
     "Browser.setPermission": Browser.setPermissionReturnValue;
     "Browser.grantPermissions": Browser.grantPermissionsReturnValue;
     "Browser.resetPermissions": Browser.resetPermissionsReturnValue;
@@ -22176,6 +24230,7 @@ Error was thrown.
     "Browser.getWindowBounds": Browser.getWindowBoundsReturnValue;
     "Browser.getWindowForTarget": Browser.getWindowForTargetReturnValue;
     "Browser.setWindowBounds": Browser.setWindowBoundsReturnValue;
+    "Browser.setContentsSize": Browser.setContentsSizeReturnValue;
     "Browser.setDockTile": Browser.setDockTileReturnValue;
     "Browser.executeBrowserCommand": Browser.executeBrowserCommandReturnValue;
     "Browser.addPrivacySandboxEnrollmentOverride": Browser.addPrivacySandboxEnrollmentOverrideReturnValue;
@@ -22194,6 +24249,7 @@ Error was thrown.
     "CSS.getInlineStylesForNode": CSS.getInlineStylesForNodeReturnValue;
     "CSS.getAnimatedStylesForNode": CSS.getAnimatedStylesForNodeReturnValue;
     "CSS.getMatchedStylesForNode": CSS.getMatchedStylesForNodeReturnValue;
+    "CSS.getEnvironmentVariables": CSS.getEnvironmentVariablesReturnValue;
     "CSS.getMediaQueries": CSS.getMediaQueriesReturnValue;
     "CSS.getPlatformFontsForNode": CSS.getPlatformFontsForNodeReturnValue;
     "CSS.getStyleSheetText": CSS.getStyleSheetTextReturnValue;
@@ -22207,7 +24263,9 @@ Error was thrown.
     "CSS.setKeyframeKey": CSS.setKeyframeKeyReturnValue;
     "CSS.setMediaText": CSS.setMediaTextReturnValue;
     "CSS.setContainerQueryText": CSS.setContainerQueryTextReturnValue;
+    "CSS.setContainerQueryConditionText": CSS.setContainerQueryConditionTextReturnValue;
     "CSS.setSupportsText": CSS.setSupportsTextReturnValue;
+    "CSS.setNavigationText": CSS.setNavigationTextReturnValue;
     "CSS.setScopeText": CSS.setScopeTextReturnValue;
     "CSS.setRuleSelector": CSS.setRuleSelectorReturnValue;
     "CSS.setStyleSheetText": CSS.setStyleSheetTextReturnValue;
@@ -22227,6 +24285,7 @@ Error was thrown.
     "Cast.startDesktopMirroring": Cast.startDesktopMirroringReturnValue;
     "Cast.startTabMirroring": Cast.startTabMirroringReturnValue;
     "Cast.stopCasting": Cast.stopCastingReturnValue;
+    "CrashReportContext.getEntries": CrashReportContext.getEntriesReturnValue;
     "DOM.collectClassNamesFromSubtree": DOM.collectClassNamesFromSubtreeReturnValue;
     "DOM.copyTo": DOM.copyToReturnValue;
     "DOM.describeNode": DOM.describeNodeReturnValue;
@@ -22279,6 +24338,7 @@ Error was thrown.
     "DOM.getContainerForNode": DOM.getContainerForNodeReturnValue;
     "DOM.getQueryingDescendantsForContainer": DOM.getQueryingDescendantsForContainerReturnValue;
     "DOM.getAnchorElement": DOM.getAnchorElementReturnValue;
+    "DOM.forceShowPopover": DOM.forceShowPopoverReturnValue;
     "DOMDebugger.getEventListeners": DOMDebugger.getEventListenersReturnValue;
     "DOMDebugger.removeDOMBreakpoint": DOMDebugger.removeDOMBreakpointReturnValue;
     "DOMDebugger.removeEventListenerBreakpoint": DOMDebugger.removeEventListenerBreakpointReturnValue;
@@ -22289,9 +24349,6 @@ Error was thrown.
     "DOMDebugger.setEventListenerBreakpoint": DOMDebugger.setEventListenerBreakpointReturnValue;
     "DOMDebugger.setInstrumentationBreakpoint": DOMDebugger.setInstrumentationBreakpointReturnValue;
     "DOMDebugger.setXHRBreakpoint": DOMDebugger.setXHRBreakpointReturnValue;
-    "EventBreakpoints.setInstrumentationBreakpoint": EventBreakpoints.setInstrumentationBreakpointReturnValue;
-    "EventBreakpoints.removeInstrumentationBreakpoint": EventBreakpoints.removeInstrumentationBreakpointReturnValue;
-    "EventBreakpoints.disable": EventBreakpoints.disableReturnValue;
     "DOMSnapshot.disable": DOMSnapshot.disableReturnValue;
     "DOMSnapshot.enable": DOMSnapshot.enableReturnValue;
     "DOMSnapshot.getSnapshot": DOMSnapshot.getSnapshotReturnValue;
@@ -22302,6 +24359,10 @@ Error was thrown.
     "DOMStorage.getDOMStorageItems": DOMStorage.getDOMStorageItemsReturnValue;
     "DOMStorage.removeDOMStorageItem": DOMStorage.removeDOMStorageItemReturnValue;
     "DOMStorage.setDOMStorageItem": DOMStorage.setDOMStorageItemReturnValue;
+    "DeviceAccess.enable": DeviceAccess.enableReturnValue;
+    "DeviceAccess.disable": DeviceAccess.disableReturnValue;
+    "DeviceAccess.selectPrompt": DeviceAccess.selectPromptReturnValue;
+    "DeviceAccess.cancelPrompt": DeviceAccess.cancelPromptReturnValue;
     "DeviceOrientation.clearDeviceOrientationOverride": DeviceOrientation.clearDeviceOrientationOverrideReturnValue;
     "DeviceOrientation.setDeviceOrientationOverride": DeviceOrientation.setDeviceOrientationOverrideReturnValue;
     "Emulation.canEmulate": Emulation.canEmulateReturnValue;
@@ -22323,13 +24384,13 @@ Error was thrown.
     "Emulation.setEmitTouchEventsForMouse": Emulation.setEmitTouchEventsForMouseReturnValue;
     "Emulation.setEmulatedMedia": Emulation.setEmulatedMediaReturnValue;
     "Emulation.setEmulatedVisionDeficiency": Emulation.setEmulatedVisionDeficiencyReturnValue;
+    "Emulation.setEmulatedOSTextScale": Emulation.setEmulatedOSTextScaleReturnValue;
     "Emulation.setGeolocationOverride": Emulation.setGeolocationOverrideReturnValue;
     "Emulation.getOverriddenSensorInformation": Emulation.getOverriddenSensorInformationReturnValue;
     "Emulation.setSensorOverrideEnabled": Emulation.setSensorOverrideEnabledReturnValue;
     "Emulation.setSensorOverrideReadings": Emulation.setSensorOverrideReadingsReturnValue;
     "Emulation.setPressureSourceOverrideEnabled": Emulation.setPressureSourceOverrideEnabledReturnValue;
     "Emulation.setPressureStateOverride": Emulation.setPressureStateOverrideReturnValue;
-    "Emulation.setPressureDataOverride": Emulation.setPressureDataOverrideReturnValue;
     "Emulation.setIdleOverride": Emulation.setIdleOverrideReturnValue;
     "Emulation.clearIdleOverride": Emulation.clearIdleOverrideReturnValue;
     "Emulation.setNavigatorOverrides": Emulation.setNavigatorOverridesReturnValue;
@@ -22341,17 +24402,50 @@ Error was thrown.
     "Emulation.setTimezoneOverride": Emulation.setTimezoneOverrideReturnValue;
     "Emulation.setVisibleSize": Emulation.setVisibleSizeReturnValue;
     "Emulation.setDisabledImageTypes": Emulation.setDisabledImageTypesReturnValue;
+    "Emulation.setDataSaverOverride": Emulation.setDataSaverOverrideReturnValue;
     "Emulation.setHardwareConcurrencyOverride": Emulation.setHardwareConcurrencyOverrideReturnValue;
     "Emulation.setUserAgentOverride": Emulation.setUserAgentOverrideReturnValue;
     "Emulation.setAutomationOverride": Emulation.setAutomationOverrideReturnValue;
     "Emulation.setSmallViewportHeightDifferenceOverride": Emulation.setSmallViewportHeightDifferenceOverrideReturnValue;
+    "Emulation.getScreenInfos": Emulation.getScreenInfosReturnValue;
+    "Emulation.addScreen": Emulation.addScreenReturnValue;
+    "Emulation.updateScreen": Emulation.updateScreenReturnValue;
+    "Emulation.removeScreen": Emulation.removeScreenReturnValue;
+    "Emulation.setPrimaryScreen": Emulation.setPrimaryScreenReturnValue;
+    "EventBreakpoints.setInstrumentationBreakpoint": EventBreakpoints.setInstrumentationBreakpointReturnValue;
+    "EventBreakpoints.removeInstrumentationBreakpoint": EventBreakpoints.removeInstrumentationBreakpointReturnValue;
+    "EventBreakpoints.disable": EventBreakpoints.disableReturnValue;
+    "Extensions.triggerAction": Extensions.triggerActionReturnValue;
+    "Extensions.loadUnpacked": Extensions.loadUnpackedReturnValue;
+    "Extensions.getExtensions": Extensions.getExtensionsReturnValue;
+    "Extensions.uninstall": Extensions.uninstallReturnValue;
+    "Extensions.getStorageItems": Extensions.getStorageItemsReturnValue;
+    "Extensions.removeStorageItems": Extensions.removeStorageItemsReturnValue;
+    "Extensions.clearStorageItems": Extensions.clearStorageItemsReturnValue;
+    "Extensions.setStorageItems": Extensions.setStorageItemsReturnValue;
+    "FedCm.enable": FedCm.enableReturnValue;
+    "FedCm.disable": FedCm.disableReturnValue;
+    "FedCm.selectAccount": FedCm.selectAccountReturnValue;
+    "FedCm.clickDialogButton": FedCm.clickDialogButtonReturnValue;
+    "FedCm.openUrl": FedCm.openUrlReturnValue;
+    "FedCm.dismissDialog": FedCm.dismissDialogReturnValue;
+    "FedCm.resetCooldown": FedCm.resetCooldownReturnValue;
+    "Fetch.disable": Fetch.disableReturnValue;
+    "Fetch.enable": Fetch.enableReturnValue;
+    "Fetch.failRequest": Fetch.failRequestReturnValue;
+    "Fetch.fulfillRequest": Fetch.fulfillRequestReturnValue;
+    "Fetch.continueRequest": Fetch.continueRequestReturnValue;
+    "Fetch.continueWithAuth": Fetch.continueWithAuthReturnValue;
+    "Fetch.continueResponse": Fetch.continueResponseReturnValue;
+    "Fetch.getResponseBody": Fetch.getResponseBodyReturnValue;
+    "Fetch.takeResponseBodyAsStream": Fetch.takeResponseBodyAsStreamReturnValue;
+    "FileSystem.getDirectory": FileSystem.getDirectoryReturnValue;
     "HeadlessExperimental.beginFrame": HeadlessExperimental.beginFrameReturnValue;
     "HeadlessExperimental.disable": HeadlessExperimental.disableReturnValue;
     "HeadlessExperimental.enable": HeadlessExperimental.enableReturnValue;
     "IO.close": IO.closeReturnValue;
     "IO.read": IO.readReturnValue;
     "IO.resolveBlob": IO.resolveBlobReturnValue;
-    "FileSystem.getDirectory": FileSystem.getDirectoryReturnValue;
     "IndexedDB.clearObjectStore": IndexedDB.clearObjectStoreReturnValue;
     "IndexedDB.deleteDatabase": IndexedDB.deleteDatabaseReturnValue;
     "IndexedDB.deleteObjectStoreEntries": IndexedDB.deleteObjectStoreEntriesReturnValue;
@@ -22390,6 +24484,8 @@ Error was thrown.
     "Log.enable": Log.enableReturnValue;
     "Log.startViolationsReport": Log.startViolationsReportReturnValue;
     "Log.stopViolationsReport": Log.stopViolationsReportReturnValue;
+    "Media.enable": Media.enableReturnValue;
+    "Media.disable": Media.disableReturnValue;
     "Memory.getDOMCounters": Memory.getDOMCountersReturnValue;
     "Memory.getDOMCountersForLeakDetection": Memory.getDOMCountersForLeakDetectionReturnValue;
     "Memory.prepareForLeakDetection": Memory.prepareForLeakDetectionReturnValue;
@@ -22412,7 +24508,10 @@ Error was thrown.
     "Network.deleteCookies": Network.deleteCookiesReturnValue;
     "Network.disable": Network.disableReturnValue;
     "Network.emulateNetworkConditions": Network.emulateNetworkConditionsReturnValue;
+    "Network.emulateNetworkConditionsByRule": Network.emulateNetworkConditionsByRuleReturnValue;
+    "Network.overrideNetworkState": Network.overrideNetworkStateReturnValue;
     "Network.enable": Network.enableReturnValue;
+    "Network.configureDurableMessages": Network.configureDurableMessagesReturnValue;
     "Network.getAllCookies": Network.getAllCookiesReturnValue;
     "Network.getCertificate": Network.getCertificateReturnValue;
     "Network.getCookies": Network.getCookiesReturnValue;
@@ -22434,6 +24533,9 @@ Error was thrown.
     "Network.streamResourceContent": Network.streamResourceContentReturnValue;
     "Network.getSecurityIsolationStatus": Network.getSecurityIsolationStatusReturnValue;
     "Network.enableReportingApi": Network.enableReportingApiReturnValue;
+    "Network.enableDeviceBoundSessions": Network.enableDeviceBoundSessionsReturnValue;
+    "Network.deleteDeviceBoundSession": Network.deleteDeviceBoundSessionReturnValue;
+    "Network.fetchSchemefulSite": Network.fetchSchemefulSiteReturnValue;
     "Network.loadNetworkResource": Network.loadNetworkResourceReturnValue;
     "Network.setCookieControls": Network.setCookieControlsReturnValue;
     "Overlay.disable": Overlay.disableReturnValue;
@@ -22456,6 +24558,7 @@ Error was thrown.
     "Overlay.setShowFlexOverlays": Overlay.setShowFlexOverlaysReturnValue;
     "Overlay.setShowScrollSnapOverlays": Overlay.setShowScrollSnapOverlaysReturnValue;
     "Overlay.setShowContainerQueryOverlays": Overlay.setShowContainerQueryOverlaysReturnValue;
+    "Overlay.setShowInspectedElementAnchor": Overlay.setShowInspectedElementAnchorReturnValue;
     "Overlay.setShowPaintRects": Overlay.setShowPaintRectsReturnValue;
     "Overlay.setShowLayoutShiftRegions": Overlay.setShowLayoutShiftRegionsReturnValue;
     "Overlay.setShowScrollBottleneckRects": Overlay.setShowScrollBottleneckRectsReturnValue;
@@ -22463,8 +24566,16 @@ Error was thrown.
     "Overlay.setShowWebVitals": Overlay.setShowWebVitalsReturnValue;
     "Overlay.setShowViewportSizeOnResize": Overlay.setShowViewportSizeOnResizeReturnValue;
     "Overlay.setShowHinge": Overlay.setShowHingeReturnValue;
+    "Overlay.setShowDisplayCutout": Overlay.setShowDisplayCutoutReturnValue;
     "Overlay.setShowIsolatedElements": Overlay.setShowIsolatedElementsReturnValue;
     "Overlay.setShowWindowControlsOverlay": Overlay.setShowWindowControlsOverlayReturnValue;
+    "PWA.getOsAppState": PWA.getOsAppStateReturnValue;
+    "PWA.install": PWA.installReturnValue;
+    "PWA.uninstall": PWA.uninstallReturnValue;
+    "PWA.launch": PWA.launchReturnValue;
+    "PWA.launchFilesInApp": PWA.launchFilesInAppReturnValue;
+    "PWA.openCurrentPageInApp": PWA.openCurrentPageInAppReturnValue;
+    "PWA.changeAppUserSettings": PWA.changeAppUserSettingsReturnValue;
     "Page.addScriptToEvaluateOnLoad": Page.addScriptToEvaluateOnLoadReturnValue;
     "Page.addScriptToEvaluateOnNewDocument": Page.addScriptToEvaluateOnNewDocumentReturnValue;
     "Page.bringToFront": Page.bringToFrontReturnValue;
@@ -22481,7 +24592,7 @@ Error was thrown.
     "Page.getInstallabilityErrors": Page.getInstallabilityErrorsReturnValue;
     "Page.getManifestIcons": Page.getManifestIconsReturnValue;
     "Page.getAppId": Page.getAppIdReturnValue;
-    "Page.getAdScriptAncestryIds": Page.getAdScriptAncestryIdsReturnValue;
+    "Page.getAdScriptAncestry": Page.getAdScriptAncestryReturnValue;
     "Page.getFrameTree": Page.getFrameTreeReturnValue;
     "Page.getLayoutMetrics": Page.getLayoutMetricsReturnValue;
     "Page.getNavigationHistory": Page.getNavigationHistoryReturnValue;
@@ -22525,11 +24636,14 @@ Error was thrown.
     "Page.waitForDebugger": Page.waitForDebuggerReturnValue;
     "Page.setInterceptFileChooserDialog": Page.setInterceptFileChooserDialogReturnValue;
     "Page.setPrerenderingAllowed": Page.setPrerenderingAllowedReturnValue;
+    "Page.getAnnotatedPageContent": Page.getAnnotatedPageContentReturnValue;
     "Performance.disable": Performance.disableReturnValue;
     "Performance.enable": Performance.enableReturnValue;
     "Performance.setTimeDomain": Performance.setTimeDomainReturnValue;
     "Performance.getMetrics": Performance.getMetricsReturnValue;
     "PerformanceTimeline.enable": PerformanceTimeline.enableReturnValue;
+    "Preload.enable": Preload.enableReturnValue;
+    "Preload.disable": Preload.disableReturnValue;
     "Security.disable": Security.disableReturnValue;
     "Security.enable": Security.enableReturnValue;
     "Security.setIgnoreCertificateErrors": Security.setIgnoreCertificateErrorsReturnValue;
@@ -22540,7 +24654,6 @@ Error was thrown.
     "ServiceWorker.dispatchSyncEvent": ServiceWorker.dispatchSyncEventReturnValue;
     "ServiceWorker.dispatchPeriodicSyncEvent": ServiceWorker.dispatchPeriodicSyncEventReturnValue;
     "ServiceWorker.enable": ServiceWorker.enableReturnValue;
-    "ServiceWorker.inspectWorker": ServiceWorker.inspectWorkerReturnValue;
     "ServiceWorker.setForceUpdateOnPageLoad": ServiceWorker.setForceUpdateOnPageLoadReturnValue;
     "ServiceWorker.skipWaiting": ServiceWorker.skipWaitingReturnValue;
     "ServiceWorker.startWorker": ServiceWorker.startWorkerReturnValue;
@@ -22548,7 +24661,20 @@ Error was thrown.
     "ServiceWorker.stopWorker": ServiceWorker.stopWorkerReturnValue;
     "ServiceWorker.unregister": ServiceWorker.unregisterReturnValue;
     "ServiceWorker.updateRegistration": ServiceWorker.updateRegistrationReturnValue;
+    "SmartCardEmulation.enable": SmartCardEmulation.enableReturnValue;
+    "SmartCardEmulation.disable": SmartCardEmulation.disableReturnValue;
+    "SmartCardEmulation.reportEstablishContextResult": SmartCardEmulation.reportEstablishContextResultReturnValue;
+    "SmartCardEmulation.reportReleaseContextResult": SmartCardEmulation.reportReleaseContextResultReturnValue;
+    "SmartCardEmulation.reportListReadersResult": SmartCardEmulation.reportListReadersResultReturnValue;
+    "SmartCardEmulation.reportGetStatusChangeResult": SmartCardEmulation.reportGetStatusChangeResultReturnValue;
+    "SmartCardEmulation.reportBeginTransactionResult": SmartCardEmulation.reportBeginTransactionResultReturnValue;
+    "SmartCardEmulation.reportPlainResult": SmartCardEmulation.reportPlainResultReturnValue;
+    "SmartCardEmulation.reportConnectResult": SmartCardEmulation.reportConnectResultReturnValue;
+    "SmartCardEmulation.reportDataResult": SmartCardEmulation.reportDataResultReturnValue;
+    "SmartCardEmulation.reportStatusResult": SmartCardEmulation.reportStatusResultReturnValue;
+    "SmartCardEmulation.reportError": SmartCardEmulation.reportErrorReturnValue;
     "Storage.getStorageKeyForFrame": Storage.getStorageKeyForFrameReturnValue;
+    "Storage.getStorageKey": Storage.getStorageKeyReturnValue;
     "Storage.clearDataForOrigin": Storage.clearDataForOriginReturnValue;
     "Storage.clearDataForStorageKey": Storage.clearDataForStorageKeyReturnValue;
     "Storage.getCookies": Storage.getCookiesReturnValue;
@@ -22579,11 +24705,7 @@ Error was thrown.
     "Storage.setStorageBucketTracking": Storage.setStorageBucketTrackingReturnValue;
     "Storage.deleteStorageBucket": Storage.deleteStorageBucketReturnValue;
     "Storage.runBounceTrackingMitigations": Storage.runBounceTrackingMitigationsReturnValue;
-    "Storage.setAttributionReportingLocalTestingMode": Storage.setAttributionReportingLocalTestingModeReturnValue;
-    "Storage.setAttributionReportingTracking": Storage.setAttributionReportingTrackingReturnValue;
-    "Storage.sendPendingAttributionReports": Storage.sendPendingAttributionReportsReturnValue;
     "Storage.getRelatedWebsiteSets": Storage.getRelatedWebsiteSetsReturnValue;
-    "Storage.getAffectedUrlsForThirdPartyCookieMetadata": Storage.getAffectedUrlsForThirdPartyCookieMetadataReturnValue;
     "Storage.setProtectedAudienceKAnonymity": Storage.setProtectedAudienceKAnonymityReturnValue;
     "SystemInfo.getInfo": SystemInfo.getInfoReturnValue;
     "SystemInfo.getFeatureState": SystemInfo.getFeatureStateReturnValue;
@@ -22605,22 +24727,16 @@ Error was thrown.
     "Target.autoAttachRelated": Target.autoAttachRelatedReturnValue;
     "Target.setDiscoverTargets": Target.setDiscoverTargetsReturnValue;
     "Target.setRemoteLocations": Target.setRemoteLocationsReturnValue;
+    "Target.getDevToolsTarget": Target.getDevToolsTargetReturnValue;
+    "Target.openDevTools": Target.openDevToolsReturnValue;
     "Tethering.bind": Tethering.bindReturnValue;
     "Tethering.unbind": Tethering.unbindReturnValue;
     "Tracing.end": Tracing.endReturnValue;
     "Tracing.getCategories": Tracing.getCategoriesReturnValue;
+    "Tracing.getTrackEventDescriptor": Tracing.getTrackEventDescriptorReturnValue;
     "Tracing.recordClockSyncMarker": Tracing.recordClockSyncMarkerReturnValue;
     "Tracing.requestMemoryDump": Tracing.requestMemoryDumpReturnValue;
     "Tracing.start": Tracing.startReturnValue;
-    "Fetch.disable": Fetch.disableReturnValue;
-    "Fetch.enable": Fetch.enableReturnValue;
-    "Fetch.failRequest": Fetch.failRequestReturnValue;
-    "Fetch.fulfillRequest": Fetch.fulfillRequestReturnValue;
-    "Fetch.continueRequest": Fetch.continueRequestReturnValue;
-    "Fetch.continueWithAuth": Fetch.continueWithAuthReturnValue;
-    "Fetch.continueResponse": Fetch.continueResponseReturnValue;
-    "Fetch.getResponseBody": Fetch.getResponseBodyReturnValue;
-    "Fetch.takeResponseBodyAsStream": Fetch.takeResponseBodyAsStreamReturnValue;
     "WebAudio.enable": WebAudio.enableReturnValue;
     "WebAudio.disable": WebAudio.disableReturnValue;
     "WebAudio.getRealtimeData": WebAudio.getRealtimeDataReturnValue;
@@ -22637,43 +24753,10 @@ Error was thrown.
     "WebAuthn.setUserVerified": WebAuthn.setUserVerifiedReturnValue;
     "WebAuthn.setAutomaticPresenceSimulation": WebAuthn.setAutomaticPresenceSimulationReturnValue;
     "WebAuthn.setCredentialProperties": WebAuthn.setCredentialPropertiesReturnValue;
-    "Media.enable": Media.enableReturnValue;
-    "Media.disable": Media.disableReturnValue;
-    "DeviceAccess.enable": DeviceAccess.enableReturnValue;
-    "DeviceAccess.disable": DeviceAccess.disableReturnValue;
-    "DeviceAccess.selectPrompt": DeviceAccess.selectPromptReturnValue;
-    "DeviceAccess.cancelPrompt": DeviceAccess.cancelPromptReturnValue;
-    "Preload.enable": Preload.enableReturnValue;
-    "Preload.disable": Preload.disableReturnValue;
-    "FedCm.enable": FedCm.enableReturnValue;
-    "FedCm.disable": FedCm.disableReturnValue;
-    "FedCm.selectAccount": FedCm.selectAccountReturnValue;
-    "FedCm.clickDialogButton": FedCm.clickDialogButtonReturnValue;
-    "FedCm.openUrl": FedCm.openUrlReturnValue;
-    "FedCm.dismissDialog": FedCm.dismissDialogReturnValue;
-    "FedCm.resetCooldown": FedCm.resetCooldownReturnValue;
-    "PWA.getOsAppState": PWA.getOsAppStateReturnValue;
-    "PWA.install": PWA.installReturnValue;
-    "PWA.uninstall": PWA.uninstallReturnValue;
-    "PWA.launch": PWA.launchReturnValue;
-    "PWA.launchFilesInApp": PWA.launchFilesInAppReturnValue;
-    "PWA.openCurrentPageInApp": PWA.openCurrentPageInAppReturnValue;
-    "PWA.changeAppUserSettings": PWA.changeAppUserSettingsReturnValue;
-    "BluetoothEmulation.enable": BluetoothEmulation.enableReturnValue;
-    "BluetoothEmulation.setSimulatedCentralState": BluetoothEmulation.setSimulatedCentralStateReturnValue;
-    "BluetoothEmulation.disable": BluetoothEmulation.disableReturnValue;
-    "BluetoothEmulation.simulatePreconnectedPeripheral": BluetoothEmulation.simulatePreconnectedPeripheralReturnValue;
-    "BluetoothEmulation.simulateAdvertisement": BluetoothEmulation.simulateAdvertisementReturnValue;
-    "BluetoothEmulation.simulateGATTOperationResponse": BluetoothEmulation.simulateGATTOperationResponseReturnValue;
-    "BluetoothEmulation.simulateCharacteristicOperationResponse": BluetoothEmulation.simulateCharacteristicOperationResponseReturnValue;
-    "BluetoothEmulation.simulateDescriptorOperationResponse": BluetoothEmulation.simulateDescriptorOperationResponseReturnValue;
-    "BluetoothEmulation.addService": BluetoothEmulation.addServiceReturnValue;
-    "BluetoothEmulation.removeService": BluetoothEmulation.removeServiceReturnValue;
-    "BluetoothEmulation.addCharacteristic": BluetoothEmulation.addCharacteristicReturnValue;
-    "BluetoothEmulation.removeCharacteristic": BluetoothEmulation.removeCharacteristicReturnValue;
-    "BluetoothEmulation.addDescriptor": BluetoothEmulation.addDescriptorReturnValue;
-    "BluetoothEmulation.removeDescriptor": BluetoothEmulation.removeDescriptorReturnValue;
-    "BluetoothEmulation.simulateGATTDisconnection": BluetoothEmulation.simulateGATTDisconnectionReturnValue;
+    "WebMCP.enable": WebMCP.enableReturnValue;
+    "WebMCP.disable": WebMCP.disableReturnValue;
+    "WebMCP.invokeTool": WebMCP.invokeToolReturnValue;
+    "WebMCP.cancelInvocation": WebMCP.cancelInvocationReturnValue;
     "Console.clearMessages": Console.clearMessagesReturnValue;
     "Console.disable": Console.disableReturnValue;
     "Console.enable": Console.enableReturnValue;

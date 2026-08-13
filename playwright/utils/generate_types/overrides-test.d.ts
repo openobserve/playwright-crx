@@ -18,10 +18,21 @@ import type { APIRequestContext, Browser, BrowserContext, BrowserContextOptions,
 export * from 'playwright-core';
 
 export type BlobReporterOptions = { outputDir?: string, fileName?: string };
-export type ListReporterOptions = { printSteps?: boolean };
-export type JUnitReporterOptions = { outputFile?: string, stripANSIControlSequences?: boolean, includeProjectInTestName?: boolean };
+export type ListReporterOptions = { printSteps?: boolean, printFailuresInline?: boolean };
+export type JUnitReporterOptions = { outputFile?: string, stripANSIControlSequences?: boolean, includeProjectInTestName?: boolean, includeRetries?: boolean };
 export type JsonReporterOptions = { outputFile?: string };
-export type HtmlReporterOptions = { outputFolder?: string, open?: 'always' | 'never' | 'on-failure', host?: string, port?: number, attachmentsBaseURL?: string, title?: string };
+export type HtmlReporterOptions = {
+  outputFolder?: string;
+  open?: 'always' | 'never' | 'on-failure';
+  host?: string;
+  port?: number;
+  attachmentsBaseURL?: string;
+  title?: string;
+  noSnippets?: boolean;
+  noCopyPrompt?: boolean;
+  doNotInlineAssets?: boolean;
+  mergeFiles?: boolean;
+};
 
 export type ReporterDescription = Readonly<
   ['blob'] | ['blob', BlobReporterOptions] |
@@ -81,14 +92,16 @@ export type TestDetailsAnnotation = {
   description?: string;
 };
 
-export type TestAnnotation = TestDetailsAnnotation;
+export type TestAnnotation = TestDetailsAnnotation & {
+  location?: Location;
+};
 
 export type TestDetails = {
   tag?: string | string[];
   annotation?: TestDetailsAnnotation | TestDetailsAnnotation[];
 }
 
-type TestBody<TestArgs> = (args: TestArgs, testInfo: TestInfo) => Promise<void> | void;
+type TestBody<TestArgs> = (args: TestArgs, testInfo: TestInfo) => Promise<unknown> | unknown;
 type ConditionBody<TestArgs> = (args: TestArgs) => boolean;
 
 export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
@@ -161,6 +174,8 @@ export interface TestType<TestArgs extends {}, WorkerArgs extends {}> {
     only(title: string, details: TestDetails, body: TestBody<TestArgs & WorkerArgs>): void;
   }
 
+  abort(message?: string): never;
+
   slow(): void;
   slow(condition: boolean, description?: string): void;
   slow(callback: ConditionBody<TestArgs & WorkerArgs>, description?: string): void;
@@ -189,13 +204,13 @@ export type WorkerFixture<R, Args extends {}> = (args: Args, use: (r: R) => Prom
 type TestFixtureValue<R, Args extends {}> = Exclude<R, Function> | TestFixture<R, Args>;
 type WorkerFixtureValue<R, Args extends {}> = Exclude<R, Function> | WorkerFixture<R, Args>;
 export type Fixtures<T extends {} = {}, W extends {} = {}, PT extends {} = {}, PW extends {} = {}> = {
-  [K in keyof PW]?: WorkerFixtureValue<PW[K], W & PW> | [WorkerFixtureValue<PW[K], W & PW>, { scope: 'worker', timeout?: number | undefined, title?: string, box?: boolean }];
+  [K in keyof PW]?: WorkerFixtureValue<PW[K], W & PW> | [WorkerFixtureValue<PW[K], W & PW>, { scope: 'worker', timeout?: number | undefined, title?: string, box?: boolean | 'self' }];
 } & {
-  [K in keyof PT]?: TestFixtureValue<PT[K], T & W & PT & PW> | [TestFixtureValue<PT[K], T & W & PT & PW>, { scope: 'test', timeout?: number | undefined, title?: string, box?: boolean }];
+  [K in keyof PT]?: TestFixtureValue<PT[K], T & W & PT & PW> | [TestFixtureValue<PT[K], T & W & PT & PW>, { scope: 'test', timeout?: number | undefined, title?: string, box?: boolean | 'self' }];
 } & {
-  [K in Exclude<keyof W, keyof PW | keyof PT>]?: [WorkerFixtureValue<W[K], W & PW>, { scope: 'worker', auto?: boolean, option?: boolean, timeout?: number | undefined, title?: string, box?: boolean }];
+  [K in Exclude<keyof W, keyof PW | keyof PT>]?: [WorkerFixtureValue<W[K], W & PW>, { scope: 'worker', auto?: boolean, option?: boolean, timeout?: number | undefined, title?: string, box?: boolean | 'self' }];
 } & {
-  [K in Exclude<keyof T, keyof PW | keyof PT>]?: TestFixtureValue<T[K], T & W & PT & PW> | [TestFixtureValue<T[K], T & W & PT & PW>, { scope?: 'test', auto?: boolean, option?: boolean, timeout?: number | undefined, title?: string, box?: boolean }];
+  [K in Exclude<keyof T, keyof PW | keyof PT>]?: TestFixtureValue<T[K], T & W & PT & PW> | [TestFixtureValue<T[K], T & W & PT & PW>, { scope?: 'test', auto?: boolean, option?: boolean, timeout?: number | undefined, title?: string, box?: boolean | 'self' }];
 };
 
 type BrowserName = 'chromium' | 'firefox' | 'webkit';
@@ -246,15 +261,15 @@ export interface PlaywrightWorkerOptions {
   channel: BrowserChannel | undefined;
   launchOptions: Omit<LaunchOptions, 'tracesDir'>;
   connectOptions: ConnectOptions | undefined;
+  reuseContext: boolean;
   screenshot: ScreenshotMode | { mode: ScreenshotMode } & Pick<PageScreenshotOptions, 'fullPage' | 'omitBackground'>;
   trace: TraceMode | /** deprecated */ 'retry-with-trace' | { mode: TraceMode, snapshots?: boolean, screenshots?: boolean, sources?: boolean, attachments?: boolean };
-  video: VideoMode | /** deprecated */ 'retry-with-video' | { mode: VideoMode, size?: ViewportSize };
+  video: VideoMode | /** deprecated */ 'retry-with-video' | { mode: VideoMode, size?: ViewportSize, show?: { actions?: { duration?: number, position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right', fontSize?: number, cursor?: 'none' | 'pointer' }, test?: { level?: 'file' | 'title' | 'step', position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right', fontSize?: number } } };
 }
 
 export type ScreenshotMode = 'off' | 'on' | 'only-on-failure' | 'on-first-failure';
-export type TraceMode = 'off' | 'on' | 'retain-on-failure' | 'on-first-retry' | 'on-all-retries' | 'retain-on-first-failure';
-export type VideoMode = 'off' | 'on' | 'retain-on-failure' | 'on-first-retry';
-
+export type TraceMode = 'off' | 'on' | 'retain-on-failure' | 'on-first-retry' | 'on-all-retries' | 'retain-on-first-failure' | 'retain-on-failure-and-retries';
+export type VideoMode = 'off' | 'on' | 'retain-on-failure' | 'on-first-retry' | 'on-all-retries' | 'retain-on-first-failure' | 'retain-on-failure-and-retries';
 export interface PlaywrightTestOptions {
   acceptDownloads: boolean;
   bypassCSP: boolean;
@@ -290,10 +305,17 @@ export interface PlaywrightWorkerArgs {
   browser: Browser;
 }
 
+type StoryProps<Story> =
+  Story extends (props: infer Props) => any ? Props :
+  Story extends new (...args: any[]) => { $props: infer Props } ? Props :
+  Story extends new (props: infer Props, ...args: any[]) => any ? Props :
+  Story;
+
 export interface PlaywrightTestArgs {
   context: BrowserContext;
   page: Page;
   request: APIRequestContext;
+  mount: <Story = Record<string, any>>(storyId: string, props?: StoryProps<Story>) => Promise<Locator & { update(props?: StoryProps<Story>): Promise<void>, unmount(): Promise<void> }>;
 }
 
 type ExcludeProps<A, B> = {
@@ -304,12 +326,16 @@ type CustomProperties<T> = ExcludeProps<T, PlaywrightTestOptions & PlaywrightWor
 export type PlaywrightTestProject<TestArgs = {}, WorkerArgs = {}> = Project<PlaywrightTestOptions & CustomProperties<TestArgs>, PlaywrightWorkerOptions & CustomProperties<WorkerArgs>>;
 export type PlaywrightTestConfig<TestArgs = {}, WorkerArgs = {}> = Config<PlaywrightTestOptions & CustomProperties<TestArgs>, PlaywrightWorkerOptions & CustomProperties<WorkerArgs>>;
 
+// Use the global URLPattern type if available (Node.js 22+, modern browsers),
+// otherwise fall back to `never` so it disappears from union types.
+type URLPattern = typeof globalThis extends { URLPattern: new (...args: any) => infer T } ? T : never;
 type AsymmetricMatcher = Record<string, any>;
 
 interface AsymmetricMatchers {
   any(sample: unknown): AsymmetricMatcher;
   anything(): AsymmetricMatcher;
   arrayContaining(sample: Array<unknown>): AsymmetricMatcher;
+  arrayOf(sample: unknown): AsymmetricMatcher;
   closeTo(sample: number, precision?: number): AsymmetricMatcher;
   objectContaining(sample: Record<string, unknown>): AsymmetricMatcher;
   stringContaining(sample: string): AsymmetricMatcher;
@@ -318,6 +344,8 @@ interface AsymmetricMatchers {
 
 interface GenericAssertions<R> {
   not: GenericAssertions<R>;
+  resolves: GenericAssertions<R>;
+  rejects: GenericAssertions<R>;
   toBe(expected: unknown): R;
   toBeCloseTo(expected: number, numDigits?: number): R;
   toBeDefined(): R;
@@ -462,7 +490,7 @@ type PollMatchers<R, T, ExtendedMatchers> = {
 
 export type Expect<ExtendedMatchers = {}> = {
   <T = unknown>(actual: T, messageOrOptions?: string | { message?: string }): MakeMatchers<void, T, ExtendedMatchers>;
-  soft: <T = unknown>(actual: T, messageOrOptions?: string | { message?: string }) => MakeMatchers<void, T, ExtendedMatchers>;
+  soft: Expect<ExtendedMatchers>;
   poll: <T = unknown>(actual: () => T | Promise<T>, messageOrOptions?: string | { message?: string, timeout?: number, intervals?: number[] }) => PollMatchers<Promise<void>, T, ExtendedMatchers>;
   extend<MoreMatchers extends Record<string, (this: ExpectMatcherState, receiver: any, ...args: any[]) => MatcherReturnType | Promise<MatcherReturnType>>>(matchers: MoreMatchers): Expect<ExtendedMatchers & MoreMatchers>;
   configure: (configuration: {
@@ -522,4 +550,3 @@ export function mergeExpects<List extends any[]>(...expects: List): MergedExpect
 
 // This is required to not export everything by default. See https://github.com/Microsoft/TypeScript/issues/19545#issuecomment-340490459
 export { };
-

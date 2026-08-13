@@ -16,6 +16,8 @@
  */
 
 import { test as it, expect } from './pageTest';
+import { server as coreServer } from '../../packages/playwright-core/lib/coreBundle';
+const { nullProgress } = coreServer;
 
 const expectedOutput = '<html><head></head><body><div>hello</div></body></html>';
 
@@ -124,8 +126,38 @@ it('content() should throw nice error during navigation', async ({ page, server 
 });
 
 it('should return empty content there is no iframe src', async ({ page, browserName }) => {
-  it.fixme(browserName === 'webkit', 'Hangs in all browsers because there is no utility context');
+  it.fixme(browserName === 'webkit', 'there is no utility context');
   await page.setContent(`<iframe src="javascript:console.log(1)"></iframe>`);
   expect(page.frames().length).toBe(2);
   expect(await page.frames()[1].content()).toBe('<html><head></head><body></body></html>');
+});
+
+it('should handle timeout properly', async ({ page, toImpl, browserName }) => {
+  it.skip(browserName === 'firefox', 'tampering with console.debug in utility world does not work');
+
+  await toImpl(page).mainFrame().evaluateExpression(nullProgress, String(() => {
+    window['saved'] = console.debug.bind(console);
+    console.debug = () => {};
+  }), { isFunction: true, world: 'utility' });
+  const error = await page.setContent(`<div>hello</div>`, { timeout: 1000 }).catch(e => e);
+  expect(error.message).toContain('page.setContent: Timeout 1000ms exceeded');
+
+  // Should recover after timeout.
+  await toImpl(page).mainFrame().evaluateExpression(nullProgress, String(() => {
+    console.debug = window['saved'];
+  }), { isFunction: true, world: 'utility' });
+  await page.setContent(`<div>world</div>`);
+  await expect(page.locator('div')).toHaveText('world');
+});
+
+it('should handle timeout properly 2', async ({ page, toImpl, trace }) => {
+  it.skip(trace === 'on');
+
+  await toImpl(page).mainFrame().evaluateExpression(nullProgress, String(() => {
+    document.close = () => {
+      while (true) {}
+    };
+  }), { isFunction: true, world: 'utility' });
+  const error = await page.setContent(`<div>hello</div>`, { timeout: 1000 }).catch(e => e);
+  expect(error.message).toContain('page.setContent: Timeout 1000ms exceeded');
 });

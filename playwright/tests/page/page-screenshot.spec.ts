@@ -22,6 +22,7 @@ import type { Route } from 'playwright-core';
 import path from 'path';
 import fs from 'fs';
 import { comparePNGs } from '../config/comparator';
+import { utils } from '../../packages/playwright-core/lib/coreBundle';
 
 it.describe('page screenshot', () => {
   it.skip(({ browserName, headless }) => browserName === 'firefox' && !headless, 'Firefox headed produces a different image.');
@@ -194,6 +195,20 @@ it.describe('page screenshot', () => {
     expect(screenshotError.message).toContain('Clipped area is either empty or outside the resulting image');
   });
 
+  it('should throw on a negative clip size', async ({ page, server }) => {
+    await page.setViewportSize({ width: 500, height: 500 });
+    await page.goto(server.PREFIX + '/grid.html');
+    const screenshotError = await page.screenshot({
+      clip: {
+        x: 50,
+        y: 50,
+        width: -100,
+        height: 100
+      }
+    }).catch(error => error);
+    expect(screenshotError.message).toContain('Expected options.clip.width to be greater than 0');
+  });
+
   it('should run in parallel', async ({ page, server }) => {
     await page.setViewportSize({ width: 500, height: 500 });
     await page.goto(server.PREFIX + '/grid.html');
@@ -240,8 +255,8 @@ it.describe('page screenshot', () => {
     await verifyViewport(page, 500, 500);
   });
 
-  it('should allow transparency', async ({ page, browserName, platform, headless }) => {
-    it.fail(browserName === 'firefox');
+  it('should allow transparency', async ({ page, browserName, isBidi }) => {
+    it.fail(browserName === 'firefox' || isBidi);
 
     await page.setViewportSize({ width: 300, height: 300 });
     await page.setContent(`
@@ -258,16 +273,74 @@ it.describe('page screenshot', () => {
   });
 
   it('should render white background on jpeg file', async ({ page, server, isElectron }) => {
-    it.fixme(isElectron, 'omitBackground with jpeg does not work');
-
     await page.setViewportSize({ width: 300, height: 300 });
     await page.goto(server.EMPTY_PAGE);
     const screenshot = await page.screenshot({ omitBackground: true, type: 'jpeg' });
     expect(screenshot).toMatchSnapshot('white.jpg');
   });
 
+  it('should produce a valid webp screenshot', async ({ page, server }) => {
+    await page.setViewportSize({ width: 300, height: 300 });
+    await page.goto(server.EMPTY_PAGE);
+    await page.evaluate(() => (document.body.style.background = 'rgb(255, 0, 0)'));
+    const screenshot = await page.screenshot({ type: 'webp' });
+    expect(screenshot).toMatchSnapshot('red.webp');
+  });
+
+  it('path option should detect webp', async ({ page, server }, testInfo) => {
+    await page.setViewportSize({ width: 300, height: 300 });
+    await page.goto(server.EMPTY_PAGE);
+    await page.evaluate(() => (document.body.style.background = 'rgb(255, 0, 0)'));
+    const outputPath = testInfo.outputPath('screenshot.webp');
+    const screenshot = await page.screenshot({ path: outputPath });
+    expect(await fs.promises.readFile(outputPath)).toMatchSnapshot('red.webp');
+    expect(screenshot).toMatchSnapshot('red.webp');
+  });
+
+  it('quality option should work for webp', async ({ page, server }) => {
+    await page.goto(server.PREFIX + '/grid.html');
+    const lowQuality = await page.screenshot({ type: 'webp', quality: 0 });
+    const highQuality = await page.screenshot({ type: 'webp', quality: 100 });
+    expect(lowQuality.byteLength).toBeLessThan(highQuality.byteLength);
+  });
+
+  it('webp screenshots should be lossless by default', async ({ page, server }) => {
+    await page.goto(server.PREFIX + '/grid.html');
+    expect(utils.isLosslessWebp(await page.screenshot({ type: 'webp' }))).toBe(true);
+    expect(utils.isLosslessWebp(await page.screenshot({ type: 'webp', quality: 80 }))).toBe(false);
+  });
+
+  it('should allow transparency with webp', async ({ page, browserName, isBidi }) => {
+    it.skip(isBidi, 'transparency is not supported via WebDriver BiDi');
+    it.fail(browserName === 'firefox');
+
+    await page.setViewportSize({ width: 300, height: 300 });
+    await page.setContent(`
+      <style>
+        body { margin: 0 }
+        div { width: 300px; height: 100px; }
+      </style>
+      <div style="background:black"></div>
+      <div style="background:white"></div>
+      <div style="background:transparent"></div>
+    `);
+    const screenshot = await page.screenshot({ omitBackground: true, type: 'webp' });
+    const { width, height, data } = utils.decodeWebp(screenshot);
+    expect(width).toBe(300);
+    expect(height).toBe(300);
+    const pixel = (x: number, y: number) => [...data.subarray((y * width + x) * 4, (y * width + x) * 4 + 4)];
+    expect(pixel(150, 50)).toEqual([0, 0, 0, 255]);
+    expect(pixel(150, 150)).toEqual([255, 255, 255, 255]);
+    expect(pixel(150, 250)[3]).toBe(0);
+  });
+
+  it('quality option should throw for webp when out of range', async ({ page }) => {
+    const error = await page.screenshot({ type: 'webp', quality: 101 }).catch(e => e);
+    expect(error.message).toContain('Expected options.quality to be between 0 and 100');
+  });
+
   it('should work with odd clip size on Retina displays', async ({ page, isElectron }) => {
-    it.fixme(isElectron, 'Scale is wrong');
+    it.skip(isElectron, 'electron does not set device scale factor to 1');
 
     const screenshot = await page.screenshot({
       clip: {
@@ -280,21 +353,15 @@ it.describe('page screenshot', () => {
     expect(screenshot).toMatchSnapshot('screenshot-clip-odd-size.png');
   });
 
-  it('should work for canvas', async ({ page, server, isElectron, isMac, isLinux, macVersion, browserName, isHeadlessShell, headless }) => {
-    it.fixme(isElectron && isMac, 'Fails on the bots');
-    it.fixme(browserName === 'webkit' && isLinux && !headless, 'WebKit has slightly different corners on gtk4.');
+  it('should work for canvas', async ({ page, server }) => {
     await page.setViewportSize({ width: 500, height: 500 });
     await page.goto(server.PREFIX + '/screenshots/canvas.html');
     const screenshot = await page.screenshot();
-    if ((!isHeadlessShell && browserName === 'chromium' && isMac && os.arch() === 'arm64' && macVersion >= 14) ||
-        (browserName === 'webkit' && isLinux && os.arch() === 'x64'))
-      expect(screenshot).toMatchSnapshot('screenshot-canvas-with-accurate-corners.png');
-    else
-      expect(screenshot).toMatchSnapshot('screenshot-canvas.png');
+    // Allow 4 corners to be rendered differently on various platforms/browsers.
+    expect(screenshot).toMatchSnapshot('screenshot-canvas.png', { maxDiffPixels: 4 });
   });
 
-  it('should capture canvas changes', async ({ page, isElectron, browserName, isMac }) => {
-    it.fixme(browserName === 'webkit' && isMac, 'https://github.com/microsoft/playwright/issues/8796,https://github.com/microsoft/playwright/issues/16180');
+  it('should capture canvas changes', async ({ page, isElectron }) => {
     it.skip(isElectron);
     await page.goto('data:text/html,<canvas></canvas>');
     await page.evaluate(() => {
@@ -324,10 +391,9 @@ it.describe('page screenshot', () => {
     }
   });
 
-  it('should work for webgl', async ({ page, server, browserName, platform }) => {
-    it.fixme(browserName === 'firefox');
-    it.fixme(browserName === 'chromium' && platform === 'darwin' && os.arch() === 'arm64', 'SwiftShader is not available on macOS-arm64 - https://github.com/microsoft/playwright/issues/28216');
-    it.skip(browserName === 'webkit' && platform === 'darwin' && os.arch() === 'x64', 'Modernizr uses WebGL which is not available on Intel macOS - https://bugs.webkit.org/show_bug.cgi?id=278277');
+  it('should work for webgl', async ({ page, server, browserName, platform, isElectron }) => {
+    it.skip(browserName === 'webkit' && platform === 'darwin' && os.arch() === 'x64', 'WebGL is not available on Intel macOS - https://bugs.webkit.org/show_bug.cgi?id=278277');
+    it.skip(isElectron, 'different rendering in electron');
 
     await page.setViewportSize({ width: 640, height: 480 });
     await page.goto(server.PREFIX + '/screenshots/webgl.html');
@@ -378,8 +444,6 @@ it.describe('page screenshot', () => {
   });
 
   it('path option should detect jpeg', async ({ page, server, isElectron }, testInfo) => {
-    it.fixme(isElectron, 'omitBackground with jpeg does not work');
-
     await page.setViewportSize({ width: 300, height: 300 });
     await page.goto(server.EMPTY_PAGE);
     const outputPath = testInfo.outputPath('screenshot.jpg');
@@ -401,6 +465,13 @@ it.describe('page screenshot', () => {
   it('zero quality option should throw for png', async ({ page }) => {
     const error = await page.screenshot({ quality: 0, type: 'png' }).catch(e => e);
     expect(error.message).toContain('options.quality is unsupported for the png');
+  });
+
+  it('quality option should work for jpeg', async ({ page, server }) => {
+    await page.goto(server.PREFIX + '/grid.html');
+    const zeroQuality = await page.screenshot({ type: 'jpeg', quality: 0 });
+    const highQuality = await page.screenshot({ type: 'jpeg', quality: 100 });
+    expect(zeroQuality.byteLength).toBeLessThan(highQuality.byteLength);
   });
 
   it('should prefer type over extension', async ({ page }, testInfo) => {
@@ -431,6 +502,8 @@ it.describe('page screenshot', () => {
   });
 
   it('should take fullPage screenshots during navigation', async ({ page, server }) => {
+    it.slow();
+
     await page.setViewportSize({ width: 500, height: 500 });
     await page.goto(server.PREFIX + '/grid.html');
     const reloadSeveralTimes = async () => {
@@ -893,25 +966,28 @@ it.describe('page screenshot animations', () => {
   });
 });
 
-it('should throw if screenshot size is too large', async ({ page, browserName, isMac }) => {
+it('should throw if screenshot size is too large', async ({ page, browserName, isMac, isBidi }) => {
+  const maxSize = browserName === 'firefox' && isBidi ? 65535 : 32767;
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/16727' });
   {
-    await page.setContent(`<style>body {margin: 0; padding: 0;}</style><div style='min-height: 32767px; background: red;'></div>`);
+    await page.setContent(`<style>body {margin: 0; padding: 0;}</style><div style='min-height: ${maxSize}px; background: red;'></div>`);
     const result = await page.screenshot({ fullPage: true });
     expect(result).toBeTruthy();
   }
   {
-    await page.setContent(`<style>body {margin: 0; padding: 0;}</style><div style='min-height: 32768px; background: red;'></div>`);
+    await page.setContent(`<style>body {margin: 0; padding: 0;}</style><div style='min-height: ${maxSize + 1}px; background: red;'></div>`);
     const exception = await page.screenshot({ fullPage: true }).catch(e => e);
-    if (browserName === 'firefox' || (browserName === 'webkit' && !isMac))
+    if ((browserName === 'firefox' && !isBidi) || (browserName === 'webkit' && !isMac))
       expect(exception.message).toContain('Cannot take screenshot larger than 32767');
+    else if (browserName === 'firefox' && isBidi)
+      expect(exception.message).toContain('65536 exceeds the maximum allowed screenshot height of 65535 pixels');
   }
 });
 
 it('page screenshot should capture css transform', async function({ page, browserName, isElectron, isAndroid }) {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/26447' });
   it.fixme(browserName === 'webkit');
-  it.fixme(isElectron || isAndroid, 'Returns screenshot of a different size.');
+  it.skip(isElectron || isAndroid, 'Returns screenshot of a different size.');
   await page.setContent(`
     <style>
     .container {
@@ -954,7 +1030,7 @@ it('page screenshot should capture css transform', async function({ page, browse
 
 it('should capture css box-shadow', async ({ page, isElectron, isAndroid }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/21620' });
-  it.fixme(isElectron || isAndroid, 'Returns screenshot of a different size.');
+  it.skip(isElectron || isAndroid, 'Returns screenshot of a different size.');
   await page.setContent(`<div style="box-shadow: red 10px 10px 10px; width: 50px; height: 50px;"></div>`);
   await expect(page).toHaveScreenshot();
 });

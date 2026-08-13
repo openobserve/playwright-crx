@@ -1,7 +1,7 @@
 /**
  * Copyright (c) Microsoft Corporation.
  *
- * Licensed under the Apache License, Version 2.0 (the 'License");
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -23,18 +23,23 @@ import type { RootDispatcher } from './dispatcher';
 import type { PageDispatcher } from './pageDispatcher';
 import type { ConsoleMessage } from '../console';
 import type { Electron } from '../electron/electron';
-import type * as channels from '@protocol/channels';
+import type * as channels from '../channels';
+import type { Progress } from '../progress';
 
 
 export class ElectronDispatcher extends Dispatcher<Electron, channels.ElectronChannel, RootDispatcher> implements channels.ElectronChannel {
   _type_Electron = true;
+  _denyLaunch: boolean;
 
-  constructor(scope: RootDispatcher, electron: Electron) {
+  constructor(scope: RootDispatcher, electron: Electron, denyLaunch: boolean) {
     super(scope, electron, 'Electron', {});
+    this._denyLaunch = denyLaunch;
   }
 
-  async launch(params: channels.ElectronLaunchParams): Promise<channels.ElectronLaunchResult> {
-    const electronApplication = await this._object.launch(params);
+  async launch(params: channels.ElectronLaunchParams, progress: Progress): Promise<channels.ElectronLaunchResult> {
+    if (this._denyLaunch)
+      throw new Error(`Launching more browsers is not allowed.`);
+    const electronApplication = await this._object.launch(progress, params);
     return { electronApplication: new ElectronApplicationDispatcher(this, electronApplication) };
   }
 }
@@ -59,35 +64,32 @@ export class ElectronApplicationDispatcher extends Dispatcher<ElectronApplicatio
         type: message.type(),
         text: message.text(),
         args: message.args().map(a => JSHandleDispatcher.fromJSHandle(this, a)),
-        location: message.location()
+        location: message.location(),
+        timestamp: message.timestamp(),
       });
     });
   }
 
-  async browserWindow(params: channels.ElectronApplicationBrowserWindowParams): Promise<channels.ElectronApplicationBrowserWindowResult> {
-    const handle = await this._object.browserWindow((params.page as PageDispatcher).page());
+  async browserWindow(params: channels.ElectronApplicationBrowserWindowParams, progress: Progress): Promise<channels.ElectronApplicationBrowserWindowResult> {
+    const handle = await this._object.browserWindow(progress, (params.page as PageDispatcher).page());
     return { handle: JSHandleDispatcher.fromJSHandle(this, handle) };
   }
 
-  async evaluateExpression(params: channels.ElectronApplicationEvaluateExpressionParams): Promise<channels.ElectronApplicationEvaluateExpressionResult> {
-    const handle = await this._object._nodeElectronHandlePromise;
-    return { value: serializeResult(await handle.evaluateExpression(params.expression, { isFunction: params.isFunction }, parseArgument(params.arg))) };
+  async evaluateExpression(params: channels.ElectronApplicationEvaluateExpressionParams, progress: Progress): Promise<channels.ElectronApplicationEvaluateExpressionResult> {
+    const handle = await progress.race(this._object._nodeElectronHandlePromise);
+    return { value: serializeResult(await handle.evaluateExpression(progress, params.expression, { isFunction: params.isFunction }, parseArgument(params.arg))) };
   }
 
-  async evaluateExpressionHandle(params: channels.ElectronApplicationEvaluateExpressionHandleParams): Promise<channels.ElectronApplicationEvaluateExpressionHandleResult> {
-    const handle = await this._object._nodeElectronHandlePromise;
-    const result = await handle.evaluateExpressionHandle(params.expression, { isFunction: params.isFunction }, parseArgument(params.arg));
+  async evaluateExpressionHandle(params: channels.ElectronApplicationEvaluateExpressionHandleParams, progress: Progress): Promise<channels.ElectronApplicationEvaluateExpressionHandleResult> {
+    const handle = await progress.race(this._object._nodeElectronHandlePromise);
+    const result = await handle.evaluateExpressionHandle(progress, params.expression, { isFunction: params.isFunction }, parseArgument(params.arg));
     return { handle: JSHandleDispatcher.fromJSHandle(this, result) };
   }
 
-  async updateSubscription(params: channels.ElectronApplicationUpdateSubscriptionParams): Promise<void> {
+  async updateSubscription(params: channels.ElectronApplicationUpdateSubscriptionParams, progress: Progress): Promise<void> {
     if (params.enabled)
       this._subscriptions.add(params.event);
     else
       this._subscriptions.delete(params.event);
-  }
-
-  async close(): Promise<void> {
-    await this._object.close();
   }
 }

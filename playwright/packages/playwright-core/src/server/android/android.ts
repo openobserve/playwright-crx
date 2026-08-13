@@ -19,28 +19,28 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { PipeTransport } from '../utils/pipeTransport';
-import { createGuid } from '../utils/crypto';
-import { isUnderTest } from '../utils/debug';
-import { getPackageManagerExecCommand } from '../utils/env';
-import { makeWaitForNextTask } from '../utils/task';
-import { RecentLogsCollector } from '../utils/debugLogger';
-import { debug } from '../../utilsBundle';
+import debug from 'debug';
+import { PipeTransport } from '@utils/pipeTransport';
+import { createGuid } from '@utils/crypto';
+import { isUnderTest } from '@utils/debug';
+import { getPackageManagerExecCommand } from '@utils/env';
+import { makeWaitForNextTask } from '@utils/task';
+import { RecentLogsCollector } from '@utils/debugLogger';
+import { removeFolders } from '@utils/fileUtils';
+import { gracefullyCloseSet } from '@utils/processLauncher';
 import { wsReceiver, wsSender } from '../../utilsBundle';
 import { validateBrowserContextOptions } from '../browserContext';
 import { chromiumSwitches } from '../chromium/chromiumSwitches';
-import { CRBrowser } from '../chromium/crBrowser';
-import { removeFolders } from '../utils/fileUtils';
+import { shouldProxyLoopback, CRBrowser } from '../chromium/crBrowser';
 import { helper } from '../helper';
-import { SdkObject, serverSideCallMetadata } from '../instrumentation';
-import { gracefullyCloseSet } from '../utils/processLauncher';
-import { ProgressController } from '../progress';
+import { SdkObject } from '../instrumentation';
+import { isAbortError, Progress, ProgressController, raceUncancellableOperationWithCleanup } from '../progress';
 import { registry } from '../registry';
 
 import type { BrowserOptions, BrowserProcess } from '../browser';
 import type { BrowserContext } from '../browserContext';
 import type * as types from '../types';
-import type * as channels from '@protocol/channels';
+import type * as channels from '../channels';
 import type * as stream from 'stream';
 
 const ARTIFACTS_FOLDER = path.join(os.tmpdir(), 'playwright-artifacts-');
@@ -59,7 +59,6 @@ export interface DeviceBackend {
 }
 
 export interface SocketBackend extends EventEmitter {
-  guid: string;
   write(data: Buffer): Promise<void>;
   close(): void;
 }
@@ -73,15 +72,14 @@ export class Android extends SdkObject {
     this._backend = backend;
   }
 
-  async devices(options: channels.AndroidDevicesOptions): Promise<AndroidDevice[]> {
-    const devices = (await this._backend.devices(options)).filter(d => d.status === 'device');
+  async devices(progress: Progress, options: channels.AndroidDevicesOptions): Promise<AndroidDevice[]> {
+    const devices = (await progress.race(this._backend.devices(options))).filter(d => d.status === 'device');
     const newSerials = new Set<string>();
     for (const d of devices) {
       newSerials.add(d.serial);
       if (this._devices.has(d.serial))
         continue;
-      const device = await AndroidDevice.create(this, d, options);
-      this._devices.set(d.serial, device);
+      await progress.race(AndroidDevice.create(this, d, options).then(device => this._devices.set(d.serial, device)));
     }
     for (const d of this._devices.keys()) {
       if (!newSerials.has(d))
@@ -123,6 +121,7 @@ export class AndroidDevice extends SdkObject {
     this.model = model;
     this.serial = backend.serial;
     this._options = options;
+    this.logName = 'browser';
   }
 
   static async create(android: Android, backend: DeviceBackend, options: channels.AndroidDevicesOptions): Promise<AndroidDevice> {
@@ -139,43 +138,49 @@ export class AndroidDevice extends SdkObject {
       this._pollingWebViews = setTimeout(() => this._refreshWebViews()
           .then(poll)
           .catch(() => {
-            this.close().catch(() => {});
+            this._close().catch(() => {});
           }), 500);
     };
     poll();
   }
 
-  async shell(command: string): Promise<Buffer> {
+  async shell(progress: Progress, command: string): Promise<Buffer> {
+    return await progress.race(this._shell(command));
+  }
+
+  private async _shell(command: string): Promise<Buffer> {
     const result = await this._backend.runCommand(`shell:${command}`);
     await this._refreshWebViews();
     return result;
   }
 
-  async open(command: string): Promise<SocketBackend> {
-    return await this._backend.open(`${command}`);
+  async open(progress: Progress, command: string): Promise<SocketBackend> {
+    return await this._open(progress, command);
   }
 
-  async screenshot(): Promise<Buffer> {
-    return await this._backend.runCommand(`shell:screencap -p`);
+  async screenshot(progress: Progress): Promise<Buffer> {
+    return await progress.race(this._backend.runCommand(`shell:screencap -p`));
   }
 
   private async _driver(): Promise<PipeTransport | undefined> {
     if (this._isClosed)
       return;
-    if (!this._driverPromise)
-      this._driverPromise = this._installDriver();
+    if (!this._driverPromise) {
+      const controller = new ProgressController();
+      this._driverPromise = controller.run(progress => this._installDriver(progress));
+    }
     return this._driverPromise;
   }
 
-  private async _installDriver(): Promise<PipeTransport> {
+  private async _installDriver(progress: Progress): Promise<PipeTransport> {
     debug('pw:android')('Stopping the old driver');
-    await this.shell(`am force-stop com.microsoft.playwright.androiddriver`);
+    await progress.race(this._shell(`am force-stop com.microsoft.playwright.androiddriver`));
 
     // uninstall and install driver on every execution
     if (!this._options.omitDriverInstall) {
       debug('pw:android')('Uninstalling the old driver');
-      await this.shell(`cmd package uninstall com.microsoft.playwright.androiddriver`);
-      await this.shell(`cmd package uninstall com.microsoft.playwright.androiddriver.test`);
+      await this.shell(progress, `cmd package uninstall com.microsoft.playwright.androiddriver`);
+      await this.shell(progress, `cmd package uninstall com.microsoft.playwright.androiddriver.test`);
 
       debug('pw:android')('Installing the new driver');
       const executable = registry.findExecutable('android')!;
@@ -184,15 +189,15 @@ export class AndroidDevice extends SdkObject {
         const fullName = path.join(executable.directory!, file);
         if (!fs.existsSync(fullName))
           throw new Error(`Please install Android driver apk using '${packageManagerCommand} playwright install android'`);
-        await this.installApk(await fs.promises.readFile(fullName));
+        await this.installApk(progress, await progress.race(fs.promises.readFile(fullName)));
       }
     } else {
       debug('pw:android')('Skipping the driver installation');
     }
 
     debug('pw:android')('Starting the new driver');
-    this.shell('am instrument -w com.microsoft.playwright.androiddriver.test/androidx.test.runner.AndroidJUnitRunner').catch(e => debug('pw:android')(e));
-    const socket = await this._waitForLocalAbstract('playwright_android_driver_socket');
+    this._shell('am instrument -w com.microsoft.playwright.androiddriver.test/androidx.test.runner.AndroidJUnitRunner').catch(e => debug('pw:android')(e));
+    const socket = await this._waitForLocalAbstract(progress, 'playwright_android_driver_socket');
     const transport = new PipeTransport(socket, socket, socket, 'be');
     transport.onmessage = message => {
       const response = JSON.parse(message);
@@ -209,21 +214,27 @@ export class AndroidDevice extends SdkObject {
     return transport;
   }
 
-  private async _waitForLocalAbstract(socketName: string): Promise<SocketBackend> {
+  private async _waitForLocalAbstract(progress: Progress, socketName: string): Promise<SocketBackend> {
     let socket: SocketBackend | undefined;
     debug('pw:android')(`Polling the socket localabstract:${socketName}`);
     while (!socket) {
       try {
-        socket = await this._backend.open(`localabstract:${socketName}`);
+        socket = await this._open(progress, `localabstract:${socketName}`);
       } catch (e) {
-        await new Promise(f => setTimeout(f, 250));
+        if (isAbortError(e))
+          throw e;
+        await progress.wait(250);
       }
     }
     debug('pw:android')(`Connected to localabstract:${socketName}`);
     return socket;
   }
 
-  async send(method: string, params: any = {}): Promise<any> {
+  async send(progress: Progress, method: string, params: any = {}): Promise<any> {
+    return await progress.race(this._send(method, params));
+  }
+
+  private async _send(method: string, params: any = {}): Promise<any> {
     params = {
       ...params,
       // Patch the timeout in, just in case it's missing in one of the commands.
@@ -234,7 +245,7 @@ export class AndroidDevice extends SdkObject {
       delete params.androidSelector;
     }
     const driver = await this._driver();
-    if (!driver)
+    if (!driver || this._isClosed)
       throw new Error('Device is closed');
     const id = ++this._lastId;
     const result = new Promise((fulfill, reject) => this._callbacks.set(id, { fulfill, reject }));
@@ -242,7 +253,11 @@ export class AndroidDevice extends SdkObject {
     return result;
   }
 
-  async close() {
+  async close(progress: Progress) {
+    await progress.race(this._close());
+  }
+
+  private async _close() {
     if (this._isClosed)
       return;
     this._isClosed = true;
@@ -250,6 +265,9 @@ export class AndroidDevice extends SdkObject {
       clearTimeout(this._pollingWebViews);
     for (const connection of this._browserConnections)
       await connection.close();
+    for (const callback of this._callbacks.values())
+      callback.reject(new Error('Device closed'));
+    this._callbacks.clear();
     if (this._driverPromise) {
       const driver = await this._driver();
       driver?.close();
@@ -259,18 +277,23 @@ export class AndroidDevice extends SdkObject {
     this.emit(AndroidDevice.Events.Close);
   }
 
-  async launchBrowser(pkg: string = 'com.android.chrome', options: channels.AndroidDeviceLaunchBrowserParams): Promise<BrowserContext> {
+  async launchBrowser(progress: Progress, pkg: string = 'com.android.chrome', options: channels.AndroidDeviceLaunchBrowserParams): Promise<BrowserContext> {
     debug('pw:android')('Force-stopping', pkg);
-    await this._backend.runCommand(`shell:am force-stop ${pkg}`);
+    await progress.race(this._backend.runCommand(`shell:am force-stop ${pkg}`));
     const socketName = isUnderTest() ? 'webview_devtools_remote_playwright_test' : ('playwright_' + createGuid() + '_devtools_remote');
     const commandLine = this._defaultArgs(options, socketName).join(' ');
     debug('pw:android')('Starting', pkg, commandLine);
     // encode commandLine to base64 to avoid issues (bash encoding) with special characters
-    await this._backend.runCommand(`shell:echo "${Buffer.from(commandLine).toString('base64')}" | base64 -d > /data/local/tmp/chrome-command-line`);
-    await this._backend.runCommand(`shell:am start -a android.intent.action.VIEW -d about:blank ${pkg}`);
-    const browserContext = await this._connectToBrowser(socketName, options);
-    await this._backend.runCommand(`shell:rm /data/local/tmp/chrome-command-line`);
-    return browserContext;
+    await progress.race(this._backend.runCommand(`shell:echo "${Buffer.from(commandLine).toString('base64')}" | base64 -d > /data/local/tmp/chrome-command-line`));
+    await progress.race(this._backend.runCommand(`shell:am start -a android.intent.action.VIEW -d about:blank ${pkg}`));
+    const browserContext = await this._connectToBrowser(progress, socketName, options);
+    try {
+      await progress.race(this._backend.runCommand(`shell:rm /data/local/tmp/chrome-command-line`));
+      return browserContext;
+    } catch (error) {
+      await browserContext.close(progress, { reason: 'Failed to launch' }).catch(() => {});
+      throw error;
+    }
   }
 
   private _defaultArgs(options: channels.AndroidDeviceLaunchBrowserParams, socketName: string): string[] {
@@ -279,7 +302,7 @@ export class AndroidDevice extends SdkObject {
       '--disable-fre',
       '--no-default-browser-check',
       `--remote-debugging-socket-name=${socketName}`,
-      ...chromiumSwitches(),
+      ...chromiumSwitches({ android: true }),
       ...this._innerDefaultArgs(options)
     ];
     return chromeArguments;
@@ -293,7 +316,7 @@ export class AndroidDevice extends SdkObject {
       const proxyBypassRules = [];
       if (proxy.bypass)
         proxyBypassRules.push(...proxy.bypass.split(',').map(t => t.trim()).map(t => t.startsWith('.') ? '*' + t : t));
-      if (!process.env.PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK && !proxyBypassRules.includes('<-loopback>'))
+      if (shouldProxyLoopback(proxy.bypass))
         proxyBypassRules.push('<-loopback>');
       if (proxyBypassRules.length > 0)
         chromeArguments.push(`--proxy-bypass-list=${proxyBypassRules.join(';')}`);
@@ -302,88 +325,94 @@ export class AndroidDevice extends SdkObject {
     return chromeArguments;
   }
 
-  async connectToWebView(socketName: string): Promise<BrowserContext> {
+  async connectToWebView(progress: Progress, socketName: string): Promise<BrowserContext> {
     const webView = this._webViews.get(socketName);
     if (!webView)
       throw new Error('WebView has been closed');
-    return await this._connectToBrowser(socketName);
+    return await this._connectToBrowser(progress, socketName);
   }
 
-  private async _connectToBrowser(socketName: string, options: types.BrowserContextOptions = {}): Promise<BrowserContext> {
-    const socket = await this._waitForLocalAbstract(socketName);
-    const androidBrowser = new AndroidBrowser(this, socket);
-    await androidBrowser._init();
-    this._browserConnections.add(androidBrowser);
+  private async _connectToBrowser(progress: Progress, socketName: string, options: types.BrowserContextOptions = {}): Promise<BrowserContext> {
+    const socket = await this._waitForLocalAbstract(progress, socketName);
+    try {
+      const androidBrowser = new AndroidBrowser(this, socket);
+      await progress.race(androidBrowser._init());
+      this._browserConnections.add(androidBrowser);
 
-    const artifactsDir = await fs.promises.mkdtemp(ARTIFACTS_FOLDER);
-    const cleanupArtifactsDir = async () => {
-      const errors = (await removeFolders([artifactsDir])).filter(Boolean);
-      for (let i = 0; i < (errors || []).length; ++i)
-        debug('pw:android')(`exception while removing ${artifactsDir}: ${errors[i]}`);
-    };
-    gracefullyCloseSet.add(cleanupArtifactsDir);
-    socket.on('close', async () => {
-      gracefullyCloseSet.delete(cleanupArtifactsDir);
-      cleanupArtifactsDir().catch(e => debug('pw:android')(`could not cleanup artifacts dir: ${e}`));
-    });
-    const browserOptions: BrowserOptions = {
-      name: 'clank',
-      isChromium: true,
-      slowMo: 0,
-      persistent: { ...options, noDefaultViewport: true },
-      artifactsDir,
-      downloadsPath: artifactsDir,
-      tracesDir: artifactsDir,
-      browserProcess: new ClankBrowserProcess(androidBrowser),
-      proxy: options.proxy,
-      protocolLogger: helper.debugProtocolLogger(),
-      browserLogsCollector: new RecentLogsCollector(),
-      originalLaunchOptions: { timeout: 0 },
-    };
-    validateBrowserContextOptions(options, browserOptions);
+      const artifactsDir = await progress.race(fs.promises.mkdtemp(ARTIFACTS_FOLDER));
+      const cleanupArtifactsDir = async () => {
+        const errors = (await removeFolders([artifactsDir])).filter(Boolean);
+        for (let i = 0; i < (errors || []).length; ++i)
+          debug('pw:android')(`exception while removing ${artifactsDir}: ${errors[i]}`);
+      };
+      gracefullyCloseSet.add(cleanupArtifactsDir);
+      socket.on('close', async () => {
+        gracefullyCloseSet.delete(cleanupArtifactsDir);
+        cleanupArtifactsDir().catch(e => debug('pw:android')(`could not cleanup artifacts dir: ${e}`));
+      });
+      const browserOptions: BrowserOptions = {
+        name: 'clank',
+        browserType: 'chromium',
+        slowMo: 0,
+        persistent: { ...options, noDefaultViewport: true },
+        artifactsDir,
+        downloadsPath: artifactsDir,
+        tracesDir: artifactsDir,
+        browserProcess: new ClankBrowserProcess(androidBrowser),
+        proxy: options.proxy,
+        protocolLogger: helper.debugProtocolLogger(),
+        browserLogsCollector: new RecentLogsCollector(),
+        originalLaunchOptions: {},
+      };
+      validateBrowserContextOptions(options, browserOptions);
 
-    const browser = await CRBrowser.connect(this.attribution.playwright, androidBrowser, browserOptions);
-    const controller = new ProgressController(serverSideCallMetadata(), this);
-    const defaultContext = browser._defaultContext!;
-    await controller.run(async progress => {
-      await defaultContext._loadDefaultContextAsIs(progress);
-    });
-    return defaultContext;
+      const browser = await progress.race(CRBrowser.connect(this.attribution.playwright, androidBrowser, browserOptions));
+      const defaultContext = browser._defaultContext!;
+      await defaultContext.loadDefaultContextAsIs(progress);
+      return defaultContext;
+    } catch (error) {
+      socket.close();
+      throw error;
+    }
+  }
+
+  private _open(progress: Progress, command: string): Promise<SocketBackend> {
+    return raceUncancellableOperationWithCleanup(progress, () => this._backend.open(command), socket => socket.close());
   }
 
   webViews(): channels.AndroidWebView[] {
     return [...this._webViews.values()];
   }
 
-  async installApk(content: Buffer, options?: { args?: string[] }): Promise<void> {
+  async installApk(progress: Progress, content: Buffer, options?: { args?: string[] }): Promise<void> {
     const args = options && options.args ? options.args : ['-r', '-t', '-S'];
     debug('pw:android')('Opening install socket');
-    const installSocket = await this._backend.open(`shell:cmd package install ${args.join(' ')} ${content.length}`);
+    const installSocket = await this._open(progress, `shell:cmd package install ${args.join(' ')} ${content.length}`);
     debug('pw:android')('Writing driver bytes: ' + content.length);
-    await installSocket.write(content);
-    const success = await new Promise(f => installSocket.on('data', f));
+    await progress.race(installSocket.write(content));
+    const success = await progress.race(new Promise(f => installSocket.on('data', f)));
     debug('pw:android')('Written driver bytes: ' + success);
     installSocket.close();
   }
 
-  async push(content: Buffer, path: string, mode = 0o644): Promise<void> {
-    const socket = await this._backend.open(`sync:`);
-    const sendHeader = async (command: string, length: number) => {
+  async push(progress: Progress, content: Buffer, path: string, mode = 0o644): Promise<void> {
+    const socket = await this._open(progress, `sync:`);
+    const sendHeader = async (progress: Progress, command: string, length: number) => {
       const buffer = Buffer.alloc(command.length + 4);
       buffer.write(command, 0);
       buffer.writeUInt32LE(length, command.length);
-      await socket.write(buffer);
+      await progress.race(socket.write(buffer));
     };
-    const send = async (command: string, data: Buffer) => {
-      await sendHeader(command, data.length);
-      await socket.write(data);
+    const send = async (progress: Progress, command: string, data: Buffer) => {
+      await sendHeader(progress, command, data.length);
+      await progress.race(socket.write(data));
     };
-    await send('SEND', Buffer.from(`${path},${mode}`));
+    await send(progress, 'SEND', Buffer.from(`${path},${mode}`));
     const maxChunk = 65535;
     for (let i = 0; i < content.length; i += maxChunk)
-      await send('DATA', content.slice(i, i + maxChunk));
-    await sendHeader('DONE', (Date.now() / 1000) | 0);
-    const result = await new Promise<Buffer>(f => socket.once('data', f));
+      await send(progress, 'DATA', content.slice(i, i + maxChunk));
+    await sendHeader(progress, 'DONE', (Date.now() / 1000) | 0);
+    const result = await progress.race(new Promise<Buffer>(f => socket.once('data', f)));
     const code = result.slice(0, 4).toString();
     if (code !== 'OKAY')
       throw new Error('Could not push: ' + code);

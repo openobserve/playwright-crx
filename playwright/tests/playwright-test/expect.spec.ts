@@ -16,7 +16,8 @@
 
 import path from 'path';
 import { test, expect, parseTestRunnerOutput, stripAnsi } from './playwright-test-fixtures';
-const { spawnAsync } = require('../../packages/playwright-core/lib/utils');
+import { utils } from '../../packages/playwright-core/lib/coreBundle';
+const { spawnAsync } = utils;
 
 test('should not expand huge arrays', async ({ runInlineTest }) => {
   const result = await runInlineTest({
@@ -67,7 +68,8 @@ test('should include custom expect message with web-first assertions', async ({ 
   expect(result.passed).toBe(0);
 
   expect(result.output).toContain('Error: x-foo must be visible');
-  expect(result.output).toContain(`Timed out 1ms waiting for expect(locator).toBeVisible()`);
+  expect(result.output).toContain('expect(locator).toBeVisible() failed');
+  expect(result.output).toContain('Timeout: 1ms');
   expect(result.output).toContain('Call log:');
 });
 
@@ -227,8 +229,10 @@ test('should work with default expect matchers and esModuleInterop=false', async
         'strict': true,
         'rootDir': '.',
         'esModuleInterop': false,
-        'allowSyntheticDefaultImports': false,
-        'lib': ['esnext', 'dom', 'DOM.Iterable']
+        'allowSyntheticDefaultImports': true,
+        'lib': ['esnext', 'dom', 'DOM.Iterable'],
+        'types': ['node'],
+        'ignoreDeprecations': '6.0',
       },
       'exclude': [
         'node_modules'
@@ -410,72 +414,18 @@ test('should return void/Promise when appropriate', async ({ runTSC }) => {
   expect(result.exitCode).toBe(0);
 });
 
-test.describe('helpful expect errors', () => {
-  test('top-level', async ({ runInlineTest }) => {
-    const result = await runInlineTest({
-      'a.spec.ts': `
-        import { test, expect } from '@playwright/test';
-        test('explodes', () => {
-          expect(1).nope();
-        });
-      `
-    });
-
-    expect(result.output).toContain(`expect: Property 'nope' not found.`);
+test('bare expect call should not throw', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      test('explodes', () => {
+        expect('');
+      });
+    `
   });
 
-  test('soft', async ({ runInlineTest }) => {
-    const result = await runInlineTest({
-      'a.spec.ts': `
-        import { test, expect } from '@playwright/test';
-        test('explodes', () => {
-          expect.soft(1).nope();
-        });
-      `
-    });
-
-    expect(result.output).toContain(`expect: Property 'nope' not found.`);
-  });
-
-  test('poll', async ({ runInlineTest }) => {
-    const result = await runInlineTest({
-      'a.spec.ts': `
-        import { test, expect } from '@playwright/test';
-        test('explodes', () => {
-          expect.poll(() => {}).nope();
-        });
-      `
-    });
-
-    expect(result.output).toContain(`expect: Property 'nope' not found.`);
-  });
-
-  test('not', async ({ runInlineTest }) => {
-    const result = await runInlineTest({
-      'a.spec.ts': `
-        import { test, expect } from '@playwright/test';
-        test('explodes', () => {
-          expect(1).not.nope();
-        });
-      `
-    });
-
-    expect(result.output).toContain(`expect: Property 'nope' not found.`);
-  });
-
-  test('bare', async ({ runInlineTest }) => {
-    const result = await runInlineTest({
-      'a.spec.ts': `
-        import { test, expect } from '@playwright/test';
-        test('explodes', () => {
-          expect('');
-        });
-      `
-    });
-
-    expect(result.exitCode).toBe(0);
-    expect(result.passed).toBe(1);
-  });
+  expect(result.exitCode).toBe(0);
+  expect(result.passed).toBe(1);
 });
 
 test('should reasonably work in global setup', async ({ runInlineTest }) => {
@@ -532,13 +482,13 @@ test('should support toHaveURL with baseURL from webServer', async ({ runInlineT
   }, { workers: 1 });
   const output = result.output;
   expect(output).toContain('expect(page).toHaveURL');
-  expect(output).toContain(`Expected string: \"http://localhost:${port}/kek\"`);
+  expect(output).toContain(`Expected: \"http://localhost:${port}/kek\"`);
   expect(result.passed).toBe(1);
   expect(result.failed).toBe(1);
   expect(result.exitCode).toBe(1);
 });
 
-test('should respect expect.timeout', async ({ runInlineTest }) => {
+test('should respect expect.timeout in toHaveURL', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'playwright.config.js': `module.exports = { expect: { timeout: 1000 } }`,
     'a.test.ts': `
@@ -548,7 +498,8 @@ test('should respect expect.timeout', async ({ runInlineTest }) => {
       test('timeout', async ({ page }) => {
         await page.goto('data:text/html,<div>A</div>');
         const error = await expect(page).toHaveURL('data:text/html,<div>B</div>').catch(e => e);
-        expect(stripVTControlCharacters(error.message)).toContain('Timed out 1000ms waiting for expect(locator).toHaveURL(expected)');
+        expect(stripVTControlCharacters(error.message)).toContain('expect(page).toHaveURL(expected) failed');
+        expect(stripVTControlCharacters(error.message)).toContain('Timeout:  1000ms');
         expect(error.message).toContain('data:text/html,<div>');
       });
       `,
@@ -567,7 +518,8 @@ test('should support toHaveURL predicate', async ({ runInlineTest }) => {
       test('predicate', async ({ page }) => {
         await page.goto('data:text/html,<div>A</div>');
         const error = await expect(page).toHaveURL(url => url === 'data:text/html,<div>B</div>').catch(e => e);
-        expect(stripVTControlCharacters(error.message)).toContain('Timed out 1000ms waiting for expect(page).toHaveURL(expected)');
+        expect(stripVTControlCharacters(error.message)).toContain('expect(page).toHaveURL(expected) failed');
+        expect(stripVTControlCharacters(error.message)).toContain('Timeout:  1000ms');
         expect(error.message).toContain('data:text/html,<div>');
       });
       `,
@@ -583,15 +535,15 @@ test('should log scale the time', async ({ runInlineTest }) => {
 
       test('pass', async ({ page }) => {
         await page.setContent('<div id=div>Wrong</div>');
-        await expect(page.locator('div')).toHaveText('Text', { timeout: 2000 });
+        await expect(page.locator('div')).toHaveText('Text', { timeout: 5000 });
       });
       `,
   }, { workers: 1 });
   const output = result.output;
   const tokens = output.split('unexpected value');
-  // Log scale: 0, 100, 250, 500, 1000, 1000, should be less than 8.
+  // Log scale: 0, 100, 250, 500, 1000, 1000, ... - should be less than 10.
   expect(tokens.length).toBeGreaterThan(1);
-  expect(tokens.length).toBeLessThan(8);
+  expect(tokens.length).toBeLessThan(10);
   expect(result.passed).toBe(0);
   expect(result.exitCode).toBe(1);
 });
@@ -612,8 +564,8 @@ test('should print expected/received before timeout', async ({ runInlineTest }) 
   expect(result.passed).toBe(0);
   expect(result.failed).toBe(1);
   expect(result.output).toContain('Test timeout of 2000ms exceeded.');
-  expect(result.output).toContain('Expected string: "Text 2"');
-  expect(result.output).toContain('Received string: "Text content"');
+  expect(result.output).toContain('Expected: "Text 2"');
+  expect(result.output).toContain('Received: "Text content"');
 });
 
 test('should print pending operations for toHaveText', async ({ runInlineTest }) => {
@@ -631,8 +583,8 @@ test('should print pending operations for toHaveText', async ({ runInlineTest })
   expect(result.exitCode).toBe(1);
   const output = result.output;
   expect(output).toContain(`expect(locator).toHaveText(expected)`);
-  expect(output).toContain('Expected string: "Text"');
-  expect(output).toContain('Received: <element(s) not found>');
+  expect(output).toContain('Expected: "Text"');
+  expect(output).toContain('Error: element(s) not found');
   expect(output).toContain('waiting for locator(\'no-such-thing\')');
 });
 
@@ -687,8 +639,8 @@ test('should print expected/received on Ctrl+C', async ({ interactWithTestRunner
   const result = parseTestRunnerOutput(testProcess.output);
   expect(result.passed).toBe(0);
   expect(result.interrupted).toBe(1);
-  expect(result.output).toContain('Expected string: "Text 2"');
-  expect(result.output).toContain('Received string: "Text content"');
+  expect(result.output).toContain('Expected: "Text 2"');
+  expect(result.output).toContain('Received: "Text content"');
 });
 
 test('should not print timed out error message when test times out', async ({ runInlineTest }) => {
@@ -706,7 +658,7 @@ test('should not print timed out error message when test times out', async ({ ru
   expect(result.exitCode).toBe(1);
   const output = result.output;
   expect(output).toContain('Test timeout of 3000ms exceeded');
-  expect(output).not.toContain('Timed out 5000ms waiting for expect');
+  expect(output).not.toContain('Timeout:  5000ms');
   expect(output).toContain(`Error: expect(locator).toHaveText(expected)`);
 });
 
@@ -988,6 +940,32 @@ test('should support mergeExpects', async ({ runInlineTest }) => {
   expect(result.exitCode).toBe(0);
 });
 
+test('should support mergeExpects with builtin matcher overrides', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.spec.ts': `
+      import { test, mergeExpects, expect as baseExpect } from '@playwright/test';
+
+      const expect1 = baseExpect.extend({
+        async toBeVisible(locator) {
+          await baseExpect(locator).toBeVisible();
+          console.log('%%merged custom');
+          return { pass: true, message: () => '' };
+        }
+      });
+
+      const expect = mergeExpects(expect1);
+
+      test('custom matcher', async ({ page }) => {
+        await page.setContent('<h1>Installation</h1>');
+        await expect(page.getByRole('heading', { name: 'Installation' })).toBeVisible();
+        await baseExpect(page.getByRole('heading', { name: 'Installation' })).toBeVisible();
+      });
+    `
+  }, { workers: 1 });
+  expect(result.outputLines).toEqual(['merged custom']);
+  expect(result.exitCode).toBe(0);
+});
+
 test('should respect timeout from configured expect when used outside of the test runner', async ({ runInlineTest, writeFiles, runTSC }) => {
 
   const files = {
@@ -1020,7 +998,8 @@ test('should respect timeout from configured expect when used outside of the tes
 
   expect(code).toBe(1);
   expect(stdout).toBe('');
-  expect(stripAnsi(stderr)).toContain('Timed out 10ms waiting for expect(locator).toBeAttached()');
+  expect(stripAnsi(stderr)).toContain('expect(locator).toBeAttached() failed');
+  expect(stripAnsi(stderr)).toContain('Timeout: 10ms');
 });
 
 test('should expose timeout to custom matchers', async ({ runInlineTest, runTSC }) => {
@@ -1161,6 +1140,52 @@ test('expect.extend should fall back to legacy behavior', async ({ runInlineTest
   ]);
 });
 
+test('expect.extend should not override builtin matchers on base expect', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'expect-test.spec.ts': `
+      import { test, expect } from '@playwright/test';
+
+      const customExpect = expect.extend({
+        async toBeVisible(locator) {
+          await expect(locator).toBeVisible();
+          console.log('%%custom');
+          return { pass: true, message: () => 'custom matcher' };
+        },
+      });
+
+      test('custom matcher can call builtin matcher with the same name', async ({ page }) => {
+        await page.setContent('<h1>Installation</h1>');
+        await customExpect(page.getByRole('heading', { name: 'Installation' })).toBeVisible();
+      });
+    `
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.outputLines).toEqual(['custom']);
+});
+
+test('expect.extend should not override builtin matchers through legacy behavior', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'expect-test.spec.ts': `
+      import { test, expect } from '@playwright/test';
+
+      expect.extend({
+        async toBeVisible(locator) {
+          await expect(locator).toBeVisible();
+          console.log('%%legacy custom');
+          return { pass: true, message: () => 'custom matcher' };
+        },
+      });
+
+      test('base expect keeps builtin matcher', async ({ page }) => {
+        await page.setContent('<h1>Installation</h1>');
+        await expect(page.getByRole('heading', { name: 'Installation' })).toBeVisible();
+      });
+    `
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.outputLines).toEqual([]);
+});
+
 test('custom asymmetric matchers should work with expect.extend', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'expect-test.spec.ts': `
@@ -1296,4 +1321,38 @@ test('multiple custom asymmetric matchers in async expect should present the cor
   expect(result.passed).toBe(0);
   expect(result.output).toContain('-   \"aProperty\": isUndefined<>');
   expect(result.output).toContain('+   \"aProperty\": \"foo\"');
+});
+
+test('should support arrayOf', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'expect-test.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      test('pass', () => {
+        expect([1,2,3]).toEqual(expect.arrayOf(expect.any(Number)));
+      });
+      test('fail', () => {
+        expect([1,2,'3']).toEqual(expect.arrayOf(expect.any(Number)));
+      });
+    `
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.passed).toBe(1);
+  expect(result.failed).toBe(1);
+  expect(result.output).toContain('ArrayOf Any<Number>');
+});
+
+test('should account for undefined matcherResult', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'example.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      test('fails', async () => {
+        await expect(new Promise(f => setTimeout(f, 500))).rejects.toThrow();
+      });
+    `
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.passed).toBe(0);
+  expect(result.output).toContain('Error: expect(received).rejects.toThrow()');
+  expect(result.output).toContain('Received promise resolved instead of rejected');
+  expect(result.output).toContain('Resolved to value: undefined');
 });

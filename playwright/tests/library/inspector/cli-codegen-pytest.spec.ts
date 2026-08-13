@@ -15,13 +15,10 @@
  */
 
 import fs from 'fs';
-import path from 'path';
 import { test, expect } from './inspectorTest';
 
-const emptyHTML = new URL('file://' + path.join(__dirname, '..', '..', 'assets', 'empty.html')).toString();
-
-test('should print the correct imports and context options', async ({ runCLI }) => {
-  const cli = runCLI(['--target=python-pytest', emptyHTML]);
+test('should print the correct imports and context options', async ({ runCLI, server }) => {
+  const cli = runCLI(['--target=python-pytest', server.EMPTY_PAGE]);
   const expectedResult = `import re
 from playwright.sync_api import Page, expect
 
@@ -30,16 +27,11 @@ def test_example(page: Page) -> None:`;
   await cli.waitFor(expectedResult);
 });
 
-test('should print the correct context options when using a device and lang', async ({ browserName, runCLI }, testInfo) => {
+test('should print the correct context options when using a device and lang', async ({ browserName, runCLI, server }, testInfo) => {
   test.skip(browserName !== 'webkit');
 
-  const tmpFile = testInfo.outputPath('script.js');
-  const cli = runCLI(['--target=python-pytest', '--device=iPhone 11', '--lang=en-US', '--output', tmpFile, emptyHTML], {
-    autoExitWhen: 'page.goto',
-  });
-  await cli.waitForCleanExit();
-  const content = fs.readFileSync(tmpFile);
-  expect(content.toString()).toBe(`import pytest
+  const cli = runCLI(['--target=python-pytest', '--device=iPhone 11', '--lang=en-US', server.EMPTY_PAGE]);
+  await cli.waitFor(`import pytest
 import re
 from playwright.sync_api import Page, expect
 
@@ -50,33 +42,27 @@ def browser_context_args(browser_context_args, playwright):
 
 
 def test_example(page: Page) -> None:
-    page.goto("${emptyHTML}")
+    page.goto("${server.EMPTY_PAGE}")
 `);
 });
 
-test('should save the codegen output to a file if specified', async ({ runCLI }, testInfo) => {
-  const tmpFile = testInfo.outputPath('test_example.py');
-  const cli = runCLI(['--target=python-pytest', '--output', tmpFile, emptyHTML], {
-    autoExitWhen: 'page.goto',
-  });
-  await cli.waitForCleanExit();
-  const content = fs.readFileSync(tmpFile);
-  expect(content.toString()).toBe(`import re
+test('should save the codegen output to a file if specified', async ({ runCLI, server }, testInfo) => {
+  const cli = runCLI(['--target=python-pytest', server.EMPTY_PAGE]);
+  await cli.waitFor(`import re
 from playwright.sync_api import Page, expect
 
 
 def test_example(page: Page) -> None:
-    page.goto("${emptyHTML}")
+    page.goto("${server.EMPTY_PAGE}")
 `);
 });
 
 test('should work with --save-har', async ({ runCLI }, testInfo) => {
   const harFileName = testInfo.outputPath('har.har');
   const expectedResult = `page.route_from_har(${JSON.stringify(harFileName)})`;
-  const cli = runCLI(['--target=python-pytest', `--save-har=${harFileName}`], {
-    autoExitWhen: expectedResult,
-  });
-  await cli.waitForCleanExit();
+  const cli = runCLI(['--target=python-pytest', `--save-har=${harFileName}`]);
+  await cli.waitFor(expectedResult);
+  await cli.exit();
   const json = JSON.parse(fs.readFileSync(harFileName, 'utf-8'));
   expect(json.log.creator.name).toBe('Playwright');
 });
@@ -84,10 +70,9 @@ test('should work with --save-har', async ({ runCLI }, testInfo) => {
 test('should work with --save-har and --save-har-glob', async ({ runCLI }, testInfo) => {
   const harFileName = testInfo.outputPath('har.har');
   const expectedResult = `page.route_from_har(${JSON.stringify(harFileName)}, url="**/*.js")`;
-  const cli = runCLI(['--target=python-pytest', `--save-har=${harFileName}`, '--save-har-glob=**/*.js'], {
-    autoExitWhen: expectedResult,
-  });
-  await cli.waitForCleanExit();
+  const cli = runCLI(['--target=python-pytest', `--save-har=${harFileName}`, '--save-har-glob=**/*.js']);
+  await cli.waitFor(expectedResult);
+  await cli.exit();
   const json = JSON.parse(fs.readFileSync(harFileName, 'utf-8'));
   expect(json.log.creator.name).toBe('Playwright');
 });

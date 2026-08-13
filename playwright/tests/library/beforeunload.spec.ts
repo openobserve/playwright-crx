@@ -126,3 +126,85 @@ it('should not stall on click when dismissing beforeunload', async ({ page, serv
   await page.getByRole('link').click({ timeout: 5000 });
   await expect(page).toHaveURL(server.PREFIX + '/frames/one-frame.html');
 });
+
+it('should support dismissing the dialog multiple times', async ({ page, server }) => {
+  await page.goto(server.PREFIX + '/beforeunload.html');
+
+  // We have to interact with a page so that 'beforeunload' handlers
+  // fire (in Firefox).
+  await page.click('body');
+
+  const [dialog] = await Promise.all([
+    page.waitForEvent('dialog'),
+    page.close({ runBeforeUnload: true })
+  ]);
+
+  await dialog.dismiss();
+
+  const [dialog2] = await Promise.all([
+    page.waitForEvent('dialog'),
+    page.close({ runBeforeUnload: true })
+  ]);
+
+  await dialog2.dismiss();
+});
+
+it('should support closing the page after a previous dismiss', async ({ page, server }) => {
+  await page.goto(server.PREFIX + '/beforeunload.html');
+
+  // We have to interact with a page so that 'beforeunload' handlers
+  // fire (in Firefox).
+  await page.click('body');
+
+  const [dialog] = await Promise.all([
+    page.waitForEvent('dialog'),
+    page.close({ runBeforeUnload: true })
+  ]);
+
+  await dialog.dismiss();
+
+  await page.close();
+  await expect(page.isClosed()).toBe(true);
+});
+
+it('should support closing the page via a subsequent onbeforeunload dialog', async ({ page, server }) => {
+  await page.goto(server.PREFIX + '/beforeunload.html');
+
+  // We have to interact with a page so that 'beforeunload' handlers
+  // fire (in Firefox).
+  await page.click('body');
+
+  const [dialog] = await Promise.all([
+    page.waitForEvent('dialog'),
+    page.close({ runBeforeUnload: true })
+  ]);
+
+  await dialog.accept();
+
+  await page.waitForEvent('close');
+  await expect(page.isClosed()).toBe(true);
+});
+
+it('does not get stalled by beforeUnload', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/38731' },
+}, async ({ page, server }) => {
+  await page.goto(server.HELLO_WORLD);
+
+  await page.evaluate(() => {
+    window.addEventListener('beforeunload', event => {
+      event.preventDefault();
+    });
+  });
+  page.on('dialog', dialog => dialog.dismiss());
+
+  // We have to interact with a page so that 'beforeunload' handlers
+  // fire.
+  await page.click('body');
+
+  await page.route('**/api', route => route.fulfill({ status: 200, body: 'ok' }));
+  await page.evaluate(async () => fetch(new URL('/api', window.location.href)));
+
+  await page.close({ runBeforeUnload: true });
+
+  await page.evaluate(async () => fetch(new URL('/api', window.location.href)));
+});

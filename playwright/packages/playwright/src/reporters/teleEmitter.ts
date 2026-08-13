@@ -16,12 +16,13 @@
 
 import path from 'path';
 
-import { createGuid } from 'playwright-core/lib/utils';
+import { createGuid } from '@utils/crypto';
 
 import { serializeRegexPatterns } from '../isomorphic/teleReceiver';
 
 import type { ReporterV2 } from './reporterV2';
 import type * as reporterTypes from '../../types/testReporter';
+import type { TestAnnotation } from '../../types/test';
 import type * as teleReceiver from '../isomorphic/teleReceiver';
 
 export type TeleReporterEmitterOptions = {
@@ -34,7 +35,8 @@ export class TeleReporterEmitter implements ReporterV2 {
   private _rootDir!: string;
   private _emitterOptions: TeleReporterEmitterOptions;
   private _resultKnownAttachmentCounts = new Map<string, number>();
-  // In case there is blob reporter and UI mode, make sure one does override
+  private _resultKnownErrorCounts = new Map<string, number>();
+  // In case there is blob reporter and UI mode, make sure one doesn't override
   // the id assigned by the other.
   private readonly _idSymbol = Symbol('id');
 
@@ -70,6 +72,21 @@ export class TeleReporterEmitter implements ReporterV2 {
     });
   }
 
+  async onTestPaused(test: reporterTypes.TestCase, result: reporterTypes.TestResult) {
+    const resultId = (result as any)[this._idSymbol];
+    this._resultKnownErrorCounts.set(resultId, result.errors.length);
+    this._messageSink({
+      method: 'onTestPaused',
+      params: {
+        testId: test.id,
+        resultId,
+        errors: result.errors,
+      }
+    });
+    // keep the test paused until externally resumed
+    await new Promise<void>(() => {});
+  }
+
   onTestEnd(test: reporterTypes.TestCase, result: reporterTypes.TestResult): void {
     const testEnd: teleReceiver.JsonTestEnd = {
       testId: test.id,
@@ -86,7 +103,9 @@ export class TeleReporterEmitter implements ReporterV2 {
       }
     });
 
-    this._resultKnownAttachmentCounts.delete((result as any)[this._idSymbol]);
+    const resultId = (result as any)[this._idSymbol];
+    this._resultKnownAttachmentCounts.delete(resultId);
+    this._resultKnownErrorCounts.delete(resultId);
   }
 
   onStepBegin(test: reporterTypes.TestCase, result: reporterTypes.TestResult, step: reporterTypes.TestStep): void {
@@ -116,10 +135,17 @@ export class TeleReporterEmitter implements ReporterV2 {
     });
   }
 
-  onError(error: reporterTypes.TestError): void {
+  onError(error: reporterTypes.TestError, workerInfo?: reporterTypes.WorkerInfo): void {
     this._messageSink({
       method: 'onError',
-      params: { error }
+      params: {
+        error,
+        workerInfo: workerInfo ? {
+          workerIndex: workerInfo.workerIndex,
+          parallelIndex: workerInfo.parallelIndex,
+          projectName: workerInfo.project.name,
+        } : undefined,
+      },
     });
   }
 
@@ -167,8 +193,14 @@ export class TeleReporterEmitter implements ReporterV2 {
       maxFailures: config.maxFailures,
       metadata: config.metadata,
       rootDir: config.rootDir,
+      shard: config.shard,
       version: config.version,
       workers: config.workers,
+      globalSetup: config.globalSetup,
+      globalTeardown: config.globalTeardown,
+      tags: config.tags,
+      webServer: config.webServer,
+      failOnFlakyTests: config.failOnFlakyTests,
     };
   }
 
@@ -192,6 +224,7 @@ export class TeleReporterEmitter implements ReporterV2 {
       dependencies: project.dependencies,
       snapshotDir: this._relativePath(project.snapshotDir),
       teardown: project.teardown,
+      ignoreSnapshots: project.ignoreSnapshots ? true : undefined,
       use: this._serializeProjectUseOptions(project.use),
     };
     return report;
@@ -224,7 +257,7 @@ export class TeleReporterEmitter implements ReporterV2 {
       retries: test.retries,
       tags: test.tags,
       repeatEachIndex: test.repeatEachIndex,
-      annotations: test.annotations,
+      annotations: this._relativeAnnotationLocations(test.annotations),
     };
   }
 
@@ -239,12 +272,13 @@ export class TeleReporterEmitter implements ReporterV2 {
   }
 
   private _serializeResultEnd(result: reporterTypes.TestResult): teleReceiver.JsonTestResultEnd {
+    const id = (result as any)[this._idSymbol];
     return {
-      id: (result as any)[this._idSymbol],
+      id,
       duration: result.duration,
       status: result.status,
-      errors: result.errors,
-      annotations: result.annotations?.length ? result.annotations : undefined,
+      errors: this._resultKnownErrorCounts.has(id) ? result.errors.slice(this._resultKnownAttachmentCounts.get(id)) : result.errors,
+      annotations: result.annotations?.length ? this._relativeAnnotationLocations(result.annotations) : undefined,
     };
   }
 
@@ -294,8 +328,15 @@ export class TeleReporterEmitter implements ReporterV2 {
       duration: step.duration,
       error: step.error,
       attachments: step.attachments.length ? step.attachments.map(a => result.attachments.indexOf(a)) : undefined,
-      annotations: step.annotations.length ? step.annotations : undefined,
+      annotations: step.annotations.length ? this._relativeAnnotationLocations(step.annotations) : undefined,
     };
+  }
+
+  private _relativeAnnotationLocations(annotations: TestAnnotation[]): TestAnnotation[] {
+    return annotations.map(annotation => ({
+      ...annotation,
+      location: annotation.location ? this._relativeLocation(annotation.location) : undefined,
+    }));
   }
 
   private _relativeLocation(location: reporterTypes.Location): reporterTypes.Location;

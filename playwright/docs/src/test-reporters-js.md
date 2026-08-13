@@ -70,7 +70,7 @@ export default defineConfig({
 });
 ```
 
-Here is an example output in the middle of a test run. Failures will be listed at the end.
+Here is an example output in the middle of a test run. Failures will be listed at the end by default.
 ```bash
 npx playwright test --reporter=list
 Running 124 tests using 6 workers
@@ -97,13 +97,25 @@ export default defineConfig({
 });
 ```
 
+You can print failures inline as soon as they are available instead of waiting until the end of the run:
+
+```js title="playwright.config.ts"
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  reporter: [['list', { printFailuresInline: true }]],
+});
+```
+
 List report supports the following configuration options and environment variables:
 
 | Environment Variable Name | Reporter Config Option| Description | Default
 |---|---|---|---|
 | `PLAYWRIGHT_LIST_PRINT_STEPS` | `printSteps` | Whether to print each step on its own line. | `false`
-| `PLAYWRIGHT_FORCE_TTY` | | Whether to produce output suitable for a live terminal. If a number is specified, it will also be used as the terminal width.  | `true` when terminal is in TTY mode, `false` otherwise.
+| `PLAYWRIGHT_LIST_PRINT_FAILURES_INLINE` | `printFailuresInline` | Whether to print failure details immediately after a failed test instead of at the end. | `false`
+| `PLAYWRIGHT_FORCE_TTY` | | Whether to produce output suitable for a live terminal. Supports `true`, `1`, `false`, `0`, `[WIDTH]`, and `[WIDTH]x[HEIGHT]`. `[WIDTH]` and `[WIDTH]x[HEIGHT]` specifies the TTY dimensions. | `true` when terminal is in TTY mode, `false` otherwise.
 | `FORCE_COLOR` | | Whether to produce colored output. | `true` when terminal is in TTY mode, `false` otherwise.
+| `NO_COLOR` | | Whether to disable colored output ([no-color.org](https://no-color.org/)). Any non-empty value disables colors. | unset
 
 
 ### Line reporter
@@ -140,8 +152,9 @@ Line report supports the following configuration options and environment variabl
 
 | Environment Variable Name | Reporter Config Option| Description | Default
 |---|---|---|---|
-| `PLAYWRIGHT_FORCE_TTY` | | Whether to produce output suitable for a live terminal. If a number is specified, it will also be used as the terminal width.  | `true` when terminal is in TTY mode, `false` otherwise.
+| `PLAYWRIGHT_FORCE_TTY` | | Whether to produce output suitable for a live terminal. Supports `true`, `1`, `false`, `0`, `[WIDTH]`, and `[WIDTH]x[HEIGHT]`. `[WIDTH]` and `[WIDTH]x[HEIGHT]` specifies the TTY dimensions. | `true` when terminal is in TTY mode, `false` otherwise.
 | `FORCE_COLOR` | | Whether to produce colored output. | `true` when terminal is in TTY mode, `false` otherwise.
+| `NO_COLOR` | | Whether to disable colored output ([no-color.org](https://no-color.org/)). Any non-empty value disables colors. | unset
 
 
 ### Dot reporter
@@ -182,8 +195,9 @@ Dot report supports the following configuration options and environment variable
 
 | Environment Variable Name | Reporter Config Option| Description | Default
 |---|---|---|---|
-| `PLAYWRIGHT_FORCE_TTY` | | Whether to produce output suitable for a live terminal. If a number is specified, it will also be used as the terminal width.  | `true` when terminal is in TTY mode, `false` otherwise.
+| `PLAYWRIGHT_FORCE_TTY` | | Whether to produce output suitable for a live terminal. Supports `true`, `1`, `false`, `0`, `[WIDTH]`, and `[WIDTH]x[HEIGHT]`. `[WIDTH]` and `[WIDTH]x[HEIGHT]` specifies the TTY dimensions. | `true` when terminal is in TTY mode, `false` otherwise.
 | `FORCE_COLOR` | | Whether to produce colored output. | `true` when terminal is in TTY mode, `false` otherwise.
+| `NO_COLOR` | | Whether to disable colored output ([no-color.org](https://no-color.org/)). Any non-empty value disables colors. | unset
 
 ### HTML reporter
 
@@ -220,7 +234,7 @@ export default defineConfig({
 });
 ```
 
-If you are uploading attachments from data folder to other location, you can use `attachmentsBaseURL` option to let html report where to look for them.
+If you are uploading attachments from a data folder to another location, you can use `attachmentsBaseURL` option to let html report know where to look for them.
 
 ```js title="playwright.config.ts"
 import { defineConfig } from '@playwright/test';
@@ -242,6 +256,12 @@ Or if there is a custom folder name:
 npx playwright show-report my-report
 ```
 
+You can also pass a `.zip` archive — for example one downloaded from a CI artifact. The archive must contain `index.html` at its top level. Playwright will extract it to a temporary directory and serve the report:
+
+```bash
+npx playwright show-report playwright-report.zip
+```
+
 HTML report supports the following configuration options and environment variables:
 
 | Environment Variable Name | Reporter Config Option| Description | Default
@@ -252,6 +272,10 @@ HTML report supports the following configuration options and environment variabl
 | `PLAYWRIGHT_HTML_HOST` | `host` | When report opens in the browser, it will be served bound to this hostname. | `localhost`
 | `PLAYWRIGHT_HTML_PORT` | `port` | When report opens in the browser, it will be served on this port. | `9323` or any available port when `9323` is not available.
 | `PLAYWRIGHT_HTML_ATTACHMENTS_BASE_URL` | `attachmentsBaseURL` | A separate location where attachments from the `data` subdirectory are uploaded. Only needed when you upload report and `data` separately to different locations. | `data/`
+| `PLAYWRIGHT_HTML_NO_COPY_PROMPT` | `noCopyPrompt` | If true, disable rendering of the Copy prompt for errors. Supports `true`, `1`, `false`, and `0`. | `false`
+| `PLAYWRIGHT_HTML_NO_SNIPPETS` | `noSnippets` | If true, disable rendering code snippets in the action log. If there is a top level error, that report section with code snippet will still render. Supports `true`, `1`, `false`, and `0`. | `false`
+| `PLAYWRIGHT_HTML_DO_NOT_INLINE_ASSETS` | `doNotInlineAssets` | If true, JavaScript, CSS and report data are written as separate files alongside `index.html` instead of being embedded inline. Use this when serving the report under a strict [Content Security Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CSP) that disallows inline scripts and styles. Supports `true`, `1`, `false`, and `0`. | `false`
+| `PLAYWRIGHT_HTML_MERGE_FILES` | `mergeFiles` | If true, tests are grouped by their top-level `test.describe()` title instead of the file they belong to. Supports `true`, `1`, `false`, and `0`. | `false`
 
 ### Blob reporter
 
@@ -261,15 +285,49 @@ Blob reports contain all the details about the test run and can be used later to
 npx playwright test --reporter=blob
 ```
 
-By default, the report is written into the `blob-report` directory in the package.json directory or current working directory (if no package.json is found). The report file name looks like `report-<hash>.zip` or `report-<hash>-<shard_number>.zip` when [sharding](./test-sharding.md) is used. The hash is an optional value computed from `--grep`, `--grepInverted`, `--project` and file filters passed as command line arguments. The hash guarantees that running Playwright with different command line options will produce different but stable between runs report names. The output file name can be overridden in the configuration file or pass as `'PLAYWRIGHT_BLOB_OUTPUT_FILE'` environment variable.
+By default, the report is written into the `blob-report` directory in the package.json directory or current working directory (if no package.json is found).
+
+The report file name looks like `report-<hash>.zip` or `report-<hash>-<shard_number>.zip` when [sharding](./test-sharding.md) is used. The hash is an optional value computed from `--grep`, `--grepInverted`, `--project`, [`property: TestConfig.tag`] and file filters passed as command line arguments. The hash guarantees that running Playwright with different command line options will produce different but stable between runs report names. The output file name can be overridden in the configuration file or passed as `'PLAYWRIGHT_BLOB_OUTPUT_FILE'` environment variable.
+
+<Tabs
+  groupId="blob-report"
+  defaultValue="shards"
+  values={[
+    {label: 'Shards', value: 'shards'},
+    {label: 'Environments', value: 'environments'},
+  ]
+}>
+
+<TabItem value="shards">
+
+When using blob report to merge multiple shards, you don't have to pass any options.
 
 ```js title="playwright.config.ts"
 import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
-  reporter: [['blob', { outputFile: `./blob-report/report-${os.platform()}.zip` }]],
+  reporter: 'blob',
 });
 ```
+
+</TabItem>
+
+<TabItem value="environments">
+
+When running tests in different environments, you might want to use [`property: TestConfig.tag`] to add a global tag corresponding to the environment. This tag will bring clarity to the merged report, and it will be used to produce a unique blob report name.
+
+```js title="playwright.config.ts"
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  reporter: 'blob',
+  tag: process.env.CI_ENVIRONMENT_NAME,  // for example "@APIv2" or "@linux"
+});
+```
+
+</TabItem>
+
+</Tabs>
 
 Blob report supports following configuration options and environment variables:
 

@@ -39,7 +39,10 @@ import {
 } from '../../src/server/recorder/networkCapture';
 import { describeStepFidelity } from '../../src/server/recorder/replayFidelity';
 import {
+  isUnsupportedReplayAction,
   mapActionsToBrowserSteps,
+  mapActionToBrowserStep,
+  mapBrowserStepToAction,
   mapBrowserStepsToActions,
 } from '../../src/server/recorder/actionMapper';
 import type { BrowserStep } from '../../src/server/recorder/actionMapper';
@@ -408,7 +411,8 @@ test('the buffer spends its retention on calls that could become signals', () =>
 
 function actionInContext(action: any, startTime = 0, endTime?: number) {
   return {
-    frame: { pageAlias: 'page', framePath: [] },
+    // 1.62 replaced `frame: { pageGuid, pageAlias, framePath }` with a bare `pageGuid`.
+    pageGuid: 'page',
     action,
     startTime,
     endTime,
@@ -546,7 +550,7 @@ test('every element action shape resolves the bundle, not just click', () => {
 test('a stored v2 fill types, rather than silently becoming a no-op', () => {
   const [action] = mapBrowserStepsToActions([
     storedV2Step({
-      action: 'fill' as any,
+      action: 'fill',
       value: 'omkar@openobserve.ai',
       locator: { candidates: [{ kind: 'test_attribute', value: '[data-test="login-user-id-field"]' }] },
     }),
@@ -559,7 +563,7 @@ test('a stored v2 fill types, rather than silently becoming a no-op', () => {
 test('a stored v2 upload maps to setInputFiles', () => {
   const [action] = mapBrowserStepsToActions([
     storedV2Step({
-      action: 'upload' as any,
+      action: 'upload',
       files: ['/tmp/report.pdf'],
       locator: { candidates: [{ kind: 'css', value: '#file' }] },
     }),
@@ -571,9 +575,9 @@ test('a stored v2 upload maps to setInputFiles', () => {
 test('an upload is reported not-simulated under either spelling', () => {
   // P2.S — the player rejects setInputFiles, so a green here would be a false
   // claim about a file that was never uploaded.
-  for (const action of ['setInputFiles', 'upload']) {
+  for (const action of ['setInputFiles', 'upload'] as const) {
     const fidelity = describeStepFidelity(storedV2Step({
-      action: action as any,
+      action,
       locator: { candidates: [{ kind: 'css', value: '#file' }] },
     }), 0);
     expect(fidelity.level, action).toBe('not_simulated');
@@ -875,4 +879,91 @@ test('a framework id is flagged, not demoted', () => {
     '#reka-popover-trigger-v-21',
     '.org-switcher > button',
   ]);
+});
+
+// ── Action vocabulary: every recorder action maps, or fails loudly ──────────
+
+test('an unmapped recorder action fails loudly instead of becoming a click', () => {
+  // The forward mapper seeds `base` with action:'click' as a placeholder for the
+  // switch to overwrite. Returning that placeholder from `default:` turned any
+  // unmapped action into a click the user never performed — which is exactly how
+  // 1.56's `hover` reached storage as a click for six minors.
+  const action = {
+    pageGuid: 'page',
+    startTime: 0,
+    action: { name: 'someFutureAction', selector: '#x', signals: [] },
+  } as any;
+  expect(() => mapActionToBrowserStep(action, 0)).toThrow(/unmapped recorder action: 'someFutureAction'/);
+});
+
+test('a recorded hover maps to a hover step, not to a click', () => {
+  // Playwright 1.56 added `hover` to the recorder action model, reachable from the
+  // action picker. Before it was mapped, the picker's Hover entry produced a step
+  // indistinguishable from a click on the same element — and clicking a menu
+  // trigger that was only meant to be hovered can navigate or submit.
+  const recorded = {
+    pageGuid: 'page',
+    startTime: 0,
+    action: { name: 'hover', selector: '#menu', signals: [] },
+  } as any;
+
+  const step = mapActionToBrowserStep(recorded, 0);
+  expect(step.action).toBe('hover');
+});
+
+test('a hover step round-trips back to a hover action', () => {
+  const stored = {
+    id: 's1',
+    action: 'hover',
+    name: 'Hover Menu',
+    pageAlias: 'page',
+    framePath: [],
+    startTime: 0,
+    locator: { candidates: [{ kind: 'css', value: '#menu', origin: 'recorded' }] },
+  } as any;
+
+  expect(mapBrowserStepToAction(stored).action.name).toBe('hover');
+});
+
+test('hover is no longer reported as unsimulated', () => {
+  // It was on this list only because upstream had no hover action at all. Now that
+  // one exists and Frame.hover executes it, reporting "not simulated" would be
+  // under-claiming a capability we have.
+  expect(isUnsupportedReplayAction('hover')).toBe(false);
+  expect(isUnsupportedReplayAction('scroll')).toBe(true);
+  expect(isUnsupportedReplayAction('screenshot')).toBe(true);
+});
+
+test('a double click survives the round trip as two clicks', () => {
+  // The picker offers "Double click" as an explicit choice, so this is a
+  // deliberate recording, not an accident of event.detail.
+  const recorded = {
+    pageGuid: 'page',
+    startTime: 0,
+    action: { name: 'click', selector: '#x', button: 'left', modifiers: 0, clickCount: 2, signals: [] },
+  } as any;
+
+  const step = mapActionToBrowserStep(recorded, 0);
+  expect(step.clickCount).toBe(2);
+
+  const back = mapBrowserStepToAction(step);
+  expect((back.action as any).clickCount).toBe(2);
+});
+
+test('a step with no clickCount replays as a single click', () => {
+  // The compatibility half: every journey stored before this field existed omits
+  // it, and must still mean one click.
+  const stored = {
+    id: 's1',
+    action: 'click',
+    name: 'Sign in',
+    pageAlias: 'page',
+    framePath: [],
+    startTime: 0,
+    locator: { candidates: [{ kind: 'css', value: '#x', origin: 'recorded' }] },
+  } as any;
+
+  const action = mapBrowserStepToAction(stored).action as any;
+  expect(action.clickCount).toBe(1);
+  expect(action.button).toBe('left');
 });

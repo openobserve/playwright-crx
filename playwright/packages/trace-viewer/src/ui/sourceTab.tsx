@@ -21,13 +21,15 @@ import './sourceTab.css';
 import { StackTraceView } from './stackTrace';
 import { CodeMirrorWrapper } from '@web/components/codeMirrorWrapper';
 import type { SourceHighlight } from '@web/components/codeMirrorWrapper';
-import type { SourceLocation, SourceModel } from './modelUtil';
-import type { StackFrame } from '@protocol/channels';
+import type { SourceLocation, SourceModel } from '@isomorphic/trace/traceModel';
+import type { StackFrame } from '@trace/trace';
 import { CopyToClipboard } from './copyToClipboard';
 import { ToolbarButton } from '@web/components/toolbarButton';
 import { Toolbar } from '@web/components/toolbar';
+import { useTraceModel } from './traceModelContext';
 
 function useSources(stack: StackFrame[] | undefined, selectedFrame: number, sources: Map<string, SourceModel>, rootDir?: string, fallbackLocation?: SourceLocation) {
+  const model = useTraceModel();
   return useAsyncMemo<{ source: SourceModel, targetLine?: number, fileName?: string, highlight: SourceHighlight[], location?: SourceLocation }>(async () => {
     const actionLocation = stack?.[selectedFrame];
     const location = actionLocation?.file ? actionLocation : fallbackLocation;
@@ -53,18 +55,18 @@ function useSources(stack: StackFrame[] | undefined, selectedFrame: number, sour
     } else if (source.content === undefined || (location === fallbackLocation)) {
       const sha1 = await calculateSha1(file);
       try {
-        let response = await fetch(`sha1/src@${sha1}.txt`);
-        if (response.status === 404)
+        let response = model ? await fetch(model.createRelativeUrl(`sha1/src@${sha1}.txt`)) : undefined;
+        if (!response || response.status === 404)
           response = await fetch(`file?path=${encodeURIComponent(file)}`);
         if (response.status >= 400)
-          source.content = `<Unable to read "${file}">`;
+          source.content = ``;
         else
           source.content = await response.text();
       } catch {
         source.content = `<Unable to read "${file}">`;
       }
     }
-    return { source, highlight, targetLine, fileName, location };
+    return { model, source, highlight, targetLine, fileName, location };
   }, [stack, selectedFrame, rootDir, fallbackLocation], { source: { errors: [], content: 'Loading\u2026' }, highlight: [] });
 }
 
@@ -101,6 +103,7 @@ export const SourceTab: React.FunctionComponent<{
 
   const showStackFrames = (stack?.length ?? 0) > 1;
   const shortFileName = getFileName(fileName);
+  const highligter = shortFileName.endsWith('.md') ? 'markdown' : 'javascript';
 
   return <SplitView
     sidebarSize={200}
@@ -114,7 +117,7 @@ export const SourceTab: React.FunctionComponent<{
         <CopyToClipboard description='Copy filename' value={shortFileName}/>
         {location && <ToolbarButton icon='link-external' title='Open in VS Code' onClick={openExternally}></ToolbarButton>}
       </Toolbar> }
-      <CodeMirrorWrapper text={source.content || ''} language='javascript' highlight={highlight} revealLine={targetLine} readOnly={true} lineNumbers={true} dataTestId='source-code-mirror'/>
+      <CodeMirrorWrapper text={source.content || ''} highlighter={highligter} highlight={highlight} revealLine={targetLine} readOnly={true} lineNumbers={true} dataTestId='source-code-mirror'/>
     </div>}
     sidebar={<StackTraceView stack={stack} selectedFrame={selectedFrame} setSelectedFrame={setSelectedFrame} />}
   />;

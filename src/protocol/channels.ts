@@ -14,10 +14,18 @@
  * limitations under the License.
  */
 
-import type { BrowserContextChannel, Channel, PageChannel, PlaywrightInitializer } from '@protocol/channels';
+// 1.62 split channels per side (playwright#41321): client and server now have separately
+// generated, nominally distinct types for the same wire shapes. crx is in-process, so both
+// sides of that split meet in one process and one implementation.
+//
+// These declarations follow the CLIENT side, because that is the public surface — what an
+// embedder holds when it calls crxApp.attach() and what src/client/* is typed against. The
+// dispatchers that implement them live on the server side and cast at the boundary, which
+// is the one place the two spellings of an identical shape have to be reconciled.
+import type { BrowserContextChannel, Channel, PageChannel, PlaywrightInitializer } from 'playwright-core/lib/client/channels';
 import type { Mode } from '@recorder/recorderTypes';
 import type { CallMetadata } from 'playwright-core/lib/server/instrumentation';
-import type { CrxBrowserContextOptions } from 'src/types/types';
+import type { CrxBrowserContextOptions, CrxTestOptions } from 'src/types/types';
 
 export type CrxPlaywrightInitializer = PlaywrightInitializer & { _crx: CrxChannel };
 
@@ -215,10 +223,8 @@ export type CrxApplicationListOptions = { code: string };
 export type CrxApplicationListResult = {
   tests: {
     title: string,
-    options?: {
-      deviceName?: string,
-      contextOptions?: CrxBrowserContextOptions,
-    },
+    // What was found in the parsed code, which is a superset of what start() accepts.
+    options?: CrxTestOptions,
     location?: {
       file: string,
       line?: number,
@@ -245,4 +251,21 @@ export interface CrxApplicationEvents {
   'attached': CrxApplicationAttachedEvent;
   'detached': CrxApplicationDetachedEvent;
   'modeChanged': CrxApplicationModeChangedEvent;
+}
+
+
+/**
+ * The one place the 1.62 per-side channel split is reconciled.
+ *
+ * These crx channels are declared against the CLIENT types above, because that is the
+ * public surface. Their implementations are server dispatchers, and 1.62 generates the
+ * client and server types separately — so `PageDispatcher` and the client's `PageChannel`
+ * describe the same object over the same in-process wire and are still nominally distinct.
+ *
+ * crx has no wire: both sides are the same process and the same objects. So this is a
+ * spelling mismatch rather than a real one, and it is named here once instead of being
+ * cast away at each of the seven places a dispatcher meets a channel type.
+ */
+export function asChannel<T>(dispatcher: unknown): T {
+  return dispatcher as T;
 }

@@ -35,9 +35,9 @@ test('should upload the file', async ({ page, server, asset }) => {
   }, input)).toBe('contents of the file');
 });
 
-test('should upload a folder', async ({ page, server, browserName, headless, browserMajorVersion, isAndroid, macVersion, isMac }) => {
+test('should upload a folder', async ({ page, server, isFrozenWebkit, isAndroid }) => {
   test.skip(isAndroid);
-  test.skip(browserName === 'webkit' && isMac && macVersion <= 12, 'WebKit on macOS-12 is frozen');
+  test.skip(isFrozenWebkit);
 
   await page.goto(server.PREFIX + '/input/folderupload.html');
   const input = await page.$('input');
@@ -68,9 +68,9 @@ test('should upload a folder', async ({ page, server, browserName, headless, bro
   }
 });
 
-test('should upload a folder and throw for multiple directories', async ({ page, server, isAndroid, browserName, macVersion, isMac }) => {
+test('should upload a folder and throw for multiple directories', async ({ page, server, isAndroid, isFrozenWebkit }) => {
   test.skip(isAndroid);
-  test.skip(browserName === 'webkit' && isMac && macVersion <= 12, 'WebKit on macOS-12 is frozen');
+  test.skip(isFrozenWebkit);
 
   await page.goto(server.PREFIX + '/input/folderupload.html');
   const input = await page.$('input');
@@ -87,9 +87,9 @@ test('should upload a folder and throw for multiple directories', async ({ page,
   ])).rejects.toThrow('Multiple directories are not supported');
 });
 
-test('should throw if a directory and files are passed', async ({ page, server, isAndroid, browserName, macVersion, isMac }) => {
+test('should throw if a directory and files are passed', async ({ page, server, isAndroid, isFrozenWebkit }) => {
   test.skip(isAndroid);
-  test.skip(browserName === 'webkit' && isMac && macVersion <= 12, 'WebKit on macOS-12 is frozen');
+  test.skip(isFrozenWebkit);
 
   await page.goto(server.PREFIX + '/input/folderupload.html');
   const input = await page.$('input');
@@ -104,9 +104,9 @@ test('should throw if a directory and files are passed', async ({ page, server, 
   ])).rejects.toThrow('File paths must be all files or a single directory');
 });
 
-test('should throw when uploading a folder in a normal file upload input', async ({ page, server, isAndroid, browserName, macVersion, isMac }) => {
+test('should throw when uploading a folder in a normal file upload input', async ({ page, server, isAndroid, isFrozenWebkit }) => {
   test.skip(isAndroid);
-  test.skip(browserName === 'webkit' && isMac && macVersion <= 12, 'WebKit on macOS-12 is frozen');
+  test.skip(isFrozenWebkit);
 
   await page.goto(server.PREFIX + '/input/fileupload.html');
   const input = await page.$('input');
@@ -118,9 +118,9 @@ test('should throw when uploading a folder in a normal file upload input', async
   await expect(input.setInputFiles(dir)).rejects.toThrow('File input does not support directories, pass individual files instead');
 });
 
-test('should throw when uploading a file in a directory upload input', async ({ page, server, isAndroid, asset, browserName, macVersion, isMac }) => {
+test('should throw when uploading a file in a directory upload input', async ({ page, server, isAndroid, asset, isFrozenWebkit }) => {
   test.skip(isAndroid);
-  test.skip(browserName === 'webkit' && isMac && macVersion <= 12, 'WebKit on macOS-12 is frozen');
+  test.skip(isFrozenWebkit);
 
   await page.goto(server.PREFIX + '/input/folderupload.html');
   const input = await page.$('input');
@@ -143,10 +143,8 @@ test('should upload a file after popup', async ({ page, server, asset }) => {
   expect(await page.evaluate(e => e.files[0].name, input)).toBe('file-to-upload.txt');
 });
 
-test('should upload large file', async ({ page, server, isAndroid, isWebView2, mode }, testInfo) => {
+test('should upload large file', async ({ page, server, isAndroid, mode }, testInfo) => {
   test.skip(isAndroid);
-  test.skip(isWebView2);
-  test.skip(mode.startsWith('service'));
   test.slow();
 
   await page.goto(server.PREFIX + '/input/fileupload.html');
@@ -201,10 +199,8 @@ test('should throw an error if the file does not exist', async ({ page, server, 
   expect(error.message).toContain('i actually do not exist.txt');
 });
 
-test('should upload large file with relative path', async ({ page, server, isAndroid, isWebView2, mode }, testInfo) => {
+test('should upload large file with relative path', async ({ page, server, isAndroid, mode }, testInfo) => {
   test.skip(isAndroid);
-  test.skip(isWebView2);
-  test.skip(mode.startsWith('service'));
   test.slow();
 
   await page.goto(server.PREFIX + '/input/fileupload.html');

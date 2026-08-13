@@ -14,12 +14,13 @@ import type { StepFidelity } from 'playwright-crx';
 import type { Mode } from '@recorder/recorderTypes';
 import type { CrxApplication } from 'playwright-crx';
 import type { BrowserStep, SyntheticsForwardMessage, StepResultData, StepStartedData, StructuredError } from 'playwright-crx';
-import type { O2Command, O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage, ReplayResponse, ReplayAuth, ReplayHeader, ReplayCookie, BridgePortMessage, SwPong } from './messaging';
+import type { O2Command, O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage, ReplayResponse, ReplayAuth, ReplayHeader, ReplayCookie, BridgePortMessage, SwPong, RecorderStatus, UnsupportedCommandResponse } from './messaging';
 import { SW_PING } from './messaging';
 
 // ---- State ----
 
 let crxApp: CrxApplication | undefined;
+let recorderApp: SyntheticsRecorderApp | undefined;
 let recordingId: string | undefined;
 let recordingTabId: number | undefined;
 let currentMode: Mode = 'none';
@@ -40,6 +41,8 @@ let replayActionOffset = 0;
  *  Computed once per replay so every step result can carry its own caveats and no
  *  skipped step is ever reported as a plain pass. */
 let replayFidelity: StepFidelity[] = [];
+/** Last step the player announced, so a failed restore can name where it stopped. */
+let lastStartedStepId: string | undefined;
 
 // Long-lived connection back to the O2 web app running in a browser tab.
 // The O2 app opens this via chrome.runtime.connect(extensionId, { name: 'synthetics-recorder' }).
@@ -54,6 +57,26 @@ let o2TabId: number | undefined;
 
 // Name the O2 web app must use when opening the connection.
 const O2_PORT_NAME = 'synthetics-recorder';
+
+/**
+ * What this build can do — the contract O2 gates its affordances on.
+ *
+ * Add a string here in the SAME change that implements the command, never ahead of
+ * it: an advertised capability whose command is still refused makes O2 enable a dead
+ * button, which is worse than not advertising at all.
+ *
+ * Deliberately declared here rather than in messaging.ts. messaging.ts is imported by
+ * the content script, and sharing a runtime VALUE (not just a type) between the
+ * content script and another entry makes Rollup hoist it into a shared chunk, which
+ * emits `import` at the top of content.js — a classic script Chrome then refuses to
+ * load. See the "content script is emitted as a classic script" test.
+ */
+const CAPABILITIES: string[] = ['record', 'replay', 'recordFrom'];
+
+/** The build the user actually has, for the "update the extension" message. */
+function extVersion(): string {
+  return chrome.runtime.getManifest().version;
+}
 
 // Playwright's native default test-id attribute. Used only when O2 doesn't send a (non-empty) testIdAttr —
 // we never impose 'class' or 'data-test'.
@@ -72,6 +95,9 @@ function init() {
   Crx.recorderAppFactoryOverride = async (crxInstance, recorder, _context) => {
     // The context is what the app listens on for response evidence (Phase 4).
     const app = new SyntheticsRecorderApp(crxInstance, recorder, handleRecorderMessage, _context);
+    // Held so startRecordingFrom can reset the capture at the mode flip. The app lives
+    // in this worker, so this is a direct reference rather than another channel method.
+    recorderApp = app;
     app.on('show', () => { /* headless — no UI */ });
     app.on('hide', () => { /* headless — no UI */ });
     app.on('modeChanged', ({ mode }) => {
@@ -196,8 +222,34 @@ function runO2Command(command: O2Command, respond: (response?: any) => void): bo
       return true;
 
     case 'getStatus':
-      respond({ isRecording, mode: currentMode, tabId: recordingTabId, stepCount: browserSteps.length });
+      respond({
+        isRecording,
+        mode: currentMode,
+        tabId: recordingTabId,
+        stepCount: browserSteps.length,
+        // Chrome updates this extension independently of when O2 deploys, so the two can
+        // disagree about the wire with no way to say so. Reporting the manifest version —
+        // already the source of truth, and the package script requires it to agree with
+        // package.json — lets O2 say "update the extension" instead of failing obscurely
+        // on a message shape it does not recognise.
+        //
+        // Both names are sent on purpose. `extVersion` is the handshake's name for it,
+        // but O2 reads `version` today (`isExtensionOutdated(status.version)` in
+        // useSyntheticsRecorder.ts), and dropping it would not fail — it would silently
+        // pass `undefined` and disable the outdated-extension banner, which is the one
+        // thing that would have told a user why anything else was broken. It goes when O2
+        // reads `extVersion`, not before.
+        version: extVersion(),
+        extVersion: extVersion(),
+        capabilities: CAPABILITIES,
+      } satisfies RecorderStatus);
       return false;
+
+    case 'startRecordingFrom':
+      startRecordingFrom(command.prefixSteps, command.targetUrl, command.testIdAttr, command.auth, command.headers, command.cookies)
+        .then(result => respond(result))
+        .catch(err => respond({ success: false, error: err.message }));
+      return true;
 
     case 'stopReplay':
       handleStopReplay()
@@ -205,6 +257,18 @@ function runO2Command(command: O2Command, respond: (response?: any) => void): bo
         .catch(err => respond({ success: false, error: err.message }));
       return true;
   }
+
+  // A command this build does not implement. Answering is the whole point: the O2 page
+  // correlates replies by nonce, so falling through with no response left the caller to
+  // wait out its own timeout and then report a generic failure — which names neither the
+  // cause nor the fix. Naming the action lets O2 say "update the extension" and say what
+  // for.
+  //
+  // `command` is `never` here, so the union is exhausted at compile time and this is
+  // reachable only from an O2 build that is NEWER than this extension — exactly the
+  // skew this exists for.
+  const unknown = (command as { action?: string }).action ?? 'unknown';
+  respond({ success: false, error: 'unsupported-command', action: unknown } satisfies UnsupportedCommandResponse);
   return false;
 }
 
@@ -220,7 +284,14 @@ function handleInternalMessage(
   // sendMessage is queued until this listener is registered, so a reply proves the
   // worker has finished evaluating and the bridge port will be accepted.
   if (message?.type === SW_PING.type) {
-    const pong: SwPong = { ok: true, isRecording, isReplaying, stepCount: browserSteps.length };
+    const pong: SwPong = {
+      ok: true,
+      isRecording,
+      isReplaying,
+      stepCount: browserSteps.length,
+      extVersion: extVersion(),
+      capabilities: CAPABILITIES,
+    };
     sendResponse(pong);
     return false;
   }
@@ -310,6 +381,9 @@ function handleRecorderMessage(msg: SyntheticsForwardMessage) {
       const step = replaySteps[stepIndex];
       const stepId = step?.id ?? `s${started.actionIndex + 1}`;
       const stepName = step?.name;
+      // Remembered so a restore that throws can say WHICH step stopped it. The player
+      // aborts on the failing action, so the last step to have started is that step.
+      lastStartedStepId = stepId;
       sendToO2({
         type: 'synthetics-recorder',
         recordingId: recordingId ?? `replay_${Date.now()}`,
@@ -664,31 +738,7 @@ async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr
   const initialUrl = needsContextSetup ? 'about:blank' : (targetUrl || firstNavigateUrl(steps) || 'about:blank');
   const tabId = await prepareRecordingWindow(initialUrl);
 
-  // Build context options for auth/headers/cookies.
-  const contextOptions: Record<string, any> = {};
-  const extraHeaders: Record<string, string> = {};
-  if (auth?.type === 'basic' && auth.username) {
-    const encoded = btoa(`${auth.username}:${auth.password}`);
-    extraHeaders['Authorization'] = `Basic ${encoded}`;
-  }
-  if (headers) {
-    for (const h of headers) {
-      extraHeaders[h.key] = h.value;
-    }
-  }
-  if (Object.keys(extraHeaders).length > 0) {
-    contextOptions.extraHTTPHeaders = Object.entries(extraHeaders).map(([name, value]) => ({ name, value }));
-  }
-  if (cookies && cookies.length > 0) {
-    contextOptions.storageState = {
-      cookies: cookies.map(c => ({
-        name: c.name,
-        value: c.value,
-        domain: c.domain || new URL(initialUrl !== 'about:blank' ? initialUrl : 'http://localhost').hostname,
-        path: '/',
-      })),
-    };
-  }
+  const contextOptions = buildContextOptions(initialUrl, auth, headers, cookies);
 
   try {
     crxApp = await crx.start({ incognito: true, tabId, contextOptions });
@@ -724,6 +774,150 @@ async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr
     await crxApp?.close().catch(() => {});
     crxApp = undefined;
   }
+}
+
+/**
+ * Auth / extra headers / cookies as Playwright context options.
+ *
+ * Shared by `replay` and `startRecordingFrom`: a restore that ran without the
+ * journey's credentials would land on a login page and record every subsequent step
+ * against the wrong screen, which is precisely the failure the restore exists to
+ * prevent.
+ */
+function buildContextOptions(
+  initialUrl: string,
+  auth?: ReplayAuth,
+  headers?: ReplayHeader[],
+  cookies?: ReplayCookie[],
+): Record<string, any> {
+  const contextOptions: Record<string, any> = {};
+  const extraHeaders: Record<string, string> = {};
+  if (auth?.type === 'basic' && auth.username) {
+    const encoded = btoa(`${auth.username}:${auth.password}`);
+    extraHeaders['Authorization'] = `Basic ${encoded}`;
+  }
+  if (headers) {
+    for (const h of headers) {
+      extraHeaders[h.key] = h.value;
+    }
+  }
+  if (Object.keys(extraHeaders).length > 0) {
+    contextOptions.extraHTTPHeaders = Object.entries(extraHeaders).map(([name, value]) => ({ name, value }));
+  }
+  if (cookies && cookies.length > 0) {
+    contextOptions.storageState = {
+      cookies: cookies.map(c => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain || new URL(initialUrl !== 'about:blank' ? initialUrl : 'http://localhost').hostname,
+        path: '/',
+      })),
+    };
+  }
+  return contextOptions;
+}
+
+/**
+ * Replay `prefixSteps`, then record from where they left off — one session.
+ *
+ * The difference from `handleReplay` is what happens at the end. Replay closes the
+ * CrxApplication in its `finally`; this must not, on either path:
+ *   - on success the context is what the author records into, and closing it would
+ *     throw away the state the replay just spent up to a minute reconstructing;
+ *   - on failure the browser sits where the failing step stopped, which is a
+ *     legitimate restored state — so the recovery is a mode flip, not another replay.
+ */
+async function startRecordingFrom(
+  prefixSteps: BrowserStep[],
+  targetUrl?: string,
+  testIdAttr?: string,
+  auth?: ReplayAuth,
+  headers?: ReplayHeader[],
+  cookies?: ReplayCookie[],
+): Promise<ReplayResponse & { failedStepId?: string }> {
+  if (isReplaying)
+    return { success: false, passed: false, error: 'A replay is already in progress' };
+  if (isRecording)
+    await stopRecording();
+
+  const attr = resolveTestIdAttr(testIdAttr);
+  playwright.selectors.setTestIdAttribute(attr);
+  setLocatorTestIdAttribute(attr);
+
+  // The prefix streams per-step results over the SAME messages a replay uses, so the
+  // web app can light up the very rows it already knows how to light up. That is why
+  // replaySteps/replayActionOffset are populated here too.
+  replayStopped = false;
+  replaySteps = prefixSteps;
+  replayFidelity = describeReplayFidelity(prefixSteps);
+  replayActionOffset = (prefixSteps.length > 0 && prefixSteps[0].action === 'navigate' && !!prefixSteps[0].url) ? 1 : 0;
+  lastStartedStepId = undefined;
+
+  const needsContextSetup = !!(auth || (headers && headers.length > 0) || (cookies && cookies.length > 0));
+  const initialUrl = needsContextSetup ? 'about:blank' : (targetUrl || firstNavigateUrl(prefixSteps) || 'about:blank');
+  const tabId = await prepareRecordingWindow(initialUrl);
+  const contextOptions = buildContextOptions(initialUrl, auth, headers, cookies);
+
+  crxApp = await crx.start({ incognito: true, tabId, contextOptions });
+  await crxApp.attach(tabId);
+  // mode 'none' so the restore is not itself recorded. The player drives actions
+  // server-side, so they never reach the injected recorder anyway — but a navigation
+  // signal would, and `RecorderCollection.signal` is what the disabled guard stops.
+  await crxApp.recorder.show({ mode: 'none', testIdAttributeName: attr });
+
+  recordingTabId = tabId;
+  recordingId = `rec_${Date.now()}_${tabId}`;
+  browserSteps = [];
+
+  if (prefixSteps.length > 0) {
+    isReplaying = true;
+    try {
+      await crxApp.recorder.runActions(mapBrowserStepsToActions(prefixSteps));
+    } catch (err) {
+      const e = err as Error;
+      // Which step stopped us. The player aborts on the failing action, so the last
+      // step to have started is the one that failed.
+      const failedStepId = lastStartedStepId ?? prefixSteps[prefixSteps.length - 1]?.id;
+      sendToO2({
+        type: 'synthetics-recorder',
+        recordingId: recordingId!,
+        payload: {
+          method: 'prefixFailed',
+          stepId: failedStepId,
+          error: e?.message ?? String(err),
+          structuredError: { message: e?.message ?? String(err), name: e?.name, stack: e?.stack },
+        },
+      });
+      // Session deliberately left open — see the doc comment.
+      return { success: false, passed: false, error: e?.message ?? String(err), failedStepId };
+    } finally {
+      isReplaying = false;
+    }
+  }
+
+  // Everything the collection logged while disabled is an artifact of the restore.
+  // Reset before enabling, so the author's first action is genuinely step one.
+  recorderApp?.resetCapture();
+  await crxApp.recorder.setMode('recording');
+  isRecording = true;
+
+  await sendToOverlay(tabId, { method: 'showOverlay' });
+  chrome.action.setBadgeText({ text: 'REC', tabId });
+  chrome.action.setBadgeBackgroundColor({ color: '#e74c3c', tabId });
+
+  sendToO2({
+    type: 'synthetics-recorder',
+    recordingId,
+    payload: {
+      method: 'recordingStarted',
+      tabId,
+      url: targetUrl ?? '',
+      mode: 'insert',
+      baselineStepCount: browserSteps.length,
+    },
+  });
+
+  return { success: true, passed: true };
 }
 
 // Cancels an in-progress replay. The server CrxPlayer.stop() makes the in-flight action throw Stopped,

@@ -16,11 +16,12 @@
 
 import * as fs from 'fs';
 
-import { monotonicTime, spawnAsync } from 'playwright-core/lib/utils';
+import { monotonicTime } from '@isomorphic/time';
+import { spawnAsync } from '@utils/spawnAsync';
 
 import type { TestRunnerPlugin } from './';
 import type { FullConfig } from '../../types/testReporter';
-import type { FullConfigInternal } from '../common/config';
+import type { FullConfigInternal } from '../common';
 import type { GitCommitInfo, CIInfo, MetadataWithCommitInfo } from '../isomorphic/types';
 
 const GIT_OPERATIONS_TIMEOUT_MS = 3000;
@@ -123,12 +124,12 @@ async function gitCommitInfo(gitDir: string): Promise<GitCommitInfo | undefined>
     '%cn', // committer name
     '%ce', // committer email
     '%ct', // committer date, UNIX timestamp
-    '',    // branch
   ];
-  const output = await runGit(`git log -1 --pretty=format:"${tokens.join(separator)}" && git rev-parse --abbrev-ref HEAD`, gitDir);
-  if (!output)
+  const logOutput = await runGit(['log', '-1', `--pretty=format:${tokens.join(separator)}`], gitDir);
+  if (!logOutput)
     return undefined;
-  const [hash, shortHash, subject, body, authorName, authorEmail, authorTime, committerName, committerEmail, committerTime, branch] = output.split(separator);
+  const branchOutput = await runGit(['rev-parse', '--abbrev-ref', 'HEAD'], gitDir);
+  const [hash, shortHash, subject, body, authorName, authorEmail, authorTime, committerName, committerEmail, committerTime] = logOutput.split(separator);
 
   return {
     shortHash,
@@ -145,7 +146,7 @@ async function gitCommitInfo(gitDir: string): Promise<GitCommitInfo | undefined>
       email: committerEmail,
       time: +committerTime * 1000,
     },
-    branch: branch.trim(),
+    branch: branchOutput?.trim() ?? '',
   };
 }
 
@@ -153,8 +154,8 @@ async function gitDiff(gitDir: string, ci?: CIInfo): Promise<string | undefined>
   const diffLimit = 100_000;
   if (ci?.prBaseHash) {
     // https://git-scm.com/docs/git-fetch
-    await runGit(`git fetch origin ${ci.prBaseHash} --depth=1 --no-auto-maintenance --no-auto-gc --no-tags --no-recurse-submodules`, gitDir);
-    const diff = await runGit(`git diff ${ci.prBaseHash} HEAD`, gitDir);
+    await runGit(['fetch', 'origin', ci.prBaseHash, '--depth=1', '--no-auto-maintenance', '--no-auto-gc', '--no-tags', '--no-recurse-submodules'], gitDir);
+    const diff = await runGit(['diff', ci.prBaseHash, 'HEAD'], gitDir);
     if (diff)
       return diff.substring(0, diffLimit);
   }
@@ -164,7 +165,7 @@ async function gitDiff(gitDir: string, ci?: CIInfo): Promise<string | undefined>
     return;
 
   // Check dirty state first.
-  const uncommitted = await runGit('git diff', gitDir);
+  const uncommitted = await runGit(['diff'], gitDir);
   if (uncommitted === undefined) {
     // Failed to run git diff.
     return;
@@ -173,20 +174,20 @@ async function gitDiff(gitDir: string, ci?: CIInfo): Promise<string | undefined>
     return uncommitted.substring(0, diffLimit);
 
   // Assume non-shallow checkout on local.
-  const diff = await runGit('git diff HEAD~1', gitDir);
+  const diff = await runGit(['diff', 'HEAD~1'], gitDir);
   return diff?.substring(0, diffLimit);
 }
 
-async function runGit(command: string, cwd: string): Promise<string | undefined> {
-  debug(`running "${command}"`);
+async function runGit(args: string[], cwd: string): Promise<string | undefined> {
+  debug(`running "git ${args.join(' ')}"`);
   const start = monotonicTime();
   const result = await spawnAsync(
-      command,
-      [],
-      { stdio: 'pipe', cwd, timeout: GIT_OPERATIONS_TIMEOUT_MS, shell: true }
+      'git',
+      args,
+      { stdio: 'pipe', cwd, timeout: GIT_OPERATIONS_TIMEOUT_MS }
   );
   if (monotonicTime() - start > GIT_OPERATIONS_TIMEOUT_MS) {
-    print(`timeout of ${GIT_OPERATIONS_TIMEOUT_MS}ms exceeded while running "${command}"`);
+    print(`timeout of ${GIT_OPERATIONS_TIMEOUT_MS}ms exceeded while running "git ${args.join(' ')}"`);
     return;
   }
   if (result.code)

@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-import { debugLogger  } from '../utils';
 import { Android } from './android/android';
 import { AdbBackend } from './android/backendAdb';
 import { BidiChromium } from './bidi/bidiChromium';
@@ -23,20 +22,19 @@ import { Chromium } from './chromium/chromium';
 import { DebugController } from './debugController';
 import { Electron } from './electron/electron';
 import { Firefox } from './firefox/firefox';
-import { SdkObject, createInstrumentation } from './instrumentation';
+import { SdkObject, createRootSdkObject } from './instrumentation';
 import { WebKit } from './webkit/webkit';
 
 import type { BrowserType } from './browserType';
-import type { Language } from '../utils';
+import type { Language } from '@isomorphic/locatorGenerators';
 import type { Browser } from './browser';
-import type { CallMetadata } from './instrumentation';
 import type { Page } from './page';
 
 type PlaywrightOptions = {
-  socksProxyPort?: number;
   sdkLanguage: Language;
   isInternalPlaywright?: boolean;
   isServer?: boolean;
+  isClientCollocatedWithServer?: boolean;
 };
 
 export class Playwright extends SdkObject {
@@ -45,15 +43,13 @@ export class Playwright extends SdkObject {
   readonly electron: Electron;
   readonly firefox: BrowserType;
   readonly webkit: BrowserType;
-  readonly bidiChromium: BrowserType;
-  readonly bidiFirefox: BrowserType;
   readonly options: PlaywrightOptions;
   readonly debugController: DebugController;
   private _allPages = new Set<Page>();
   private _allBrowsers = new Set<Browser>();
 
   constructor(options: PlaywrightOptions) {
-    super({ attribution: {}, instrumentation: createInstrumentation() } as any, undefined, 'Playwright');
+    super(createRootSdkObject(), undefined, 'Playwright');
     this.options = options;
     this.attribution.playwright = this;
     this.instrumentation.addListener({
@@ -61,22 +57,13 @@ export class Playwright extends SdkObject {
       onBrowserClose: browser => this._allBrowsers.delete(browser),
       onPageOpen: page => this._allPages.add(page),
       onPageClose: page => this._allPages.delete(page),
-      onCallLog: (sdkObject: SdkObject, metadata: CallMetadata, logName: string, message: string) => {
-        debugLogger.log(logName as any, message);
-      }
     }, null);
-    this.chromium = new Chromium(this);
-    this.bidiChromium = new BidiChromium(this);
-    this.bidiFirefox = new BidiFirefox(this);
-    this.firefox = new Firefox(this);
+    this.chromium = new Chromium(this, new BidiChromium(this));
+    this.firefox = new Firefox(this, new BidiFirefox(this));
     this.webkit = new WebKit(this);
     this.electron = new Electron(this);
     this.android = new Android(this, new AdbBackend());
     this.debugController = new DebugController(this);
-  }
-
-  async hideHighlight() {
-    await Promise.all([...this._allPages].map(p => p.hideHighlight().catch(() => {})));
   }
 
   allBrowsers(): Browser[] {

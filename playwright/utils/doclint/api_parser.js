@@ -93,6 +93,9 @@ class ApiParser {
     if (!match)
       throw new Error('Invalid member: ' + spec.text);
     const metainfo = extractMetainfo(spec);
+    if (metainfo.hidden)
+      return;
+
     const name = match[3];
     let returnType = null;
     let optional = false;
@@ -125,8 +128,6 @@ class ApiParser {
     const clazz = /** @type {docs.Class} */(this.classes.get(match[2]));
     if (!clazz)
       throw new Error(`Unknown class ${match[2]} for member: ` + spec.text);
-    if (metainfo.hidden)
-      return;
 
     const existingMember = clazz.membersArray.find(m => m.name === name && m.kind === member.kind);
     if (existingMember && isTypeOverride(existingMember, member)) {
@@ -146,6 +147,9 @@ class ApiParser {
     const match = spec.text.match(/(param|option): (.*)/);
     if (!match)
       throw `Something went wrong with matching ${spec.text}`;
+    const metainfo = extractMetainfo(spec);
+    if (metainfo.hidden)
+      return null;
 
     // For "test.describe.only.title":
     // - className is "test"
@@ -226,13 +230,21 @@ class ApiParser {
   parseType(spec, since) {
     const arg = parseVariable(spec.text);
     const properties = [];
+    /** @type {Object<string, string>} */
+    const langAliases = {};
     for (const child of /** @type {MarkdownLiNode[]} */ (spec.children) || []) {
-      const { name, text } = parseVariable(/** @type {string} */(child.text));
+      const childText = /** @type {string} */(child.text);
+      const aliasMatch = childText.match(/^alias(?:-(\w+))?\s*:\s*(.*)$/);
+      if (aliasMatch) {
+        langAliases[aliasMatch[1] || 'default'] = aliasMatch[2].trim();
+        continue;
+      }
+      const { name, text } = parseVariable(childText);
       const comments = /** @type {MarkdownNode[]} */ ([{ type: 'text', text }]);
       const childType = this.parseType(child, since);
       properties.push(docs.Member.createProperty({ langs: {}, since, deprecated: undefined, discouraged: undefined }, name, childType.type, comments, !childType.optional));
     }
-    const type = docs.Type.parse(arg.type, properties);
+    const type = docs.Type.parse(arg.type, properties, langAliases);
     return { type, optional: arg.optional };
   }
 }

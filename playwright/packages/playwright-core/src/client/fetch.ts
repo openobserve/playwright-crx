@@ -14,25 +14,28 @@
  * limitations under the License.
  */
 
+import * as fs from 'fs';
+import path from 'path';
+import { inspect } from 'util';
+
+import { assert } from '@isomorphic/assert';
+import { headersObjectToArray } from '@isomorphic/headers';
+import { isString } from '@isomorphic/rtti';
 import { toClientCertificatesProtocol } from './browserContext';
 import { ChannelOwner } from './channelOwner';
 import { TargetClosedError, isTargetClosedError } from './errors';
 import { RawHeaders } from './network';
 import { Tracing } from './tracing';
-import { assert } from '../utils/isomorphic/assert';
 import { mkdirIfNeeded } from './fileUtils';
-import { headersObjectToArray } from '../utils/isomorphic/headers';
-import { isString } from '../utils/isomorphic/rtti';
-import { TimeoutSettings } from './timeoutSettings';
+import { TimeoutSettings, kNoTimeout } from './timeoutSettings';
 
 import type { Playwright } from './playwright';
-import type { ClientCertificate, FilePayload, Headers, SetStorageState, StorageState, TimeoutOptions } from './types';
+import type { ResourceTiming } from './network';
+import type { ClientCertificate, FilePayload, Headers, RemoteAddr, SecurityDetails, SetStorageState, StorageState, TimeoutOptions } from './types';
 import type { Serializable } from '../../types/structs';
 import type * as api from '../../types/types';
-import type { HeadersArray, NameValue } from '../utils/isomorphic/types';
-import type { Platform } from './platform';
-import type * as channels from '@protocol/channels';
-import type * as fs from 'fs';
+import type { HeadersArray, NameValue } from '@isomorphic/types';
+import type * as channels from './channels';
 
 export type FetchOptions = {
   params?: { [key: string]: string | number | boolean; } | URLSearchParams | string,
@@ -42,13 +45,14 @@ export type FetchOptions = {
   form?: { [key: string]: string|number|boolean; } | FormData;
   multipart?: { [key: string]: string|number|boolean|fs.ReadStream|FilePayload; } | FormData;
   timeout?: number,
+  signal?: AbortSignal,
   failOnStatusCode?: boolean,
   ignoreHTTPSErrors?: boolean,
   maxRedirects?: number,
   maxRetries?: number,
 };
 
-type NewContextOptions = Omit<channels.PlaywrightNewRequestOptions, 'extraHTTPHeaders' | 'clientCertificates' | 'storageState' | 'tracesDir'> & {
+export type NewContextOptions = Omit<channels.PlaywrightNewRequestOptions, 'extraHTTPHeaders' | 'clientCertificates' | 'storageState' | 'tracesDir'> & {
   extraHTTPHeaders?: Headers,
   storageState?: string | SetStorageState,
   clientCertificates?: ClientCertificate[];
@@ -65,24 +69,22 @@ export class APIRequest implements api.APIRequest {
   }
 
   async newContext(options: NewContextOptions & TimeoutOptions = {}): Promise<APIRequestContext> {
-    options = {
-      ...this._playwright._defaultContextOptions,
-      ...options,
-    };
+    options = { ...options };
+    await this._playwright._instrumentation.runBeforeCreateRequestContext(options);
     const storageState = typeof options.storageState === 'string' ?
-      JSON.parse(await this._playwright._platform.fs().promises.readFile(options.storageState, 'utf8')) :
+      JSON.parse(await fs.promises.readFile(options.storageState, 'utf8')) :
       options.storageState;
     const context = APIRequestContext.from((await this._playwright._channel.newRequest({
       ...options,
       extraHTTPHeaders: options.extraHTTPHeaders ? headersObjectToArray(options.extraHTTPHeaders) : undefined,
       storageState,
       tracesDir: this._playwright._defaultLaunchOptions?.tracesDir, // We do not expose tracesDir in the API, so do not allow options to accidentally override it.
-      clientCertificates: await toClientCertificatesProtocol(this._playwright._platform, options.clientCertificates),
-    })).request);
+      clientCertificates: await toClientCertificatesProtocol(options.clientCertificates),
+    }, kNoTimeout)).request);
     this._contexts.add(context);
     context._request = this;
     context._timeoutSettings.setDefaultTimeout(options.timeout ?? this._playwright._defaultContextTimeout);
-    context._tracing._tracesDir = this._playwright._defaultLaunchOptions?.tracesDir;
+    context.tracing._tracesDir = this._playwright._defaultLaunchOptions?.tracesDir;
     await context._instrumentation.runAfterCreateRequestContext(context);
     return context;
   }
@@ -90,7 +92,7 @@ export class APIRequest implements api.APIRequest {
 
 export class APIRequestContext extends ChannelOwner<channels.APIRequestContextChannel> implements api.APIRequestContext {
   _request?: APIRequest;
-  readonly _tracing: Tracing;
+  readonly tracing: Tracing;
   private _closeReason: string | undefined;
   _timeoutSettings: TimeoutSettings;
 
@@ -100,8 +102,8 @@ export class APIRequestContext extends ChannelOwner<channels.APIRequestContextCh
 
   constructor(parent: ChannelOwner, type: string, guid: string, initializer: channels.APIRequestContextInitializer) {
     super(parent, type, guid, initializer);
-    this._tracing = Tracing.from(initializer.tracing);
-    this._timeoutSettings = new TimeoutSettings(this._platform);
+    this.tracing = Tracing.from(initializer.tracing);
+    this._timeoutSettings = new TimeoutSettings();
   }
 
   async [Symbol.asyncDispose]() {
@@ -111,14 +113,15 @@ export class APIRequestContext extends ChannelOwner<channels.APIRequestContextCh
   async dispose(options: { reason?: string } = {}): Promise<void> {
     this._closeReason = options.reason;
     await this._instrumentation.runBeforeCloseRequestContext(this);
+    await this.tracing._exportAllHars();
     try {
-      await this._channel.dispose(options);
+      await this._channel.dispose(options, kNoTimeout);
     } catch (e) {
       if (isTargetClosedError(e))
         return;
       throw e;
     }
-    this._tracing._resetStackCounter();
+    this.tracing._resetStackCounter();
     this._request?._contexts.delete(this);
   }
 
@@ -235,7 +238,7 @@ export class APIRequestContext extends ChannelOwner<channels.APIRequestContextCh
         } else {
           // Convert file-like values to ServerFilePayload structs.
           for (const [name, value] of Object.entries(options.multipart))
-            multipartData.push(await toFormField(this._platform, name, value));
+            multipartData.push(await toFormField(name, value));
         }
       }
       if (postDataBuffer === undefined && jsonData === undefined && formData === undefined && multipartData === undefined)
@@ -253,28 +256,27 @@ export class APIRequestContext extends ChannelOwner<channels.APIRequestContextCh
         jsonData,
         formData,
         multipartData,
-        timeout: this._timeoutSettings.timeout(options),
         failOnStatusCode: options.failOnStatusCode,
         ignoreHTTPSErrors: options.ignoreHTTPSErrors,
         maxRedirects: options.maxRedirects,
         maxRetries: options.maxRetries,
         ...fixtures
-      });
+      }, this._timeoutSettings.timeout(options));
       return new APIResponse(this, result.response);
     });
   }
 
   async storageState(options: { path?: string, indexedDB?: boolean } = {}): Promise<StorageState> {
-    const state = await this._channel.storageState({ indexedDB: options.indexedDB });
+    const state = await this._channel.storageState({ indexedDB: options.indexedDB }, kNoTimeout);
     if (options.path) {
-      await mkdirIfNeeded(this._platform, options.path);
-      await this._platform.fs().promises.writeFile(options.path, JSON.stringify(state, undefined, 2), 'utf8');
+      await mkdirIfNeeded(options.path);
+      await fs.promises.writeFile(options.path, JSON.stringify(state, undefined, 2), 'utf8');
     }
     return state;
   }
 }
 
-async function toFormField(platform: Platform, name: string, value: string | number | boolean | fs.ReadStream | FilePayload): Promise<channels.FormField> {
+async function toFormField(name: string, value: string | number | boolean | fs.ReadStream | FilePayload): Promise<channels.FormField> {
   const typeOfValue = typeof value;
   if (isFilePayload(value)) {
     const payload = value as FilePayload;
@@ -284,7 +286,7 @@ async function toFormField(platform: Platform, name: string, value: string | num
   } else if (typeOfValue === 'string' || typeOfValue === 'number' || typeOfValue === 'boolean') {
     return { name, value: String(value) };
   } else {
-    return { name, file: await readStreamToJson(platform, value as fs.ReadStream) };
+    return { name, file: await readStreamToJson(value as fs.ReadStream) };
   }
 }
 
@@ -306,14 +308,15 @@ export class APIResponse implements api.APIResponse {
   private readonly _initializer: channels.APIResponse;
   private readonly _headers: RawHeaders;
   readonly _request: APIRequestContext;
+  _apiName = 'APIResponse';
 
   constructor(context: APIRequestContext, initializer: channels.APIResponse) {
     this._request = context;
     this._initializer = initializer;
     this._headers = new RawHeaders(this._initializer.headers);
 
-    if (context._platform.inspectCustom)
-      (this as any)[context._platform.inspectCustom] = () => this._inspect();
+    if (inspect.custom)
+      (this as any)[inspect.custom] = () => this._inspect();
   }
 
   ok(): boolean {
@@ -340,10 +343,33 @@ export class APIResponse implements api.APIResponse {
     return this._headers.headersArray();
   }
 
+  async securityDetails(): Promise<SecurityDetails | null> {
+    return this._initializer.securityDetails ?? null;
+  }
+
+  async serverAddr(): Promise<RemoteAddr | null> {
+    return this._initializer.serverAddr ?? null;
+  }
+
+  timing(): ResourceTiming {
+    return {
+      startTime: -1,
+      domainLookupStart: -1,
+      domainLookupEnd: -1,
+      connectStart: -1,
+      secureConnectionStart: -1,
+      connectEnd: -1,
+      requestStart: -1,
+      responseStart: -1,
+      ...this._initializer.timing,
+      responseEnd: this._initializer.responseEndTiming ?? -1,
+    };
+  }
+
   async body(): Promise<Buffer> {
     return await this._request._wrapApiCall(async () => {
       try {
-        const result = await this._request._channel.fetchResponseBody({ fetchUid: this._fetchUid() });
+        const result = await this._request._channel.fetchResponseBody({ fetchUid: this._fetchUid() }, kNoTimeout);
         if (result.binary === undefined)
           throw new Error('Response has been disposed');
         return result.binary;
@@ -370,7 +396,7 @@ export class APIResponse implements api.APIResponse {
   }
 
   async dispose(): Promise<void> {
-    await this._request._channel.disposeAPIResponse({ fetchUid: this._fetchUid() });
+    await this._request._channel.disposeAPIResponse({ fetchUid: this._fetchUid() }, kNoTimeout);
   }
 
   private _inspect() {
@@ -383,7 +409,7 @@ export class APIResponse implements api.APIResponse {
   }
 
   async _fetchLog(): Promise<string[]> {
-    const { log } = await this._request._channel.fetchLog({ fetchUid: this._fetchUid() });
+    const { log } = await this._request._channel.fetchLog({ fetchUid: this._fetchUid() }, kNoTimeout);
     return log;
   }
 }
@@ -398,7 +424,7 @@ function filePayloadToJson(payload: FilePayload): ServerFilePayload {
   };
 }
 
-async function readStreamToJson(platform: Platform, stream: fs.ReadStream): Promise<ServerFilePayload> {
+async function readStreamToJson(stream: fs.ReadStream): Promise<ServerFilePayload> {
   const buffer = await new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
     stream.on('data', chunk => chunks.push(chunk as Buffer));
@@ -407,7 +433,7 @@ async function readStreamToJson(platform: Platform, stream: fs.ReadStream): Prom
   });
   const streamPath: string = Buffer.isBuffer(stream.path) ? stream.path.toString('utf8') : stream.path;
   return {
-    name: platform.path().basename(streamPath),
+    name: path.basename(streamPath),
     buffer,
   };
 }

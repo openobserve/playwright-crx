@@ -22,7 +22,7 @@ export const BrowserFrame: React.FunctionComponent<{
   url?: string,
 }> = ({ url }): React.ReactElement => {
   return <div className='browser-frame-header'>
-    <div style={{ whiteSpace: 'nowrap' }}>
+    <div className='browser-traffic-lights'>
       <span className='browser-frame-dot' style={{ backgroundColor: 'rgb(242, 95, 88)' }}></span>
       <span className='browser-frame-dot' style={{ backgroundColor: 'rgb(251, 190, 60)' }}></span>
       <span className='browser-frame-dot' style={{ backgroundColor: 'rgb(88, 203, 66)' }}></span>
@@ -31,7 +31,7 @@ export const BrowserFrame: React.FunctionComponent<{
       className='browser-frame-address-bar'
       title={url || 'about:blank'}
     >
-      {url || 'about:blank'}
+      <span className='browser-frame-address'>{url || 'about:blank'}</span>
       {url && (
         <CopyToClipboard value={url} />
       )}

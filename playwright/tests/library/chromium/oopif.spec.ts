@@ -62,9 +62,7 @@ it('should handle remote -> local -> remote transitions', async function({ page,
   await assertOOPIFCount(browser, 1);
 });
 
-it('should get the proper viewport', async ({ page, browser, server }) => {
-  it.fixme();
-
+it.fixme('should get the proper viewport', async ({ page, browser, server }) => {
   expect(page.viewportSize()).toEqual({ width: 1280, height: 720 });
   await page.goto(server.PREFIX + '/dynamic-oopif.html');
   expect(page.frames().length).toBe(2);
@@ -369,6 +367,25 @@ it('should intercept response body from oopif', async function({ page, browser, 
     page.goto(server.PREFIX + '/dynamic-oopif.html')
   ]);
   expect(await response.text()).toBeTruthy();
+});
+
+it('should allow to re-connect to OOPIFs with CDP when iframes were there already', async ({ browserType, server }) => {
+  it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36095' });
+  it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/17656' });
+  it.skip(!!process.env.PWTEST_CHANNEL, 'Test default channel only');
+
+  const cdpPort = 10123 + it.info().parallelIndex * 4;
+  const hostBrowser = await browserType.launch({ channel: 'chromium', args: ['--remote-debugging-port=' + cdpPort] });
+  const hostPage = await hostBrowser.newPage();
+  await hostPage.goto(server.PREFIX + '/dynamic-oopif.html');
+
+  const browser = await browserType.connectOverCDP(`http://localhost:${cdpPort}`);
+  const page = browser.contexts()[0].pages()[0];
+  expect(page.frames().length).toBe(2);
+  await assertOOPIFCount(browser, 1);
+  expect(await page.frames()[1].evaluate(() => '' + location.href)).toBe(server.CROSS_PROCESS_PREFIX + '/grid.html');
+  await browser.close();
+  await hostBrowser.close();
 });
 
 async function assertOOPIFCount(browser: Browser, count: number) {

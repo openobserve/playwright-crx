@@ -6,10 +6,12 @@ title: "Chrome extensions"
 ## Introduction
 
 :::note
-Extensions only work in Chrome / Chromium launched with a persistent context. Use custom browser args at your own risk, as some of them may break Playwright functionality.
+Extensions only work in Chromium when launched with a persistent context. Use custom browser args at your own risk, as some of them may break Playwright functionality.
+
+Google Chrome and Microsoft Edge [removed the command-line flags needed to side-load extensions](https://groups.google.com/a/chromium.org/g/chromium-extensions/c/FxMU1TvxWWg/m/daZVTYNlBQAJ), so use Chromium that comes bundled with Playwright.
 :::
 
-The snippet below retrieves the [background page](https://developer.chrome.com/extensions/background_pages) of a [Manifest v2](https://developer.chrome.com/docs/extensions/mv2/) extension whose source is located in `./my-extension`.
+The snippet below retrieves the [service worker](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers) of a [Manifest v3](https://developer.chrome.com/docs/extensions/develop/migrate) extension whose source is located in `./my-extension`.
 
 Note the use of the `chromium` channel that allows to run extensions in headless mode. Alternatively, you can launch the browser in headed mode.
 
@@ -26,11 +28,11 @@ const { chromium } = require('playwright');
       `--load-extension=${pathToExtension}`
     ]
   });
-  let [backgroundPage] = browserContext.backgroundPages();
-  if (!backgroundPage)
-    backgroundPage = await browserContext.waitForEvent('backgroundpage');
+  let [serviceWorker] = browserContext.serviceWorkers();
+  if (!serviceWorker)
+    serviceWorker = await browserContext.waitForEvent('serviceworker');
 
-  // Test the background page as you would any other page.
+  // Test the service worker as you would any other worker.
   await browserContext.close();
 })();
 ```
@@ -53,12 +55,12 @@ async def run(playwright: Playwright):
         ],
     )
 
-    if len(context.background_pages) == 0:
-        background_page = await context.wait_for_event('backgroundpage')
+    if len(context.service_workers) == 0:
+        service_worker = await context.wait_for_event('serviceworker')
     else:
-        background_page = context.background_pages[0]
+        service_worker = context.service_workers[0]
 
-    # Test the background page as you would any other page.
+    # Test the service worker as you would any other worker.
     await context.close()
 
 
@@ -86,18 +88,57 @@ def run(playwright: Playwright):
             f"--load-extension={path_to_extension}",
         ],
     )
-    if len(context.background_pages) == 0:
-        background_page = context.wait_for_event('backgroundpage')
+    if len(context.service_workers) == 0:
+        service_worker = context.wait_for_event('serviceworker')
     else:
-        background_page = context.background_pages[0]
+        service_worker = context.service_workers[0]
 
-    # Test the background page as you would any other page.
+    # Test the service worker as you would any other worker.
     context.close()
 
 
 with sync_playwright() as playwright:
     run(playwright)
 ```
+
+## Service worker idle suspension (MV3)
+
+Chrome MV3 service workers are automatically suspended after ~30 seconds of inactivity and restarted
+on demand. When this happens, Playwright keeps the **same [Worker] object alive** — no new
+`'serviceworker'` event is emitted. New `evaluate()` calls issued during the restart window are
+stalled until the new context is ready and then resume automatically:
+
+```js
+const sw = await context.waitForEvent('serviceworker');
+
+// ... SW suspends after 30 s of inactivity and is restarted by the browser ...
+
+// The existing handle is transparent across the restart.
+await sw.evaluate(() => sendMessage({ type: 'ping' })); // just works
+```
+
+```python async
+sw = await context.wait_for_event('serviceworker')
+
+# ... SW suspends after 30 s of inactivity and is restarted by the browser ...
+
+# The existing handle is transparent across the restart.
+await sw.evaluate("sendMessage({ type: 'ping' })")  # just works
+```
+
+```python sync
+sw = context.wait_for_event('serviceworker')
+
+# ... SW suspends after 30 s of inactivity and is restarted by the browser ...
+
+# The existing handle is transparent across the restart.
+sw.evaluate("sendMessage({ type: 'ping' })")  # just works
+```
+
+:::note
+`evaluate()` calls that were already in-flight at the exact moment of suspension will throw
+with `"Service worker restarted"`, matching the behaviour of page navigations mid-flight.
+:::
 
 ## Testing
 
@@ -128,19 +169,12 @@ export const test = base.extend<{
     await context.close();
   },
   extensionId: async ({ context }, use) => {
-    /*
-    // for manifest v2:
-    let [background] = context.backgroundPages()
-    if (!background)
-      background = await context.waitForEvent('backgroundpage')
-    */
-
     // for manifest v3:
-    let [background] = context.serviceWorkers();
-    if (!background)
-      background = await context.waitForEvent('serviceworker');
+    let [serviceWorker] = context.serviceWorkers();
+    if (!serviceWorker)
+      serviceWorker = await context.waitForEvent('serviceworker');
 
-    const extensionId = background.url().split('/')[2];
+    const extensionId = serviceWorker.url().split('/')[2];
     await use(extensionId);
   },
 });
@@ -171,17 +205,12 @@ def context(playwright: Playwright) -> Generator[BrowserContext, None, None]:
 
 @pytest.fixture()
 def extension_id(context) -> Generator[str, None, None]:
-    # for manifest v2:
-    # background = context.background_pages[0]
-    # if not background:
-    #     background = context.wait_for_event("backgroundpage")
-
     # for manifest v3:
-    background = context.service_workers[0]
-    if not background:
-        background = context.wait_for_event("serviceworker")
+    service_worker = context.service_workers[0]
+    if not service_worker:
+        service_worker = context.wait_for_event("serviceworker")
 
-    extension_id = background.url.split("/")[2]
+    extension_id = service_worker.url.split("/")[2]
     yield extension_id
 
 ```

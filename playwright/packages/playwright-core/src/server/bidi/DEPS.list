@@ -1,9 +1,8 @@
 [*]
-../../utils/
-../../utils/isomorphic/
+@utils/**
+@isomorphic/**
 ../
-../isomorphic/
-../utils
+../../generated/
 ./third_party/
 
 [bidiOverCdp.ts]
@@ -11,3 +10,5 @@
 
 [bidiChromium.ts]
 ../chromium/chromiumSwitches.ts
+../chromium/chromium.ts
+../chromium/crBrowser.ts

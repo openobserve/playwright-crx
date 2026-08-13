@@ -27,16 +27,15 @@ export class RunServer implements PlaywrightServer {
   private _process!: TestChildProcess;
   _wsEndpoint!: string;
 
-  async start(childProcess: CommonFixtures['childProcess'], mode?: 'extension' | 'default', env?: NodeJS.ProcessEnv) {
+  async start(childProcess: CommonFixtures['childProcess'], options?: { mode?: 'extension' | 'default', env?: NodeJS.ProcessEnv, artifactsDir?: string }) {
     const command = ['node', path.join(__dirname, '..', '..', 'packages', 'playwright-core', 'cli.js'), 'run-server'];
-    if (mode === 'extension')
+    if (options?.mode === 'extension')
       command.push('--mode=extension');
+    if (options?.artifactsDir)
+      command.push(`--artifacts-dir=${options.artifactsDir}`);
     this._process = childProcess({
       command,
-      env: {
-        ...process.env,
-        ...env,
-      },
+      env: { NODE_OPTIONS: process.env.NODE_OPTIONS, ...options?.env },
     });
 
     let wsEndpointCallback: (value: string) => void;
@@ -69,6 +68,7 @@ export type RemoteServerOptions = {
   url?: string;
   startStopAndRunHttp?: boolean;
   sharedBrowser?: boolean;
+  artifactsDir?: string;
 };
 
 export class RemoteServer implements PlaywrightServer {
@@ -97,20 +97,17 @@ export class RemoteServer implements PlaywrightServer {
     };
     if (remoteServerOptions.sharedBrowser)
       (launchOptions as any)._sharedBrowser = true;
+    if (remoteServerOptions.artifactsDir)
+      launchOptions.artifactsDir = remoteServerOptions.artifactsDir;
     const options = {
       browserTypeName: browserType.name(),
       channel,
       launchOptions,
       ...remoteServerOptions,
     };
-    if ('bidi' === browserType.name()) {
-      if (channel.toLocaleLowerCase().includes('firefox'))
-        options.browserTypeName = '_bidiFirefox';
-      else
-        options.browserTypeName = '_bidiChromium';
-    }
     this._process = childProcess({
       command: ['node', path.join(__dirname, 'remote-server-impl.js'), JSON.stringify(options)],
+      env: { NODE_OPTIONS: process.env.NODE_OPTIONS },
     });
 
     let index = 0;
@@ -127,7 +124,7 @@ export class RemoteServer implements PlaywrightServer {
     this._wsEndpoint = await this.out('wsEndpoint');
 
     if (remoteServerOptions.url) {
-      this._browser = await this._browserType.connect({ wsEndpoint: this._wsEndpoint });
+      this._browser = await this._browserType.connect(this._wsEndpoint);
       const page = await this._browser.newPage();
       await page.goto(remoteServerOptions.url);
     }

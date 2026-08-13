@@ -1,8 +1,10 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
+    "target": "ES2023",
     "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    // ES2023 for Array.findLast, which 1.54's recorder-app action handling uses
+    // (upstream's own debugController does the same).
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "skipLibCheck": false,
     "esModuleInterop": false,
     "allowSyntheticDefaultImports": true,
@@ -17,8 +19,11 @@
     "useUnknownInCatchVariables": false,
     "paths": {
       "@html-reporter/*": ["./playwright/packages/html-reporter/src/*"],
-      "@injected/*": ["./playwright/packages/playwright-core/src/server/injected/*"],
-      "@isomorphic/*": ["./playwright/packages/playwright-core/src/utils/isomorphic/*"],
+      // 1.54 moved the injected scripts out of playwright-core into their own package.
+      "@injected/*": ["./playwright/packages/injected/src/*"],
+      // 1.60 moved these two out of playwright-core into top-level packages.
+      "@isomorphic/*": ["./playwright/packages/isomorphic/*"],
+      "@utils/*": ["./playwright/packages/utils/*"],
       "@protocol/*": ["./playwright/packages/protocol/src/*"],
       "@recorder/*": ["./playwright/packages/recorder/src/*"],
       "@testIsomorphic/*": ["./playwright/packages/playwright/src/isomorphic/*"],
@@ -27,6 +32,11 @@
       "playwright-core/lib/*": ["./playwright/packages/playwright-core/src/*"],
       "@playwright/test/lib/*": ["./playwright/packages/playwright/src/*"],
       "tests/*": ["./playwright/tests/*"],
+      // Two copies of yaml exist: ours at the repo root and playwright's own, which is
+      // newer. @isomorphic/ariaSnapshot types its YamlLibrary against playwright's, so a
+      // value imported from ours is a different — and incompatible — type. Point at the
+      // one the vendored tree actually uses.
+      "yaml": ["./playwright/node_modules/yaml"],
     }
   },
   "include": ["src"],

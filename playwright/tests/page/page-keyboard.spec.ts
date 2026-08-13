@@ -85,6 +85,36 @@ it('insertText should only emit input event', async ({ page, server }) => {
   expect(await events.jsonValue()).toEqual(['input']);
 });
 
+it('should emit keydown, keypress, textInput and input when typing a character', async ({ page }) => {
+  await page.setContent(`<input>`);
+  const events = await page.evaluateHandle(() => {
+    const events: string[] = [];
+    for (const type of ['keydown', 'keypress', 'textInput', 'input', 'keyup'])
+      document.querySelector('input').addEventListener(type, () => events.push(type));
+    return events;
+  });
+  await page.focus('input');
+  await page.keyboard.press('f');
+  expect(await events.jsonValue()).toEqual(['keydown', 'keypress', 'textInput', 'input', 'keyup']);
+});
+
+it('should dispatch key events in separate tasks', async ({ page, browserName, isBidi }) => {
+  it.skip(browserName === 'firefox' && !isBidi, 'Firefox/Juggler dispatches keydown and keypress in the same task');
+  await page.setContent(`<input>`);
+  const log = await page.evaluateHandle(() => {
+    const log: string[] = [];
+    const input = document.querySelector('input');
+    for (const type of ['keydown', 'keypress'])
+      input.addEventListener(type, () => { log.push(type); queueMicrotask(() => log.push('microtask-' + type)); });
+    input.focus();
+    return log;
+  });
+  await page.keyboard.press('a');
+  // A microtask scheduled in the keydown handler must run before keypress,
+  // proving each event is delivered in its own task rather than synchronously.
+  expect(await log.jsonValue()).toEqual(['keydown', 'microtask-keydown', 'keypress', 'microtask-keypress']);
+});
+
 it('should report shiftKey', async ({ page, server, browserName, platform }) => {
   it.fail(browserName === 'firefox' && platform === 'darwin');
 
@@ -296,6 +326,27 @@ it('should press Enter', async ({ page, server }) => {
   }
 });
 
+it('should press audio and media control keys', async ({ page, browserName }) => {
+  await page.setContent('<input autofocus>');
+  await page.focus('input');
+  const lastEvent = await captureLastKeydown(page);
+  const mediaKeys = [
+    { key: 'AudioVolumeMute', code: browserName === 'firefox' ? 'VolumeMute' : 'AudioVolumeMute' },
+    { key: 'AudioVolumeDown', code: browserName === 'firefox' ? 'VolumeDown' : 'AudioVolumeDown' },
+    { key: 'AudioVolumeUp', code: browserName === 'firefox' ? 'VolumeUp' : 'AudioVolumeUp' },
+    { key: 'MediaTrackNext', code: 'MediaTrackNext' },
+    { key: 'MediaTrackPrevious', code: 'MediaTrackPrevious' },
+    { key: 'MediaPlayPause', code: 'MediaPlayPause' },
+  ];
+
+  for (const mediaKey of mediaKeys) {
+    await page.keyboard.press(mediaKey.key);
+    expect.soft(await lastEvent.evaluate(e => e.key)).toBe(mediaKey.key);
+    expect.soft(await lastEvent.evaluate(e => e.code)).toBe(mediaKey.code);
+    expect.soft(await lastEvent.evaluate(e => e.location)).toBe(0);
+  }
+});
+
 it('should throw on unknown keys', async ({ page, server }) => {
   let error = await page.keyboard.press('NotARealKey').catch(e => e);
   expect(error.message).toContain('Unknown key: "NotARealKey"');
@@ -495,8 +546,8 @@ it('should support simple cut-pasting', async ({ page }) => {
   expect(await page.evaluate(() => document.querySelector('div').textContent)).toBe('123123');
 });
 
-it('should support undo-redo', async ({ page, browserName, isLinux }) => {
-  it.fixme(browserName === 'webkit' && isLinux, 'https://github.com/microsoft/playwright/issues/12000');
+it('should support undo-redo', async ({ page, browserName, isLinux, channel }) => {
+  it.fixme(browserName === 'webkit' && isLinux || channel === 'webkit-wsl', 'https://github.com/microsoft/playwright/issues/12000');
   await page.setContent(`<div contenteditable></div>`);
   const div = page.locator('div');
   await expect(div).toHaveText('');
@@ -713,4 +764,26 @@ it('should have correct Keydown/Keyup order when pressing Escape key', async ({ 
 Keydown: Escape Escape STANDARD []
 Keyup: Escape Escape STANDARD []
 `.trim());
+});
+
+it('should close dialog on Escape key press in contenteditable', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36727' }
+}, async ({ page, isFrozenWebkit }) => {
+  it.skip(isFrozenWebkit);
+
+  await page.setContent(`
+    <dialog>
+      <div contenteditable>Edit Me</div>
+    </dialog>
+  `);
+
+  const dialog = page.locator('dialog');
+  const widget = dialog.locator('[contenteditable]');
+  await dialog.evaluate((node: HTMLDialogElement) => node.showModal());
+  await expect(dialog).toHaveJSProperty('open', true);
+  await expect(widget).toBeVisible();
+
+  await widget.press('Escape');
+  await expect(dialog).toHaveJSProperty('open', false);
+  await expect(widget).not.toBeVisible();
 });

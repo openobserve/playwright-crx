@@ -4,12 +4,495 @@ title: "Release notes"
 toc_max_heading_level: 2
 ---
 
-## Version 1.53
+import LiteYouTube from '@site/src/components/LiteYouTube';
+
+## Version 1.62
+
+### 🖼️ WebP screenshots
+
+[`method: Page.screenshot`] and [`method: Locator.screenshot`] can now capture screenshots in the WebP format — Playwright infers the format from a `.webp` file extension, or you can set the `type` explicitly. Quality `100` (the default) is lossless, while lower values use lossy compression:
+
+```java
+page.screenshot(new Page.ScreenshotOptions()
+    .setPath(Paths.get("homepage.webp"))
+    .setQuality(50));
+```
+
+### New APIs
+
+- New `scroll` option (`"auto"` | `"none"`) on actions to opt out of Playwright's automatic scroll-into-view.
+- New [`method: Locator.waitForFunction`] waits until a function — called with the matching element — returns a truthy value.
+- New [`method: APIResponse.timing`] returns resource timing information for an API response.
+
+### Announcements
+
+* 📋 The clipboard is now isolated from the operating system in headless mode, so tests that use `navigator.clipboard` no longer read or overwrite the clipboard of the machine running them.
+* ⚠️ Debian 11 is not supported anymore.
+
+### Browser Versions
+
+- Chromium 151.0.7922.34
+- Mozilla Firefox 153.0
+- WebKit 26.5
+
+This version was also tested against the following stable channels:
+
+- Google Chrome 151
+- Microsoft Edge 151
+
+
+## Version 1.61
+
+### 🔑 WebAuthn passkeys
+
+New [Credentials] virtual authenticator, available via [`property: BrowserContext.credentials`], lets tests register passkeys and answer `navigator.credentials.create()` / `navigator.credentials.get()` ceremonies in the page — no real hardware key required, works in all browsers:
+
+```java
+BrowserContext context = browser.newContext();
+
+// Seed a passkey your backend provisioned for a test user.
+context.credentials().create("example.com", new Credentials.CreateOptions()
+    .setId(credentialId)
+    .setUserHandle(userHandle)
+    .setPrivateKey(privateKey)
+    .setPublicKey(publicKey));
+context.credentials().install();
+
+Page page = context.newPage();
+page.navigate("https://example.com/login");
+// The page's navigator.credentials.get() is answered with the seeded passkey.
+```
+
+You can also let the app register a passkey once in a setup test, read it back with [`method: Credentials.get`], and seed it into later tests — see [Credentials] for details.
+
+### 🗃️ Web Storage
+
+New [WebStorage] API, available via [`property: Page.localStorage`] and [`property: Page.sessionStorage`], reads and writes the page's storage for the current origin:
+
+```java
+page.localStorage().setItem("token", "abc");
+String token = page.localStorage().getItem("token");
+List<NameValue> items = page.sessionStorage().items();
+```
+
+### New APIs
+
+- [`method: APIResponse.securityDetails`] and [`method: APIResponse.serverAddr`] mirror the browser-side [`method: Response.securityDetails`] and [`method: Response.serverAddr`].
+- New option `artifactsDir` in [`method: BrowserType.connectOverCDP`] controls where artifacts such as traces and downloads are stored when attached to an existing browser.
+- New option `cursor` in [`method: Screencast.showActions`] controls the cursor decoration rendered for pointer actions.
+- The `onFrame` callback in [`method: Screencast.start`] now receives a `timestamp` of when the frame was presented by the browser.
+
+### 🛠️ Other improvements
+
+- Playwright now supports Ubuntu 26.04.
+- HAR and trace recordings now include WebSocket requests.
+
+### Browser Versions
+
+- Chromium 149.0.7827.55
+- Mozilla Firefox 151.0
+- WebKit 26.5
+
+This version was also tested against the following stable channels:
+
+- Google Chrome 149
+- Microsoft Edge 149
+
+
+## Version 1.60
+
+### 🌐 HAR recording on Tracing
+
+[`method: Tracing.startHar`] / [`method: Tracing.stopHar`] expose HAR recording as a first-class tracing API, with the same `content`, `mode` and `urlFilter` options as `recordHar`:
+
+```java
+context.tracing().startHar(Paths.get("trace.har"));
+Page page = context.newPage();
+page.navigate("https://playwright.dev");
+context.tracing().stopHar();
+```
+
+### 🪝 Drop API
+
+New [`method: Locator.drop`] simulates an external drag-and-drop of files or clipboard-like data onto an element. Playwright dispatches `dragenter`, `dragover`, and `drop` with a synthetic [DataTransfer] in the page context — works cross-browser and is great for testing upload zones:
+
+```java
+page.locator("#dropzone").drop(new Locator.DropPayload()
+    .setFiles(new FilePayload("note.txt", "text/plain", "hello".getBytes(StandardCharsets.UTF_8))));
+
+page.locator("#dropzone").drop(new Locator.DropPayload()
+    .setData(Map.of(
+        "text/plain", "hello world",
+        "text/uri-list", "https://example.com")));
+```
+
+### 🎯 Aria snapshots
+
+- [`method: PageAssertions.toMatchAriaSnapshot`] now works on a [Page], in addition to a [Locator] — equivalent to asserting against `page.locator("body")`.
+- New `boxes` option on [`method: Locator.ariaSnapshot`] / [`method: Page.ariaSnapshot`] appends each element's bounding box as `[box=x,y,width,height]`, useful for AI consumption.
+
+### New APIs
+
+#### Browser, Context and Page
+
+- Event [`event: Browser.context`] — fired when a new context is created on the browser.
+- [BrowserContext] now mirrors lifecycle events from its pages: [`event: BrowserContext.download`], [`event: BrowserContext.frameAttached`], [`event: BrowserContext.frameDetached`], [`event: BrowserContext.frameNavigated`], [`event: BrowserContext.pageClose`], [`event: BrowserContext.pageLoad`].
+
+#### Locators and Assertions
+
+- New option `description` in [`method: Page.getByRole`] / [`method: Locator.getByRole`] / [`method: Frame.getByRole`] / [`method: FrameLocator.getByRole`] for matching the [accessible description](https://www.w3.org/TR/wai-aria-1.2/#dfn-accessible-description).
+- New option `pseudo` in [`method: LocatorAssertions.toHaveCSS`] reads computed styles from `::before` or `::after`.
+- New option `style` in [`method: Locator.highlight`] applies extra inline CSS to the highlight overlay, plus new [`method: Page.hideHighlight`] to clear all highlights.
+
+#### Network
+
+- [`method: WebSocketRoute.protocols`] returns the WebSocket subprotocols requested by the page.
+- New option `noDefaults` in [`method: BrowserType.connectOverCDP`] disables Playwright's default overrides on the default context (download behavior, focus emulation, media emulation), so attaching to a user's daily-driver browser doesn't disturb its state.
+
+#### Errors
+
+- New [`method: WebError.location`] mirrors [`method: ConsoleMessage.location`].
+
+### 🛠️ Other improvements
+
+- Trace Viewer adds a pretty-print toggle for JSON / form request and response bodies in the network details panel.
+
+### Breaking Changes ⚠️
+
+- Removed long-deprecated `handle` option on `BrowserContext.exposeBinding` and `Page.exposeBinding`.
+
+### Browser Versions
+
+- Chromium 148.0.7778.96
+- Mozilla Firefox 150.0.2
+- WebKit 26.4
+
+This version was also tested against the following stable channels:
+
+- Google Chrome 147
+- Microsoft Edge 147
+
+
+## Version 1.59
+
+### 🎬 Screencast
+
+New [`property: Page.screencast`] API provides a unified interface for capturing page content with:
+- Screencast recordings
+- Action annotations
+- Visual overlays
+- Real-time frame capture
+- Agentic video receipts
+
+<center>
+<img src="https://raw.githubusercontent.com/microsoft/playwright/main/docs/src/images/release-notes-1.59-screencast-demo.gif" alt="Demo" width="500" height="313" />
+</center>
+
+
+**Screencast recording** — record video with precise start/stop control, as an alternative to the [`option: Browser.newContext.recordVideoDir`] option:
+
+```java
+page.screencast().start(new Screencast.StartOptions().setPath(Paths.get("video.webm")));
+// ... perform actions ...
+page.screencast().stop();
+```
+
+**Action annotations** — enable built-in visual annotations that highlight interacted elements and display action titles during recording:
+
+```java
+page.screencast().showActions(new Screencast.ShowActionsOptions().setPosition("top-right"));
+```
+
+[`method: Screencast.showActions`] accepts `position` (`"top-left"`, `"top"`, `"top-right"`, `"bottom-left"`, `"bottom"`, `"bottom-right"`), `duration` (ms per annotation), and `fontSize` (px). Returns a disposable to stop showing actions.
+
+**Visual overlays** — add chapter titles and custom HTML overlays on top of the page for richer narration:
+
+```java
+page.screencast().showChapter("Adding TODOs",
+    new Screencast.ShowChapterOptions()
+        .setDescription("Type and press enter for each TODO")
+        .setDuration(1000));
+
+page.screencast().showOverlay("<div style=\"color: red\">Recording</div>");
+```
+
+**Real-time frame capture** — stream JPEG-encoded frames for custom processing like thumbnails, live previews, AI vision, and more:
+
+```java
+page.screencast().start(new Screencast.StartOptions()
+    .setOnFrame(frame -> sendToVisionModel(frame.data)));
+```
+
+**Agentic video receipts** — coding agents can produce video evidence of their work. After completing a task, an agent can record a walkthrough video with rich annotations for human review:
+
+```java
+page.screencast().start(new Screencast.StartOptions()
+    .setPath(Paths.get("receipt.webm")));
+page.screencast().showActions(new Screencast.ShowActionsOptions().setPosition("top-right"));
+
+page.screencast().showChapter("Verifying checkout flow",
+    new Screencast.ShowChapterOptions()
+        .setDescription("Added coupon code support per ticket #1234"));
+
+// Agent performs the verification steps...
+page.locator("#coupon").fill("SAVE20");
+page.locator("#apply-coupon").click();
+assertThat(page.locator(".discount")).containsText("20%");
+
+page.screencast().showChapter("Done",
+    new Screencast.ShowChapterOptions()
+        .setDescription("Coupon applied, discount reflected in total"));
+
+page.screencast().stop();
+```
+
+The resulting video serves as a receipt: chapter titles provide context, action annotations highlight each interaction, and the visual walkthrough is faster to review than text logs.
+
+### 🔍 Snapshots and Locators
+
+- Method [`method: Page.ariaSnapshot`] to capture the aria snapshot of the page — equivalent to `page.locator("body").ariaSnapshot()`.
+- Options `depth` and `mode` in [`method: Locator.ariaSnapshot`].
+- Method [`method: Locator.normalize`] converts a locator to follow best practices like test ids and aria roles.
+- Method [`method: Page.pickLocator`] enters an interactive mode where hovering over elements highlights them and shows the corresponding locator. Click an element to get its [Locator] back. Use [`method: Page.cancelPickLocator`] to cancel.
+
+### New APIs
+
+#### Screencast
+
+- [`property: Page.screencast`] provides video recording, real-time frame streaming, and overlay management.
+- Methods [`method: Screencast.start`] and [`method: Screencast.stop`] for recording and frame capture.
+- Methods [`method: Screencast.showActions`] and [`method: Screencast.hideActions`] for action annotations.
+- Methods [`method: Screencast.showChapter`] and [`method: Screencast.showOverlay`] for visual overlays.
+- Methods [`method: Screencast.showOverlays`] and [`method: Screencast.hideOverlays`] for overlay visibility control.
+
+#### Storage, Console and Errors
+
+- Method [`method: BrowserContext.setStorageState`] clears existing cookies, local storage, and IndexedDB for all origins and sets a new storage state — no need to create a new context.
+- Methods [`method: Page.clearConsoleMessages`] and [`method: Page.clearPageErrors`] to clear stored messages and errors.
+- Option `filter` in [`method: Page.consoleMessages`] and [`method: Page.pageErrors`] controls which messages are returned.
+- Method [`method: ConsoleMessage.timestamp`].
+
+#### Miscellaneous
+
+- [`property: BrowserContext.debugger`] provides programmatic control over the Playwright debugger.
+- Method [`method: BrowserContext.isClosed`].
+- Method [`method: Request.existingResponse`] returns the response without waiting.
+- Method [`method: Response.httpVersion`] returns the HTTP version used by the response.
+- Option `live` in [`method: Tracing.start`] for real-time trace updates.
+- Option `artifactsDir` in [`method: BrowserType.launch`] to configure the artifacts directory.
+
+### 🔗 Interoperability
+
+New [`method: Browser.bind`] API makes a launched browser available for `playwright-cli`, `@playwright/mcp`, and other clients to connect to.
+
+**Bind a browser** — start a browser and bind it so others can connect:
+
+```java
+Browser.BindResult serverInfo = browser.bind("my-session",
+    new Browser.BindOptions().setWorkspaceDir("/my/project"));
+```
+
+**Connect from playwright-cli** — connect to the running browser from your favorite coding agent.
+
+```bash
+playwright-cli attach my-session
+playwright-cli -s my-session snapshot
+```
+
+**Connect from @playwright/mcp** — or point your MCP server to the running browser.
+
+```bash
+@playwright/mcp --endpoint=my-session
+```
+
+**Connect from a Playwright client** — use API to connect to the browser. Multiple clients at a time are supported!
+
+```java
+Browser browser = chromium.connect(serverInfo.endpoint);
+```
+
+Pass `host` and `port` options to bind over WebSocket instead of a named pipe:
+
+```java
+Browser.BindResult serverInfo = browser.bind("my-session",
+    new Browser.BindOptions().setHost("localhost").setPort(0));
+// serverInfo.endpoint is a ws:// URL
+```
+
+Call [`method: Browser.unbind`] to stop accepting new connections.
+
+### 📊 Observability
+
+Run `playwright-cli show` to open the Dashboard that lists all the bound browsers, their statuses, and allows interacting with them:
+- See what your agent is doing on the background browsers
+- Click into the sessions for manual interventions
+- Open DevTools to inspect pages from the background browsers.
+
+<center>
+<img src="https://raw.githubusercontent.com/microsoft/playwright/main/docs/src/images/release-notes-1.59-dashboard.png" alt="Demo" width="1169" height="835" />
+</center>
+
+- `playwright-cli` binds all of its browsers automatically, so you can see what your agents are doing.
+- Pass `PLAYWRIGHT_DASHBOARD=1` env variable to see all `@playwright/test` browsers in the dashboard.
+
+### Breaking Changes ⚠️
+
+- Removed macOS 14 support for WebKit. We recommend upgrading your macOS version, or keeping an older Playwright version.
+
+### Browser Versions
+
+- Chromium 147.0.7727.15
+- Mozilla Firefox 148.0.2
+- WebKit 26.4
+
+This version was also tested against the following stable channels:
+
+- Google Chrome 146
+- Microsoft Edge 146
+
+## Version 1.58
+
+### UI Mode and Trace Viewer Improvements
+
+- New 'system' theme option follows your OS dark/light mode preference
+- Search functionality (Cmd/Ctrl+F) is now available in code editors
+- Network details panel has been reorganized for better usability
+- JSON responses are now automatically formatted for readability
+
+Thanks to [@cpAdm](https://github.com/cpAdm) for contributing these improvements!
 
 ### Miscellaneous
 
-- New Steps in Trace Viewer: 
-  ![New Trace Viewer Steps](https://github.com/user-attachments/assets/1963ff7d-4070-41be-a79b-4333176921a2)
+[`method: BrowserType.connectOverCDP`] now accepts an `isLocal` option. When set to `true`, it tells Playwright that it runs on the same host as the CDP server, enabling file system optimizations.
+
+### Breaking Changes ⚠️
+
+- Removed `_react` and `_vue` selectors. See [locators guide](./locators.md) for alternatives.
+
+- Removed `:light` selector engine suffix. Use standard CSS selectors instead.
+
+- Option `devtools` from [`method: BrowserType.launch`] has been removed. Use `setArgs(Arrays.asList("--auto-open-devtools-for-tabs"))` instead.
+
+- Removed macOS 13 support for WebKit. We recommend to upgrade your macOS version, or keep using an older Playwright version.
+
+### Browser Versions
+
+- Chromium 145.0.7632.6
+- Mozilla Firefox 146.0.1
+- WebKit 26.0
+
+This version was also tested against the following stable channels:
+
+- Google Chrome 144
+- Microsoft Edge 144
+
+## Version 1.57
+
+### Chrome for Testing
+
+Playwright now runs on [Chrome for Testing](https://googlechromelabs.github.io/chrome-for-testing/) builds rather than Chromium. Headed mode uses `chrome`; headless mode uses `chrome-headless-shell`. Existing tests should continue to pass after upgrading to v1.57.
+
+We're expecting no functional changes to come from this switch. The biggest change is the new icon and title in your toolbar.
+
+![new and old logo](./images/cft-logo-change.png)
+
+If you still see an unexpected behaviour change, please [file an issue](https://github.com/microsoft/playwright/issues/new).
+
+On Arm64 Linux, Playwright continues to use Chromium.
+
+### Breaking Change
+
+After 3 years of being deprecated, we removed `page.accessibility()` from our API. Please use other libraries such as [Axe](https://www.deque.com/axe/) if you need to test page accessibility. See our Node.js [guide](https://playwright.dev/docs/accessibility-testing) for integration with Axe.
+
+### New APIs
+
+- [`event: Worker.console`] event is emitted when JavaScript within the worker calls one of console API methods, e.g. console.log or console.dir. [`method: Worker.waitForConsoleMessage`] can be used to wait for it.
+- [`method: Locator.description`] returns locator description previously set with [`method: Locator.describe`].
+- New option [`option: Locator.click.steps`] in [`method: Locator.click`] and [`method: Locator.dragTo`] that configures the number of `mousemove` events emitted while moving the mouse pointer to the target element.
+
+### Browser Versions
+
+- Chromium 143.0.7499.4
+- Mozilla Firefox 144.0.2
+- WebKit 26.0
+
+
+## Version 1.56
+
+### New APIs
+
+- New methods [`method: Page.consoleMessages`] and [`method: Page.pageErrors`] for retrieving the most recent console messages from the page
+- New method [`method: Page.requests`] for retrieving the most recent network requests from the page
+
+### Breaking Changes
+
+- Event [`event: BrowserContext.backgroundPage`] has been deprecated and will not be emitted. Method [`method: BrowserContext.backgroundPages`] will return an empty list
+
+### Miscellaneous
+
+- Aria snapshots render and compare `input` `placeholder`
+
+### Browser Versions
+
+- Chromium 141.0.7390.37
+- Mozilla Firefox 142.0.1
+- WebKit 26.0
+
+## Version 1.55
+
+### Codegen
+
+- Automatic `isVisible()` assertions: Codegen can now generate automatic `isVisible()` assertions for common UI interactions. This feature can be enabled in the Codegen settings UI.
+
+### Breaking Changes
+
+- ⚠️ Dropped support for Chromium extension manifest v2.
+
+### Miscellaneous
+
+- Added support for Debian 13 "Trixie".
+
+### Browser Versions
+
+- Chromium 140.0.7339.16
+- Mozilla Firefox 141.0
+- WebKit 26.0
+
+This version was also tested against the following stable channels:
+
+- Google Chrome 139
+- Microsoft Edge 139
+
+## Version 1.54
+
+### Highlights
+
+- New cookie property `partitionKey` in [`method: BrowserContext.cookies`] and [`method: BrowserContext.addCookies`]. This property allows to save and restore partitioned cookies. See [CHIPS MDN article](https://developer.mozilla.org/en-US/docs/Web/Privacy/Guides/Privacy_sandbox/Partitioned_cookies) for more information. Note that browsers have different support and defaults for cookie partitioning.
+
+- New option `--user-data-dir` in multiple commands. You can specify the same user data dir to reuse browsing state, like authentication, between sessions.
+  ```bash
+  mvn exec:java -e -D exec.mainClass=com.microsoft.playwright.CLI -D exec.args="codegen --user-data-dir=./user-data"
+  ```
+
+- `mvn exec:java -e -D exec.mainClass=com.microsoft.playwright.CLI -D exec.args=open` command does not open the test recorder anymore. Use `mvn exec:java -e -D exec.mainClass=com.microsoft.playwright.CLI -D exec.args=codegen` instead.
+
+### Browser Versions
+
+- Chromium 139.0.7258.5
+- Mozilla Firefox 140.0.2
+- WebKit 26.0
+
+This version was also tested against the following stable channels:
+
+- Google Chrome 140
+- Microsoft Edge 140
+
+## Version 1.53
+
+### Trace Viewer and HTML Reporter Updates
+
+- New Steps in Trace Viewer:
+  <img src="https://github.com/user-attachments/assets/1963ff7d-4070-41be-a79b-4333176921a2" alt="New Trace Viewer Steps" width="1562" height="1364" />
 - New method [`method: Locator.describe`] to describe a locator. Used for trace viewer.
   ```java
   Locator button = page.getByTestId("btn-sub").describe("Subscribe button");
@@ -31,14 +514,14 @@ This version was also tested against the following stable channels:
 ## Version 1.52
 
 ### Highlights
- 
+
 - New method [`method: LocatorAssertions.toContainClass`] to ergonomically assert individual class names on the element.
 
   ```java
     assertThat(page.getByRole(AriaRole.LISTITEM, new Page.GetByRoleOptions().setName("Ship v1.52"))).containsClass("done");
   ```
 
-- [Aria Snapshots](./aria-snapshots.md) got two new properties: [`/children`](./aria-snapshots.md#strict-matching) for strict matching and `/url` for links.
+- [Aria Snapshots](./aria-snapshots.md) got two new properties: [`/children`](./aria-snapshots.md#strict-matching) for strict matching and [`/url`](./aria-snapshots.md#links) for links.
 
   ```java
   assertThat(locator).toMatchAriaSnapshot("""
@@ -54,7 +537,6 @@ This version was also tested against the following stable channels:
 ### Miscellaneous
 
 - New option [`option: APIRequest.newContext.maxRedirects`] in [`method: APIRequest.newContext`] to control the maximum number of redirects.
-- New option `ref` in [`method: Locator.ariaSnapshot`] to generate reference for each element in the snapshot which can later be used to locate the element.
 
 ### Breaking Changes
 
@@ -269,7 +751,7 @@ The Network tab in the trace viewer has several nice improvements:
 - better display of query string parameters
 - preview of font assets
 
-![Network tab now has filters](https://github.com/user-attachments/assets/4bd1b67d-90bd-438b-a227-00b9e86872e2)
+<img src="https://github.com/user-attachments/assets/4bd1b67d-90bd-438b-a227-00b9e86872e2" alt="Network tab now has filters" width="1712" height="418" />
 
 ### Miscellaneous
 
@@ -644,7 +1126,7 @@ This version was also tested against the following stable channels:
 
 ### Test Generator Update
 
-![Playwright Test Generator](https://github.com/microsoft/playwright/assets/9881434/e8d67e2e-f36d-4301-8631-023948d3e190)
+<img src="https://github.com/microsoft/playwright/assets/9881434/e8d67e2e-f36d-4301-8631-023948d3e190" alt="Playwright Test Generator" width="2788" height="1824" />
 
 New tools to generate assertions:
 - "Assert visibility" tool generates [`method: LocatorAssertions.toBeVisible`].
@@ -702,7 +1184,7 @@ This version was also tested against the following stable channels:
 
 ### Trace Viewer Updates
 
-![Playwright Trace Viewer](https://github.com/microsoft/playwright/assets/746130/0c41e20d-c54b-4600-8ca8-1cbb6393ddef)
+<img src="https://github.com/microsoft/playwright/assets/746130/0c41e20d-c54b-4600-8ca8-1cbb6393ddef" alt="Playwright Trace Viewer" width="1091" height="722" />
 
 1. Zoom into time range.
 1. Network panel redesign.
@@ -1029,7 +1511,7 @@ This version was also tested against the following stable channels:
 
 * **Live Locators in CodeGen.** Generate a locator for any element on the page using "Explore" tool.
 
-![Locator Explorer](https://user-images.githubusercontent.com/9798949/202293631-2f402cc2-35fb-4877-8ea1-82265fbbc232.png)
+<img src="https://user-images.githubusercontent.com/9798949/202293631-2f402cc2-35fb-4877-8ea1-82265fbbc232.png" alt="Locator Explorer" width="1876" height="1096" />
 
 ### New APIs
 
@@ -1161,9 +1643,10 @@ This version was also tested against the following stable channels:
 
 ## Version 1.24
 
-<div className="embed-youtube">
-<iframe width="560" height="315" src="https://www.youtube-nocookie.com/embed/9F05o1shxcY" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
-</div>
+<LiteYouTube
+  id="9F05o1shxcY"
+  title="Playwright 1.24"
+/>
 
 ### 🐂 Debian 11 Bullseye Support
 
@@ -1436,7 +1919,7 @@ Read more in [our documentation](./test-assertions).
 [Tracing](./api/class-tracing.md) now can embed Java sources to recorded
 traces, using new [`setSources`](./api/class-tracing#tracing-start-option-sources) option.
 
-![tracing-java-sources](https://user-images.githubusercontent.com/746130/150180856-40a7df71-370c-4597-8665-40c77a5e06ad.png)
+<img src="https://user-images.githubusercontent.com/746130/150180856-40a7df71-370c-4597-8665-40c77a5e06ad.png" alt="tracing-java-sources" width="1517" height="856" />
 
 ### New APIs & changes
 
@@ -1463,7 +1946,7 @@ This version was also tested against the following stable channels:
 
 Playwright 1.17 introduces [frame locators](./api/class-framelocator) - a locator to the iframe on the page. Frame locators capture the logic sufficient to retrieve the `iframe` and then locate elements in that iframe. Frame locators are strict by default, will wait for `iframe` to appear and can be used in Web-First assertions.
 
-![Graphics](https://user-images.githubusercontent.com/746130/142082759-2170db38-370d-43ec-8d41-5f9941f57d83.png)
+<img src="https://user-images.githubusercontent.com/746130/142082759-2170db38-370d-43ec-8d41-5f9941f57d83.png" alt="Graphics" width="600" height="237" />
 
 Frame locators can be created with either [`method: Page.frameLocator`] or [`method: Locator.frameLocator`] method.
 
@@ -1485,14 +1968,14 @@ Playwright Trace Viewer is now **available online** at https://trace.playwright.
 - New trace metadata tab with browser details
 - Snapshots now have URL bar
 
-![image](https://user-images.githubusercontent.com/746130/141877831-29e37cd1-e574-4bd9-aab5-b13a463bb4ae.png)
+<img src="https://user-images.githubusercontent.com/746130/141877831-29e37cd1-e574-4bd9-aab5-b13a463bb4ae.png" alt="image" width="2230" height="1562" />
 
 ### HTML Report Update
 
 - HTML report now supports dynamic filtering
 - Report is now a **single static HTML file** that could be sent by e-mail or as a slack attachment.
 
-![image](https://user-images.githubusercontent.com/746130/141877402-e486643d-72c7-4db3-8844-ed2072c5d676.png)
+<img src="https://user-images.githubusercontent.com/746130/141877402-e486643d-72c7-4db3-8844-ed2072c5d676.png" alt="image" width="2494" height="1624" />
 
 ### Ubuntu ARM64 support + more
 
@@ -1607,7 +2090,7 @@ locator.click();
 
 Learn more in the [documentation](./api/class-locator).
 
-#### 🧩 Experimental [**React**](./other-locators.md#react-locator) and [**Vue**](./other-locators.md#vue-locator) selector engines
+#### 🧩 Experimental [**React**](./other-locators.md) and [**Vue**](./other-locators.md) selector engines
 
 React and Vue selectors allow selecting elements by its component name and/or property values. The syntax is very similar to [attribute selectors](https://developer.mozilla.org/en-US/docs/Web/CSS/Attribute_selectors) and supports all attribute selector operators.
 
@@ -1616,7 +2099,7 @@ page.locator("_react=SubmitButton[enabled=true]").click();
 page.locator("_vue=submit-button[enabled=true]").click();
 ```
 
-Learn more in the [react selectors documentation](./other-locators.md#react-locator) and the [vue selectors documentation](./other-locators.md#vue-locator).
+Learn more in the [react selectors documentation](./other-locators.md) and the [vue selectors documentation](./other-locators.md).
 
 #### ✨ New [**`nth`**](./other-locators.md#n-th-element-locator) and [**`visible`**](./other-locators.md#css-matching-only-visible-elements) selector engines
 
@@ -1709,7 +2192,7 @@ mvn exec:java -e -D exec.mainClass=com.microsoft.playwright.CLI -D exec.args="sh
 
 That will open the following GUI:
 
-![image](https://user-images.githubusercontent.com/746130/121109654-d66c4480-c7c0-11eb-8d4d-eb70d2b03811.png)
+<img src="https://user-images.githubusercontent.com/746130/121109654-d66c4480-c7c0-11eb-8d4d-eb70d2b03811.png" alt="image" width="2424" height="1544" />
 
 👉 Read more in [trace viewer documentation](./trace-viewer.md).
 

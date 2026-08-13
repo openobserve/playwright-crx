@@ -14,29 +14,31 @@
  * limitations under the License.
  */
 
+import { deserializeURLMatch, urlMatches } from '@isomorphic/urlMatch';
+import { eventsHelper } from '@utils/eventsHelper';
 import { Page } from '../page';
 import { Dispatcher } from './dispatcher';
 import { PageDispatcher } from './pageDispatcher';
 import * as rawWebSocketMockSource from '../../generated/webSocketMockSource';
-import { createGuid } from '../utils/crypto';
-import { urlMatches } from '../../utils/isomorphic/urlMatch';
-import { eventsHelper } from '../utils/eventsHelper';
+import { SdkObject } from '../instrumentation';
 
 import type { BrowserContextDispatcher } from './browserContextDispatcher';
 import type { BrowserContext } from '../browserContext';
 import type { DispatcherConnection } from './dispatcher';
 import type { Frame } from '../frames';
 import type * as ws from '@injected/webSocketMock';
-import type * as channels from '@protocol/channels';
+import type * as channels from '../channels';
+import type { Progress } from '../progress';
+import type { InitScript, PageBinding } from '../page';
 
-export class WebSocketRouteDispatcher extends Dispatcher<{ guid: string }, channels.WebSocketRouteChannel, PageDispatcher | BrowserContextDispatcher> implements channels.WebSocketRouteChannel {
+export class WebSocketRouteDispatcher extends Dispatcher<SdkObject, channels.WebSocketRouteChannel, PageDispatcher | BrowserContextDispatcher> implements channels.WebSocketRouteChannel {
   _type_WebSocketRoute = true;
   private _id: string;
   private _frame: Frame;
   private static _idToDispatcher = new Map<string, WebSocketRouteDispatcher>();
 
-  constructor(scope: PageDispatcher | BrowserContextDispatcher, id: string, url: string, frame: Frame) {
-    super(scope, { guid: 'webSocketRoute@' + createGuid() }, 'WebSocketRoute', { url });
+  constructor(scope: PageDispatcher | BrowserContextDispatcher, id: string, url: string, protocols: string[], frame: Frame) {
+    super(scope, new SdkObject(scope._object, 'webSocketRoute'), 'WebSocketRoute', { url, protocols });
     this._id = id;
     this._frame = frame;
     this._eventListeners.push(
@@ -57,11 +59,14 @@ export class WebSocketRouteDispatcher extends Dispatcher<{ guid: string }, chann
     (scope as any)._dispatchEvent('webSocketRoute', { webSocketRoute: this });
   }
 
-  static async installIfNeeded(connection: DispatcherConnection, target: Page | BrowserContext) {
-    const kBindingName = '__pwWebSocketBinding';
+  static async install(progress: Progress, connection: DispatcherConnection, target: Page | BrowserContext): Promise<InitScript> {
     const context = target instanceof Page ? target.browserContext : target;
-    if (!context.hasBinding(kBindingName)) {
-      await context.exposeBinding(kBindingName, false, (source, payload: ws.BindingPayload) => {
+    let data = context.getBindingClient(kBindingName) as BindingData | undefined;
+    if (data && data.connection !== connection)
+      throw new Error('Another client is already routing WebSockets');
+    if (!data) {
+      data = { counter: 0, connection, binding: null as any };
+      data.binding = await context.exposeBinding(progress, kBindingName, (source, payload: ws.BindingPayload) => {
         if (payload.type === 'onCreate') {
           const contextDispatcher = connection.existingDispatcher<BrowserContextDispatcher>(context);
           const pageDispatcher = contextDispatcher ? PageDispatcher.fromNullable(contextDispatcher, source.page) : undefined;
@@ -71,10 +76,10 @@ export class WebSocketRouteDispatcher extends Dispatcher<{ guid: string }, chann
           else if (contextDispatcher && matchesPattern(contextDispatcher, context._options.baseURL, payload.url))
             scope = contextDispatcher;
           if (scope) {
-            new WebSocketRouteDispatcher(scope, payload.id, payload.url, source.frame);
+            new WebSocketRouteDispatcher(scope, payload.id, payload.url, payload.protocols, source.frame);
           } else {
             const request: ws.PassthroughRequest = { id: payload.id, type: 'passthrough' };
-            source.frame.evaluateExpression(`globalThis.__pwWebSocketDispatch(${JSON.stringify(request)})`).catch(() => {});
+            source.frame.evaluateExpression(progress, `globalThis.__pwWebSocketDispatch(${JSON.stringify(request)})`).catch(() => {});
           }
           return;
         }
@@ -88,47 +93,55 @@ export class WebSocketRouteDispatcher extends Dispatcher<{ guid: string }, chann
           dispatcher?._dispatchEvent('closePage', { code: payload.code, reason: payload.reason, wasClean: payload.wasClean });
         if (payload.type === 'onCloseServer')
           dispatcher?._dispatchEvent('closeServer', { code: payload.code, reason: payload.reason, wasClean: payload.wasClean });
-      });
+      }, data);
     }
+    ++data.counter;
 
-    const kInitScriptName = 'webSocketMockSource';
-    if (!target.initScripts.find(s => s.name === kInitScriptName)) {
-      await target.addInitScript(`
-        (() => {
-          const module = {};
-          ${rawWebSocketMockSource.source}
-          (module.exports.inject())(globalThis);
-        })();
-      `, kInitScriptName);
-    }
+    return await target.addInitScript(progress, `
+      (() => {
+        const module = {};
+        ${rawWebSocketMockSource.source}
+        (module.exports.inject())(globalThis);
+      })();
+    `);
   }
 
-  async connect(params: channels.WebSocketRouteConnectParams) {
-    await this._evaluateAPIRequest({ id: this._id, type: 'connect' });
+  static async uninstall(connection: DispatcherConnection, target: Page | BrowserContext, initScript: InitScript) {
+    const context = target instanceof Page ? target.browserContext : target;
+    const data = context.getBindingClient(kBindingName) as BindingData | undefined;
+    if (!data || data.connection !== connection)
+      return;
+    if (--data.counter <= 0)
+      await data.binding.dispose();
+    await initScript.dispose();
   }
 
-  async ensureOpened(params: channels.WebSocketRouteEnsureOpenedParams) {
-    await this._evaluateAPIRequest({ id: this._id, type: 'ensureOpened' });
+  async connect(params: channels.WebSocketRouteConnectParams, progress: Progress) {
+    await this._evaluateAPIRequest(progress, { id: this._id, type: 'connect' });
   }
 
-  async sendToPage(params: channels.WebSocketRouteSendToPageParams) {
-    await this._evaluateAPIRequest({ id: this._id, type: 'sendToPage', data: { data: params.message, isBase64: params.isBase64 } });
+  async ensureOpened(params: channels.WebSocketRouteEnsureOpenedParams, progress: Progress) {
+    await this._evaluateAPIRequest(progress, { id: this._id, type: 'ensureOpened' });
   }
 
-  async sendToServer(params: channels.WebSocketRouteSendToServerParams) {
-    await this._evaluateAPIRequest({ id: this._id, type: 'sendToServer', data: { data: params.message, isBase64: params.isBase64 } });
+  async sendToPage(params: channels.WebSocketRouteSendToPageParams, progress: Progress) {
+    await this._evaluateAPIRequest(progress, { id: this._id, type: 'sendToPage', data: { data: params.message, isBase64: params.isBase64 } });
   }
 
-  async closePage(params: channels.WebSocketRouteClosePageParams) {
-    await this._evaluateAPIRequest({ id: this._id, type: 'closePage', code: params.code, reason: params.reason, wasClean: params.wasClean });
+  async sendToServer(params: channels.WebSocketRouteSendToServerParams, progress: Progress) {
+    await this._evaluateAPIRequest(progress, { id: this._id, type: 'sendToServer', data: { data: params.message, isBase64: params.isBase64 } });
   }
 
-  async closeServer(params: channels.WebSocketRouteCloseServerParams) {
-    await this._evaluateAPIRequest({ id: this._id, type: 'closeServer', code: params.code, reason: params.reason, wasClean: params.wasClean });
+  async closePage(params: channels.WebSocketRouteClosePageParams, progress: Progress) {
+    await this._evaluateAPIRequest(progress, { id: this._id, type: 'closePage', code: params.code, reason: params.reason, wasClean: params.wasClean });
   }
 
-  private async _evaluateAPIRequest(request: ws.APIRequest) {
-    await this._frame.evaluateExpression(`globalThis.__pwWebSocketDispatch(${JSON.stringify(request)})`).catch(() => {});
+  async closeServer(params: channels.WebSocketRouteCloseServerParams, progress: Progress) {
+    await this._evaluateAPIRequest(progress, { id: this._id, type: 'closeServer', code: params.code, reason: params.reason, wasClean: params.wasClean });
+  }
+
+  private async _evaluateAPIRequest(progress: Progress, request: ws.APIRequest) {
+    await this._frame.evaluateExpression(progress, `globalThis.__pwWebSocketDispatch(${JSON.stringify(request)})`).catch(() => {});
   }
 
   override _onDispose() {
@@ -148,9 +161,11 @@ export class WebSocketRouteDispatcher extends Dispatcher<{ guid: string }, chann
 
 function matchesPattern(dispatcher: PageDispatcher | BrowserContextDispatcher, baseURL: string | undefined, url: string) {
   for (const pattern of dispatcher._webSocketInterceptionPatterns || []) {
-    const urlMatch = pattern.regexSource ? new RegExp(pattern.regexSource, pattern.regexFlags) : pattern.glob;
-    if (urlMatches(baseURL, url, urlMatch, true))
+    if (urlMatches(baseURL, url, deserializeURLMatch(pattern), true))
       return true;
   }
   return false;
 }
+
+const kBindingName = '__pwWebSocketBinding';
+type BindingData = { counter: number, connection: DispatcherConnection, binding: PageBinding };

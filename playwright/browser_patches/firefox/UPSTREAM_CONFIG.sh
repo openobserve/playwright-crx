@@ -1,3 +1,3 @@
-REMOTE_URL="https://github.com/mozilla/gecko-dev"
+REMOTE_URL="https://github.com/mozilla-firefox/firefox"
 BASE_BRANCH="release"
-BASE_REVISION="9cbfae27052e4aaeb064d2d08e7e869f31ee4288"
+BASE_REVISION="f1b6c0f86b96b7e0688c26f65803576f27cdaf88"

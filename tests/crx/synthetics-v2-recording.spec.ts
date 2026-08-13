@@ -13,153 +13,49 @@
  * extension's tab, click things in it, stop. Nothing here reaches into internals
  * the O2 web app could not reach.
  */
-import path from 'path';
-import { test, expect } from './crxTest';
 
-const EXTENSION_PATH = path.join(
-    __dirname, '..', '..', 'examples', 'synthetics-recorder', 'dist');
-
-test.use({
-  extensionPath: EXTENSION_PATH,
-  ...(process.env.CRX_CHANNEL ? { channel: process.env.CRX_CHANNEL } : {}),
-  enabledInIncognito: true,
-});
+import { test, expect } from './syntheticsTest';
+import { findStep, describeSteps } from './syntheticsTest';
+import type { RecordedStep } from './syntheticsTest';
 
 test.slow();
 
-type RecordedStep = {
-  id: string;
-  action: string;
-  selector?: string;
-  locator?: { candidates: Array<{ kind: string; value: string }> };
-  settle?: {
-    navigation?: { url_pattern: string };
-    responses?: Array<{ url_pattern: string; method?: string; required: boolean }>;
-    observed_duration_ms?: number;
-  };
-};
-
-/** Send one command over the same content-script bridge the O2 web app uses. */
-async function sendCommand<T>(page: any, command: unknown, timeoutMs = 60_000): Promise<T | null> {
-  return page.evaluate(
-      async ({ command, timeoutMs }: any) => {
-        window.postMessage({ ch: 'oo-bridge-probe' }, '*');
-        await new Promise(r => setTimeout(r, 500));
-
-        const nonce = `t${Date.now()}${Math.random().toString(36).slice(2, 8)}`;
-        return await new Promise(resolve => {
-          const timer = setTimeout(() => {
-            window.removeEventListener('message', onMessage);
-            resolve(null);
-          }, timeoutMs);
-          function onMessage(event: MessageEvent) {
-            if (event.source !== window) return;
-            if (event.data?.ch !== 'oo-bridge' || event.data?.dir !== 'to-page') return;
-            const { nonce: got, msg } = event.data;
-            if (got !== nonce && msg?.nonce !== nonce) return;
-            clearTimeout(timer);
-            window.removeEventListener('message', onMessage);
-            resolve(msg?.response ?? msg);
-          }
-          window.addEventListener('message', onMessage);
-          window.postMessage(
-              { ch: 'oo-bridge', dir: 'to-ext', nonce, msg: { type: 'synthetics-command', command } },
-              '*');
-        });
-      },
-      { command, timeoutMs });
-}
-
-/**
- * Start recording, tolerating a service worker that is still waking up.
- *
- * The extension's worker is spun up on demand, and under parallel load the first
- * command can land before the bridge port is open. That is a harness race, not a
- * product one — a person clicking "Record" retries by clicking again — so the
- * test does the same rather than asserting on a cold start.
- */
-async function startRecording(page: any, targetUrl: string): Promise<void> {
-  let last: { success: boolean; error?: string } | null = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    last = await sendCommand<{ success: boolean; error?: string }>(page, {
-      action: 'startRecording',
-      mode: 'recording',
-      testIdAttr: 'data-test',
-      targetUrl,
-    });
-    if (last?.success)
-      return;
-    await page.waitForTimeout(1_000);
-  }
-  throw new Error(`startRecording never succeeded: ${last?.error ?? '(no response — is dist/ built?)'}`);
-}
-
-/**
- * Start collecting the step lists the extension pushes.
- *
- * `setActions` arrives repeatedly as the recording grows, so the last one is the
- * whole journey. Collected on the page rather than polled, because a push that
- * arrives between polls is a step silently missing from the assertion.
- */
-async function collectSteps(page: any): Promise<void> {
-  await page.evaluate(() => {
-    (window as any).__recordedSteps = [];
-    window.addEventListener('message', (event: MessageEvent) => {
-      if (event.source !== window) return;
-      if (event.data?.ch !== 'oo-bridge' || event.data?.dir !== 'to-page') return;
-      const payload = event.data?.msg?.payload;
-      if (payload?.method === 'setActions' && Array.isArray(payload.browserSteps))
-        (window as any).__recordedSteps = payload.browserSteps;
-    });
-    window.postMessage({ ch: 'oo-bridge-probe' }, '*');
-  });
-}
-
-async function recordedSteps(page: any): Promise<RecordedStep[]> {
-  return page.evaluate(() => (window as any).__recordedSteps ?? []);
-}
-
-test('a recorded click carries a locator bundle, a settle block, and its duration', async ({
-  page, context, baseURL, extensionServiceWorker,
-}) => {
+test('a recorded click carries a locator bundle, a settle block, and its duration', async ({ page, o2, baseURL }) => {
   await page.goto(`${baseURL}/index.html`);
-  await collectSteps(page);
+  await o2.listen();
 
   const target = `${baseURL}/v2-login.html`;
-  await startRecording(page, target);
+  await o2.startRecording(target);
 
   // The extension opened its own recording tab; drive that, as a person would.
-  const recordingPage = await context.waitForEvent('page', {
-    predicate: p => p.url().includes('v2-login.html'),
-    timeout: 30_000,
-  }).catch(() => context.pages().find(p => p.url().includes('v2-login.html')));
-  expect(recordingPage, 'the recording tab never opened').toBeTruthy();
-
-  await recordingPage!.waitForLoadState('domcontentloaded');
-  await recordingPage!.locator('[data-test="login-user-id-field"]').click();
-  await recordingPage!.locator('[data-test="login-user-id-field"]').fill('omkar@openobserve.ai');
-  await recordingPage!.locator('[data-test="login-sign-in"]').click();
+  // The extension opened its own recording tab; drive that, as a person would.
+  const recordingPage = await o2.recordingTab('v2-login.html');
+  await recordingPage.locator('[data-test="login-user-id-field"]').click();
+  await recordingPage.locator('[data-test="login-user-id-field"]').fill('omkar@openobserve.ai');
+  await recordingPage.locator('[data-test="login-sign-in"]').click();
 
   // Let the navigation land so its signal is attached to the click.
-  await recordingPage!.waitForURL(/\/web\//, { timeout: 30_000 }).catch(() => {});
-  await recordingPage!.waitForTimeout(3_000);
+  await recordingPage.waitForURL(/\/web\//, { timeout: 30_000 }).catch(() => {});
+  await recordingPage.waitForTimeout(3_000);
 
-  await sendCommand(page, { action: 'stopRecording' });
+  await o2.stopRecording();
   await page.waitForTimeout(1_000);
 
-  const steps = await recordedSteps(page);
+  const steps = await o2.steps();
   expect(steps.length, 'nothing was recorded').toBeGreaterThan(1);
 
-  const signIn = steps.find(s => s.selector?.includes('login-sign-in'));
-  expect(signIn, `no sign-in step in ${JSON.stringify(steps.map(s => s.selector))}`).toBeTruthy();
+  const signIn = findStep(steps, 'login-sign-in');
+  expect(signIn, `no sign-in step in ${describeSteps(steps)}`).toBeTruthy();
 
   // ── Phase 2 T3: the ranked list reaches the stored step ────────────────────
   expect(signIn!.locator?.candidates?.length,
       'only one candidate — multiple:true is not reaching the generator').toBeGreaterThan(1);
   // The test attribute is what the fixture makes most stable, so it must lead.
   expect(signIn!.locator!.candidates[0].kind).toBe('test_attribute');
-  // The primary stays where a v1 consumer looks for it.
-  expect(signIn!.selector).toBe(signIn!.locator!.candidates[0].value);
+  // NB: there is deliberately no bare `selector` to check against. BrowserStep's own doc
+  // records that "the bare `selector` and `selector_type` pair ... went with version 1
+  // (Phase 2c)" — the locator bundle IS the step's identity now. This assertion outlived
+  // the field it was guarding.
 
   // ── Phase 3 T1/T2: the navigation signal becomes a wait condition ──────────
   expect(signIn!.settle?.navigation?.url_pattern,
@@ -175,38 +71,30 @@ test('a recorded click carries a locator bundle, a settle block, and its duratio
   expect(responses.every(r => !r.url_pattern.includes('?'))).toBe(true);
 });
 
-test('a streamed, slow, also-fired-on-load search still becomes a settle signal', async ({
-  page, context, baseURL, extensionServiceWorker,
-}) => {
+test('a streamed, slow, also-fired-on-load search still becomes a settle signal', async ({ page, o2, baseURL }) => {
   await page.goto(`${baseURL}/index.html`);
-  await collectSteps(page);
+  await o2.listen();
 
   const target = `${baseURL}/v2-search.html`;
-  await startRecording(page, target);
+  await o2.startRecording(target);
 
-  const recordingPage = await context.waitForEvent('page', {
-    predicate: p => p.url().includes('v2-search.html'),
-    timeout: 30_000,
-  }).catch(() => context.pages().find(p => p.url().includes('v2-search.html')));
-  expect(recordingPage, 'the recording tab never opened').toBeTruthy();
-
-  await recordingPage!.waitForLoadState('domcontentloaded');
+  const recordingPage = await o2.recordingTab('v2-search.html');
   // Let the mount-time search finish first, so the click's own search is the
   // SECOND time each endpoint is seen — the shape that used to be filtered as
   // background traffic.
-  await recordingPage!.waitForTimeout(3_000);
+  await recordingPage.waitForTimeout(3_000);
 
-  await recordingPage!.locator('[data-test="logs-search-bar-refresh-btn"]').click();
+  await recordingPage.locator('[data-test="logs-search-bar-refresh-btn"]').click();
   // Long enough for /api/slow.json (2.5s), which the retired one-second window
   // could never have reached.
-  await recordingPage!.waitForTimeout(4_000);
+  await recordingPage.waitForTimeout(4_000);
 
-  await sendCommand(page, { action: 'stopRecording' });
+  await o2.stopRecording();
   await page.waitForTimeout(1_000);
 
-  const steps = await recordedSteps(page);
-  const runQuery = steps.find(s => s.selector?.includes('logs-search-bar-refresh-btn'));
-  expect(runQuery, `no Run Query step in ${JSON.stringify(steps.map(s => s.selector))}`).toBeTruthy();
+  const steps = await o2.steps();
+  const runQuery = findStep(steps, 'logs-search-bar-refresh-btn');
+  expect(runQuery, `no Run Query step in ${describeSteps(steps)}`).toBeTruthy();
 
   const patterns = (runQuery!.settle?.responses ?? []).map(r => r.url_pattern);
 
@@ -218,27 +106,21 @@ test('a streamed, slow, also-fired-on-load search still becomes a settle signal'
   expect(runQuery!.settle!.responses!.every(r => r.required === false)).toBe(true);
 });
 
-test('a recorded journey contains no hard sleep and no stamped timeout', async ({
-  page, context, baseURL, extensionServiceWorker,
-}) => {
+test('a recorded journey contains no hard sleep and no stamped timeout', async ({ page, o2, baseURL }) => {
   await page.goto(`${baseURL}/index.html`);
-  await collectSteps(page);
+  await o2.listen();
 
   const target = `${baseURL}/v2-login.html`;
-  await startRecording(page, target);
+  await o2.startRecording(target);
 
-  const recordingPage = await context.waitForEvent('page', {
-    predicate: p => p.url().includes('v2-login.html'),
-    timeout: 30_000,
-  }).catch(() => context.pages().find(p => p.url().includes('v2-login.html')));
-  await recordingPage!.waitForLoadState('domcontentloaded');
-  await recordingPage!.locator('[data-test="login-sign-in"]').click();
-  await recordingPage!.waitForTimeout(3_000);
+  const recordingPage = await o2.recordingTab('v2-login.html');
+  await recordingPage.locator('[data-test="login-sign-in"]').click();
+  await recordingPage.waitForTimeout(3_000);
 
-  await sendCommand(page, { action: 'stopRecording' });
+  await o2.stopRecording();
   await page.waitForTimeout(1_000);
 
-  const steps = await recordedSteps(page);
+  const steps = await o2.steps();
   expect(steps.length).toBeGreaterThan(0);
   // The two Phase 1 guarantees, still holding now that capture does more.
   expect(steps.some(s => s.action === 'wait' || s.action === 'waitFor')).toBe(false);

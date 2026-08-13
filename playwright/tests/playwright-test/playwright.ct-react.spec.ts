@@ -596,3 +596,60 @@ test('should allow import from shared file', async ({ runInlineTest }) => {
   expect(result.exitCode).toBe(0);
   expect(result.passed).toBe(1);
 });
+
+test('should not add React import to minified .js file that already imports React after closing brace', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/38906' }
+}, async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'playwright.config.ts': playwrightCtConfigText,
+    'playwright/index.html': `<script type="module" src="./index.js"></script>`,
+    'playwright/index.js': ``,
+
+    'src/minified-component.js': `function foo(){return 1}import React from 'react';export const MinifiedComponent = () => React.createElement('div', null, 'Minified');`,
+
+    'src/button.jsx': `
+      import { MinifiedComponent } from './minified-component';
+      export const Button = () => <MinifiedComponent />;
+    `,
+
+    'src/button.test.jsx': `
+      import { test, expect } from '@playwright/experimental-ct-react';
+      import { Button } from './button';
+
+      test('pass', async ({ mount }) => {
+        const component = await mount(<Button></Button>);
+        await expect(component).toHaveText('Minified');
+      });
+    `,
+  }, { workers: 1 });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.passed).toBe(1);
+});
+
+test('should throw test error when template index.html is not provided', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'playwright.config.ts': `
+      import { defineConfig } from '@playwright/experimental-ct-react';
+      export default defineConfig({});
+    `,
+    'src/component.jsx': `
+      export const Component = () => <></>;
+    `,
+
+    'src/component.test.jsx': `
+      import { test, expect } from '@playwright/experimental-ct-react';
+      import { Component } from './component';
+
+      test('pass component', async ({ page, mount }) => {
+        const component = await mount(<Component />);
+        await expect(page).toHaveURL('http://127.0.0.1:8080/');
+      });
+    `,
+  }, { workers: 1 });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.passed).toBe(0);
+  expect(result.output).toContain('Component testing template file playwright/index.html is missing and there is no existing Vite server. Component tests will fail.');
+  expect(result.results[0].error.message).toBe('Error: Component testing could not determine the base URL of your component under test. Ensure you have supplied a template playwright/index.html or have set the PLAYWRIGHT_TEST_BASE_URL environment variable.');
+});

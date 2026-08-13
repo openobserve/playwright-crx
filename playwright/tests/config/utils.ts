@@ -14,17 +14,18 @@
  * limitations under the License.
  */
 
-import type { Frame, Page } from 'playwright-core';
-import { ZipFile } from '../../packages/playwright-core/lib/server/utils/zipFile';
-import type { TraceModelBackend } from '../../packages/trace-viewer/src/sw/traceModel';
-import type { StackFrame } from '../../packages/protocol/src/channels';
-import { parseClientSideCallMetadata } from '../../packages/playwright-core/lib/utils/isomorphic/traceUtils';
-import { TraceModel } from '../../packages/trace-viewer/src/sw/traceModel';
-import type { ActionTreeItem } from '../../packages/trace-viewer/src/ui/modelUtil';
-import { buildActionTree, MultiTraceModel } from '../../packages/trace-viewer/src/ui/modelUtil';
-import type { ActionTraceEvent, ConsoleMessageTraceEvent, EventTraceEvent, TraceEvent } from '@trace/trace';
-import style from 'ansi-styles';
-import { renderTitleForCall } from '../../packages/playwright-core/lib/utils/isomorphic/protocolFormatter';
+import { tools } from '../../packages/playwright-core/lib/coreBundle';
+import { utils, iso } from '../../packages/playwright-core/lib/coreBundle';
+
+import type { iso as isoType } from '../../packages/playwright-core/lib/coreBundle';
+import type { Locator, Frame, Page } from 'playwright-core';
+import type { StackFrame, ActionTraceEvent, TraceEvent } from '@trace/trace';
+
+const { TraceLoader, TraceModel } = iso;
+type TraceModel = InstanceType<typeof TraceModel>;
+type SnapshotStorage = isoType.SnapshotStorage;
+
+export type BoundingBox = Awaited<ReturnType<Locator['boundingBox']>>;
 
 export async function attachFrame(page: Page, frameId: string, url: string): Promise<Frame> {
   const handle = await page.evaluateHandle(async ({ frameId, url }) => {
@@ -53,18 +54,24 @@ export async function verifyViewport(page: Page, width: number, height: number) 
   expect(await page.evaluate('window.innerHeight')).toBe(height);
 }
 
-export function expectedSSLError(browserName: string, platform: string): RegExp {
+export function expectedSSLError(browserName: string, platform: string, channel: string | undefined): RegExp {
   if (browserName === 'chromium')
     return /net::(ERR_CERT_AUTHORITY_INVALID|ERR_CERT_INVALID)/;
   if (browserName === 'webkit') {
     if (platform === 'darwin')
       return /The certificate for this server is invalid/;
-    else if (platform === 'win32')
+    else if (platform === 'win32' && channel !== 'webkit-wsl')
       return /SSL peer certificate or SSH remote key was not OK/;
     else
       return /Unacceptable TLS certificate|Operation was cancelled/;
   }
+  if (browserName === 'firefox' && isBidiChannel(channel))
+    return /MOZILLA_PKIX_ERROR_SELF_SIGNED_CERT/;
   return /SSL_ERROR_UNKNOWN/;
+}
+
+export function isBidiChannel(channel: string | undefined): boolean {
+  return channel?.startsWith('bidi-chrom') || channel?.startsWith('moz-firefox') || false;
 }
 
 export function chromiumVersionLessThan(a: string, b: string) {
@@ -98,7 +105,7 @@ export function suppressCertificateWarning() {
 }
 
 export async function parseTraceRaw(file: string): Promise<{ events: any[], resources: Map<string, Buffer>, actions: string[], actionObjects: ActionTraceEvent[], stacks: Map<string, StackFrame[]> }> {
-  const zipFS = new ZipFile(file);
+  const zipFS = new utils.ZipFile(file);
   const resources = new Map<string, Buffer>();
   for (const entry of await zipFS.entries())
     resources.set(entry, await zipFS.read(entry));
@@ -143,7 +150,7 @@ export async function parseTraceRaw(file: string): Promise<{ events: any[], reso
 
   const stacks: Map<string, StackFrame[]> = new Map();
   for (const stacksFile of [...resources.keys()].filter(name => name.endsWith('.stacks'))) {
-    for (const [key, value] of parseClientSideCallMetadata(JSON.parse(resources.get(stacksFile)!.toString())))
+    for (const [key, value] of iso.parseClientSideCallMetadata(JSON.parse(resources.get(stacksFile)!.toString())))
       stacks.set(key, value);
   }
 
@@ -152,40 +159,23 @@ export async function parseTraceRaw(file: string): Promise<{ events: any[], reso
   return {
     events,
     resources,
-    actions: actionObjects.map(a => renderTitleForCall({ ...a, type: a.class })),
+    actions: actionObjects.map(a => iso.renderTitleForCall({ ...a, type: a.class })),
     actionObjects,
     stacks,
   };
 }
 
-export async function parseTrace(file: string): Promise<{ resources: Map<string, Buffer>, events: (EventTraceEvent | ConsoleMessageTraceEvent)[], actions: ActionTraceEvent[], titles: string[], traceModel: TraceModel, model: MultiTraceModel, actionTree: string[], errors: string[] }> {
-  const backend = new TraceBackend(file);
-  const traceModel = new TraceModel();
-  await traceModel.load(backend, () => {});
-  const model = new MultiTraceModel(traceModel.contextEntries);
-  const { rootItem } = buildActionTree(model.actions);
-  const actionTree: string[] = [];
-  const visit = (actionItem: ActionTreeItem, indent: string) => {
-    const title = renderTitleForCall({ ...actionItem.action, type: actionItem.action.class });
-    actionTree.push(`${indent}${title || actionItem.id}`);
-    for (const child of actionItem.children)
-      visit(child, indent + '  ');
-  };
-  rootItem.children.forEach(a => visit(a, ''));
-  return {
-    titles: model.actions.map(a => renderTitleForCall({ ...a, type: a.class })),
-    resources: backend.entries,
-    actions: model.actions,
-    events: model.events,
-    errors: model.errors.map(e => e.message),
-    model,
-    traceModel,
-    actionTree,
-  };
+export async function parseTrace(file: string): Promise<{ snapshots: SnapshotStorage, model: TraceModel }> {
+  const dir = file + '.extracted';
+  await tools.extractTrace(file, dir);
+  const backend = new tools.DirTraceLoaderBackend(dir);
+  const loader = new TraceLoader();
+  await loader.load(backend);
+  return { model: new TraceModel(dir, loader.contextEntries), snapshots: loader.storage() };
 }
 
 export async function parseHar(file: string): Promise<Map<string, Buffer>> {
-  const zipFS = new ZipFile(file);
+  const zipFS = new utils.ZipFile(file);
   const resources = new Map<string, Buffer>();
   for (const entry of await zipFS.entries())
     resources.set(entry, await zipFS.read(entry));
@@ -205,93 +195,74 @@ export function waitForTestLog<T>(page: Page, prefix: string): Promise<T> {
   });
 }
 
-const ansiRegex = new RegExp('[\\u001B\\u009B][[\\]()#;?]*(?:(?:(?:[a-zA-Z\\d]*(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~]))', 'g');
+export async function rafraf(target: Page | Frame, count = 1) {
+  for (let i = 0; i < count; i++) {
+    await target.evaluate(async () => {
+      await new Promise(f => window.builtins.requestAnimationFrame(() => window.builtins.requestAnimationFrame(f)));
+    });
+  }
+}
+
+export async function ensureSomeFrames(page: Page) {
+  await rafraf(page, 100);
+  await page.screenshot();
+}
+
+export function roundBox(box: BoundingBox): BoundingBox {
+  return {
+    x: Math.round(box.x),
+    y: Math.round(box.y),
+    width: Math.round(box.width),
+    height: Math.round(box.height),
+  };
+}
+
+export function unshift(snapshot: string): string {
+  const lines = snapshot.split('\n');
+  let whitespacePrefixLength = 100;
+  for (const line of lines) {
+    if (!line.trim())
+      continue;
+    const match = line.match(/^(\s*)/);
+    if (match && match[1].length < whitespacePrefixLength)
+      whitespacePrefixLength = match[1].length;
+  }
+  return lines.filter(t => t.trim()).map(line => line.substring(whitespacePrefixLength)).join('\n');
+}
+
+const ansiRegex = new RegExp('[\\u001B\\u009B][[\\]()#?]*(?:(?:(?:[a-zA-Z\\d]*(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)|(?:(?:\\d{0,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~]))', 'g');
 export function stripAnsi(str: string): string {
   return str.replace(ansiRegex, '');
 }
 
-export function ansi2Markup(text: string): string {
-  return text.replace(ansiRegex, match => {
-    switch (match) {
-      case style.inverse.open:
-        return '<i>';
-      case style.inverse.close:
-        return '</i>';
-
-      case style.bold.open:
-        return '<b>';
-      case style.dim.open:
-        return '<d>';
-      case style.green.open:
-        return '<g>';
-      case style.red.open:
-        return '<r>';
-      case style.yellow.open:
-        return '<y>';
-      case style.bgYellow.open:
-        return '<Y>';
-
-      case style.bold.close:
-      case style.dim.close:
-      case style.green.close:
-      case style.red.close:
-      case style.yellow.close:
-      case style.bgYellow.close:
-        return '</>';
-
-      default:
-        return match; // unexpected escape sequence
-    }
-  });
-}
-
-class TraceBackend implements TraceModelBackend {
-  private _fileName: string;
-  private _entriesPromise: Promise<Map<string, Buffer>>;
-  readonly entries = new Map<string, Buffer>();
-
-  constructor(fileName: string) {
-    this._fileName = fileName;
-    this._entriesPromise = this._readEntries();
-  }
-
-  private async _readEntries(): Promise<Map<string, Buffer>> {
-    const zipFS = new ZipFile(this._fileName);
-    for (const entry of await zipFS.entries())
-      this.entries.set(entry, await zipFS.read(entry));
-    zipFS.close();
-    return this.entries;
-  }
-
-  isLive() {
-    return false;
-  }
-
-  traceURL() {
-    return 'file://' + this._fileName;
-  }
-
-  async entryNames(): Promise<string[]> {
-    const entries = await this._entriesPromise;
-    return [...entries.keys()];
-  }
-
-  async hasEntry(entryName: string): Promise<boolean> {
-    const entries = await this._entriesPromise;
-    return entries.has(entryName);
-  }
-
-  async readText(entryName: string): Promise<string | undefined> {
-    const entries = await this._entriesPromise;
-    const entry = entries.get(entryName);
-    if (!entry)
-      return;
-    return entry.toString();
-  }
-
-  async readBlob(entryName: string) {
-    const entries = await this._entriesPromise;
-    const entry = entries.get(entryName);
-    return entry as any;
-  }
+export function inheritAndCleanEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    // BEGIN: Reserved CI
+    CI: undefined,
+    BUILD_URL: undefined,
+    CI_COMMIT_SHA: undefined,
+    CI_JOB_URL: undefined,
+    CI_PROJECT_URL: undefined,
+    GITHUB_ACTIONS: undefined,
+    GITHUB_REPOSITORY: undefined,
+    GITHUB_RUN_ID: undefined,
+    GITHUB_SERVER_URL: undefined,
+    GITHUB_SHA: undefined,
+    GITHUB_EVENT_PATH: undefined,
+    // END: Reserved CI
+    PW_TEST_HTML_REPORT_OPEN: undefined,
+    PLAYWRIGHT_HTML_OPEN: undefined,
+    PW_TEST_DEBUG_REPORTERS: undefined,
+    PW_TEST_REPORTER: undefined,
+    PW_TEST_REPORTER_WS_ENDPOINT: undefined,
+    PW_TEST_SOURCE_TRANSFORM: undefined,
+    PW_TEST_SOURCE_TRANSFORM_SCOPE: undefined,
+    PWTEST_BOT_NAME: undefined,
+    PWTEST_SHARD_WEIGHTS: undefined,
+    TEST_WORKER_INDEX: undefined,
+    TEST_PARALLEL_INDEX: undefined,
+    NODE_OPTIONS: undefined,
+    ...env,
+  };
 }

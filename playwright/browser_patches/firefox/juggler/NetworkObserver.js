@@ -6,7 +6,7 @@
 
 const {Helper} = ChromeUtils.importESModule('chrome://juggler/content/Helper.js');
 const {NetUtil} = ChromeUtils.importESModule('resource://gre/modules/NetUtil.sys.mjs');
-const { ChannelEventSinkFactory } = ChromeUtils.importESModule("chrome://remote/content/cdp/observers/ChannelEventSink.sys.mjs");
+const { ChannelEventSinkFactory } = ChromeUtils.importESModule("chrome://juggler/content/ChannelEventSink.sys.mjs");
 
 
 const Cc = Components.classes;
@@ -106,7 +106,10 @@ class NetworkRequest {
     this.httpChannel = httpChannel;
 
     const loadInfo = this.httpChannel.loadInfo;
-    const browsingContext = loadInfo?.frameBrowsingContext || loadInfo?.workerAssociatedBrowsingContext || loadInfo?.browsingContext;
+    const browsingContext = loadInfo?.frameBrowsingContext
+      || loadInfo?.associatedBrowsingContext
+      || loadInfo?.workerAssociatedBrowsingContext
+      || loadInfo?.browsingContext;
 
     this._frameId = helper.browsingContextToFrameId(browsingContext);
 
@@ -533,6 +536,8 @@ class NetworkRequest {
     };
 
     const { status, statusText, headers } = responseHead(this.httpChannel, opt_statusCode, opt_statusText);
+    if (redirectStatus.includes(status) && this._overriddenHeadersForRedirect)
+      this._overriddenHeadersForRedirect = filterHeadersForRedirect(this._overriddenHeadersForRedirect, this.httpChannel.requestMethod, status);
     let remoteIPAddress = undefined;
     let remotePort = undefined;
     try {
@@ -790,22 +795,81 @@ function requestHeaders(httpChannel) {
   return headers;
 }
 
-function clearRequestHeaders(httpChannel) {
+function overrideRequestHeaders(httpChannel, headers) {
+  // Clear all headers that are overrdable.
   for (const header of requestHeaders(httpChannel)) {
-    // We cannot remove the "host" header.
-    if (header.name.toLowerCase() === 'host')
+    if (!isForbiddenHeader(header.name, header.value))
+      httpChannel.setRequestHeader(header.name, '', false /* merge */);
+  }
+
+  // Set the non-forbidden overridden headers.
+  for (const header of headers) {
+    if (isForbiddenHeader(header.name, header.value))
       continue;
-    // Keep the "cookie" header. If there is an override, it will be set anyway.
-    // Otherwise, we may delete a cookie that was set for a redirect.
-    if (header.name.toLowerCase() === 'cookie')
-      continue;
-    httpChannel.setRequestHeader(header.name, '', false /* merge */);
+    httpChannel.setRequestHeader(header.name, header.value, false /* merge */);
   }
 }
 
-function overrideRequestHeaders(httpChannel, headers) {
-  clearRequestHeaders(httpChannel);
-  appendExtraHTTPHeaders(httpChannel, headers);
+// Forbidden request headers according to https://developer.mozilla.org/en-US/docs/Glossary/Forbidden_request_header
+// These headers cannot be set or modified programmatically.
+const FORBIDDEN_HEADER_NAMES = new Set([
+  'accept-charset',
+  'accept-encoding',
+  'access-control-request-headers',
+  'access-control-request-method',
+  'connection',
+  'content-length',
+  'cookie',
+  'date',
+  'dnt',
+  'expect',
+  'host',
+  'keep-alive',
+  'origin',
+  'referer',
+  'set-cookie',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+  'via',
+]);
+
+// Forbidden method names for X-HTTP-Method-* headers
+const FORBIDDEN_METHODS = new Set(['CONNECT', 'TRACE', 'TRACK']);
+
+function isForbiddenHeader(name, value) {
+  const lowerName = name.toLowerCase();
+
+  if (FORBIDDEN_HEADER_NAMES.has(lowerName))
+    return true;
+
+  if (lowerName.startsWith('proxy-'))
+    return true;
+
+  if (lowerName.startsWith('sec-'))
+    return true;
+
+  if (lowerName === 'x-http-method' ||
+      lowerName === 'x-http-method-override' ||
+      lowerName === 'x-method-override') {
+    if (value && FORBIDDEN_METHODS.has(value.toUpperCase()))
+      return true;
+  }
+
+  return false;
+}
+
+const redirectStatus = [301, 302, 303, 307, 308];
+
+function filterHeadersForRedirect(headers, requestMethod, status) {
+    // HTTP-redirect fetch step 13 (https://fetch.spec.whatwg.org/#http-redirect-fetch)
+  if ((status === 301 || status === 302) && requestMethod === 'POST' ||
+      status === 303 && !['GET', 'HEAD'].includes(requestMethod)) {
+    const requestBodyHeaders = ['content-encoding', 'content-language', 'content-length', 'content-location', 'content-type'];
+    return headers.filter(header => !requestBodyHeaders.includes(header.name.toLowerCase()));
+  }
+  return headers;
 }
 
 function causeTypeToString(causeType) {
@@ -845,13 +909,18 @@ class ResponseStorage {
       const encodingHeader = request.httpChannel.getResponseHeader("Content-Encoding");
       encodings = encodingHeader.split(/\s*\t*,\s*\t*/);
     }
-    this._responses.set(request.requestId, {body, encodings});
+    this._responses.set(request.requestId, {
+      body,
+      encodings,
+      httpChannel: encodings.length ? request.httpChannel : null,
+    });
     this._totalSize += body.length;
     if (this._totalSize > this._maxTotalSize) {
       for (let [requestId, response] of this._responses) {
         this._totalSize -= response.body.length;
         response.body = '';
         response.evicted = true;
+        response.httpChannel = null;
         if (this._totalSize < this._maxTotalSize)
           break;
       }
@@ -867,7 +936,7 @@ class ResponseStorage {
     let result = response.body;
     if (response.encodings && response.encodings.length) {
       for (const encoding of response.encodings)
-        result = convertString(result, encoding, 'uncompressed');
+        result = convertString(result, encoding, 'uncompressed', response.httpChannel);
     }
     return {base64body: btoa(result)};
   }
@@ -923,7 +992,7 @@ function setPostData(httpChannel, postData, headers) {
   httpChannel.explicitSetUploadStream(synthesized, contentType, -1, httpChannel.requestMethod, false);
 }
 
-function convertString(s, source, dest) {
+function convertString(s, source, dest, request) {
   const is = Cc["@mozilla.org/io/string-input-stream;1"].createInstance(
     Ci.nsIStringInputStream
   );
@@ -957,9 +1026,9 @@ function convertString(s, source, dest) {
     listener,
     null
   );
-  converter.onStartRequest(null, null);
-  converter.onDataAvailable(null, is, 0, s.length);
-  converter.onStopRequest(null, null, null);
+  converter.onStartRequest(request, null);
+  converter.onDataAvailable(request, is, 0, s.length);
+  converter.onStopRequest(request, null, null);
   return result.join('');
 }
 
@@ -986,4 +1055,3 @@ PageNetwork.Events = {
   RequestFinished: Symbol('PageNetwork.Events.RequestFinished'),
   RequestFailed: Symbol('PageNetwork.Events.RequestFailed'),
 };
-

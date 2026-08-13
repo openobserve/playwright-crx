@@ -15,9 +15,11 @@
  * limitations under the License.
  */
 
-import { attachFrame } from 'tests/config/utils';
+import { attachFrame } from '../config/utils';
 import { browserTest as it, expect } from '../config/browserTest';
 import fs from 'fs';
+
+import type { BrowserContext } from 'playwright-core';
 
 it('should capture local storage', async ({ contextFactory }) => {
   const context = await contextFactory();
@@ -49,7 +51,9 @@ it('should capture local storage', async ({ contextFactory }) => {
   }]);
 });
 
-it('should set local storage', async ({ contextFactory }) => {
+it('should set local storage', async ({ contextFactory, channel }) => {
+  it.fixme(channel?.startsWith('msedge'), 'Network.clearBrowserCache sometimes stalls');
+
   const context = await contextFactory({
     storageState: {
       cookies: [],
@@ -71,10 +75,50 @@ it('should set local storage', async ({ contextFactory }) => {
   await page.goto('https://www.example.com');
   const localStorage = await page.evaluate('window.localStorage');
   expect(localStorage).toEqual({ name1: 'value1' });
+
+  // Now use setStorageState to replace the storage
+  await context.setStorageState({
+    cookies: [],
+    origins: [
+      {
+        origin: 'https://www.example.com',
+        localStorage: [{
+          name: 'name2',
+          value: 'value2'
+        }]
+      },
+    ]
+  });
+  expect(context.pages()).toHaveLength(1);
+  await page.goto('https://www.example.com');
+  const localStorage2 = await page.evaluate('window.localStorage');
+  expect(localStorage2).toEqual({ name2: 'value2' });
+
   await context.close();
 });
 
-it('should round-trip through the file', async ({ contextFactory }, testInfo) => {
+it('should report good error if the url is not valid', async ({ contextFactory }) => {
+  const error = await contextFactory({
+    storageState: {
+      cookies: [],
+      origins: [
+        {
+          origin: 'foo',
+          localStorage: [{
+            name: 'name1',
+            value: 'value1'
+          }]
+        },
+      ]
+    }
+  }).catch(e => e);
+  expect(error.message).toContain('browser.newContext: Error setting storage state:');
+  expect(error.message).toContain('foo');
+});
+
+it('should round-trip through the file', async ({ contextFactory, channel }, testInfo) => {
+  it.fixme(channel?.startsWith('msedge'), 'Network.clearBrowserCache sometimes stalls');
+
   const context = await contextFactory();
   const page1 = await context.newPage();
   await page1.route('**/*', route => {
@@ -112,38 +156,48 @@ it('should round-trip through the file', async ({ contextFactory }, testInfo) =>
   const written = await fs.promises.readFile(path, 'utf8');
   expect(JSON.stringify(state, undefined, 2)).toBe(written);
 
-  const context2 = await contextFactory({ storageState: path });
-  const page2 = await context2.newPage();
-  await page2.route('**/*', route => {
-    route.fulfill({ body: '<html></html>' }).catch(() => {});
-  });
-  await page2.goto('https://www.example.com');
-  const localStorage = await page2.evaluate('window.localStorage');
-  expect(localStorage).toEqual({ name1: 'value1' });
-  const cookie = await page2.evaluate('document.cookie');
-  expect(cookie).toEqual('username=John Doe');
-  const idbValues = await page2.evaluate(() => new Promise((resolve, reject) => {
-    const openRequest = indexedDB.open('db', 42);
-    openRequest.addEventListener('success', async () => {
-      const db = openRequest.result;
-      const transaction = db.transaction(['store', 'store2'], 'readonly');
-      const request1 = transaction.objectStore('store').get('foo');
-      const request2 = transaction.objectStore('store2').get('foo');
-
-      const [result1, result2] = await Promise.all([request1, request2].map(request => new Promise((resolve, reject) => {
-        request.addEventListener('success', () => resolve(request.result));
-        request.addEventListener('error', () => reject(request.error));
-      })));
-
-      resolve([result1, new TextDecoder().decode(result2 as any)]);
+  const checkContext = async (context: BrowserContext) => {
+    const page = await context.newPage();
+    await page.route('**/*', route => {
+      route.fulfill({ body: '<html></html>' }).catch(() => {});
     });
-    openRequest.addEventListener('error', () => reject(openRequest.error));
-  }));
-  expect(idbValues).toEqual([
-    { name: 'foo', date: new Date(0), null: null },
-    'bar'
-  ]);
+    await page.goto('https://www.example.com');
+    const localStorage = await page.evaluate('window.localStorage');
+    expect(localStorage).toEqual({ name1: 'value1' });
+    const cookie = await page.evaluate('document.cookie');
+    expect(cookie).toEqual('username=John Doe');
+    const idbValues = await page.evaluate(() => new Promise((resolve, reject) => {
+      const openRequest = indexedDB.open('db', 42);
+      openRequest.addEventListener('success', async () => {
+        const db = openRequest.result;
+        const transaction = db.transaction(['store', 'store2'], 'readonly');
+        const request1 = transaction.objectStore('store').get('foo');
+        const request2 = transaction.objectStore('store2').get('foo');
+
+        const [result1, result2] = await Promise.all([request1, request2].map(request => new Promise((resolve, reject) => {
+          request.addEventListener('success', () => resolve(request.result));
+          request.addEventListener('error', () => reject(request.error));
+        })));
+
+        resolve([result1, new TextDecoder().decode(result2 as any)]);
+      });
+      openRequest.addEventListener('error', () => reject(openRequest.error));
+    }));
+    expect(idbValues).toEqual([
+      { name: 'foo', date: new Date(0), null: null },
+      'bar'
+    ]);
+  };
+
+  const context2 = await contextFactory({ storageState: path });
+  await checkContext(context2);
   await context2.close();
+
+  const context3 = await contextFactory();
+  await context3.setStorageState(path);
+  expect(context3.pages()).toHaveLength(0);
+  await checkContext(context3);
+  await context3.close();
 });
 
 it('should capture cookies', async ({ server, context, page, contextFactory }) => {
@@ -360,10 +414,19 @@ it('should roundtrip local storage in third-party context', async ({ page, conte
 
 it('should support IndexedDB', async ({ page, server, contextFactory }) => {
   await page.goto(server.PREFIX + '/to-do-notifications/index.html');
+
+  await expect(page.locator('#notifications')).toMatchAriaSnapshot(`
+    - list:
+      - listitem: Database initialised.
+  `);
   await page.getByLabel('Task title').fill('Pet the cat');
   await page.getByLabel('Hours').fill('1');
   await page.getByLabel('Mins').fill('1');
   await page.getByText('Add Task').click();
+  await expect(page.locator('#notifications')).toMatchAriaSnapshot(`
+    - list:
+      - listitem: "Transaction completed: database modification finished."
+  `);
 
   const storageState = await page.context().storageState({ indexedDB: true });
   expect(storageState.origins).toEqual([
@@ -381,14 +444,18 @@ it('should support IndexedDB', async ({ page, server, contextFactory }) => {
               keyPath: 'taskTitle',
               records: [
                 {
-                  value: {
-                    day: '01',
-                    hours: '1',
-                    minutes: '1',
-                    month: 'January',
-                    notified: 'no',
-                    taskTitle: 'Pet the cat',
-                    year: '2025',
+                  valueEncoded: {
+                    id: 1,
+                    o: [
+                      { k: 'taskTitle', v: 'Pet the cat' },
+                      { k: 'hours', v: '1' },
+                      { k: 'minutes', v: '1' },
+                      { k: 'day', v: '01' },
+                      { k: 'month', v: 'January' },
+                      { k: 'year', v: '2025' },
+                      { k: 'notified', v: 'no' },
+                      { k: 'binaryTitle', v: { ab: { b: 'UGV0IHRoZSBjYXQ=' } }, }
+                    ]
                   },
                 },
               ],
@@ -445,7 +512,7 @@ it('should support IndexedDB', async ({ page, server, contextFactory }) => {
   await expect(recreatedPage.locator('#task-list')).toMatchAriaSnapshot(`
     - list:
       - listitem:
-        - text: /Pet the cat/
+        - text: /Pet the cat \\[Pet the cat\\]/
   `);
 
   expect(await context.storageState()).toEqual({ cookies: [], origins: [] });
@@ -471,4 +538,52 @@ it('should support empty indexedDB', { annotation: { type: 'issue', description:
 
   const context = await contextFactory({ storageState });
   expect(await context.storageState({ indexedDB: true })).toEqual(storageState);
+});
+
+it('should round-trip WebAuthn credentials with storageState', async ({ contextFactory, server }) => {
+  const context = await contextFactory();
+  const credential = await context.credentials.create(server.HOSTNAME);
+
+  // Credentials are opt-in, omitted by default.
+  expect(await context.storageState()).toEqual({ cookies: [], origins: [] });
+
+  const storageState = await context.storageState({ credentials: true });
+  expect(storageState).toEqual({ cookies: [], origins: [], credentials: [credential] });
+
+  // A fresh context seeded from the storage state holds the same credential and round-trips equal.
+  const context2 = await contextFactory({ storageState });
+  expect(await context2.credentials.get()).toEqual([credential]);
+  expect(await context2.storageState({ credentials: true })).toEqual(storageState);
+});
+
+it('setStorageState should replace credentials', async ({ contextFactory }) => {
+  const ctxA = await contextFactory();
+  const credA = await ctxA.credentials.create('a.example.com');
+  const stateA = await ctxA.storageState({ credentials: true });
+
+  const ctxB = await contextFactory();
+  const credB = await ctxB.credentials.create('b.example.com');
+  const stateB = await ctxB.storageState({ credentials: true });
+
+  const context = await contextFactory({ storageState: stateA });
+  expect(await context.credentials.get()).toEqual([credA]);
+
+  // Replacing the storage state swaps in the new credentials.
+  await context.setStorageState(stateB);
+  expect(await context.credentials.get()).toEqual([credB]);
+
+  // A storage state without credentials clears them.
+  await context.setStorageState({ cookies: [], origins: [] });
+  expect(await context.credentials.get()).toEqual([]);
+
+  // Credentials can be installed again afterwards.
+  await context.setStorageState(stateA);
+  expect(await context.credentials.get()).toEqual([credA]);
+});
+
+it('setStorageState should handle missing file', async ({ contextFactory }, testInfo) => {
+  const context = await contextFactory();
+  const file = testInfo.outputPath('does-not-exist.json');
+  const error = await context.setStorageState(file).catch(e => e);
+  expect(error.message).toContain(`Error reading storage state from ${file}`);
 });
