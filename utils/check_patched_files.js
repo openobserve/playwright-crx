@@ -48,14 +48,60 @@ const path = require('path');
 const root = path.join(__dirname, '..');
 const baselinePath = path.join(__dirname, 'patched-files-baseline.json');
 
+/** Committer timestamp for a commit, or undefined if the object is not in this clone. */
+function commitDate(sha) {
+  try {
+    const out = execFileSync('git', ['log', '-1', '--format=%ct', `${sha}^{commit}`], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    return Number(out.trim());
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The upstream commit the vendored tree was last synced to.
+ *
+ * One body can carry MORE THAN ONE `git-subtree-split:` trailer. A squash merge
+ * concatenates every message in the branch, so a PR that bumped the subtree N times
+ * leaves N trailers in a single commit — the 1.53 → 1.62.1 upgrade left nine. Reading
+ * only the first match picked the OLDEST split, which made every file upstream touched
+ * in the intervening year look like one of our patches: 1284 files instead of 22, and a
+ * dozen ordinary upstream errors (missing bundle deps, `toWellFormed` wanting es2024, a
+ * `?inline` css import) reported as ours. That is the failure this function exists to
+ * avoid, so it resolves the newest trailer rather than the first.
+ *
+ * Newest is decided by commit date, not by position and not by ancestry:
+ *   - position is only a convention of how git orders a squashed body, so it is used
+ *     solely to break ties;
+ *   - ancestry does not hold. The splits sit on divergent upstream lines (release
+ *     branches, cherry-picks) — 3da07a704 (1.53) and 26a9e470a (1.62.1) share a merge
+ *     base, but neither is an ancestor of the other, so `merge-base --is-ancestor`
+ *     answers "no" both ways and cannot order them.
+ *
+ * A trailer whose object is missing from this clone cannot be dated, so it loses to any
+ * that can be.
+ */
+function latestSubtreeSplit(log) {
+  const shas = [...log.matchAll(/git-subtree-split:\s*([0-9a-f]+)/g)].map(m => m[1]);
+  if (!shas.length)
+    throw new Error('Could not find the last subtree split commit — has the subtree ever been merged?');
+  let best;
+  for (const sha of shas) {
+    const when = commitDate(sha);
+    // `>=` so that among equally dated — or equally undatable — candidates the one
+    // latest in the body wins, which is the order git writes a squashed message in.
+    if (!best || (when ?? -1) >= (best.when ?? -1))
+      best = { sha, when };
+  }
+  return best.sha;
+}
+
 function patchedFiles() {
   // Compare the vendored tree against the upstream commit the last subtree merge recorded,
   // so the list is derived rather than maintained by hand.
   const log = execFileSync('git', ['log', '--grep=git-subtree-dir: playwright', '-1', '--format=%b'], { cwd: root, encoding: 'utf8' });
-  const split = /git-subtree-split:\s*([0-9a-f]+)/.exec(log);
-  if (!split)
-    throw new Error('Could not find the last subtree split commit — has the subtree ever been merged?');
-  const out = execFileSync('git', ['diff', '--name-only', `${split[1]}^{tree}`, 'HEAD^{tree}:playwright'], { cwd: root, encoding: 'utf8' });
+  const split = latestSubtreeSplit(log);
+  const out = execFileSync('git', ['diff', '--name-only', `${split}^{tree}`, 'HEAD^{tree}:playwright'], { cwd: root, encoding: 'utf8' });
   return out.split('\n').filter(Boolean).map(f => `playwright/${f}`).filter(f => /\.tsx?$/.test(f));
 }
 
