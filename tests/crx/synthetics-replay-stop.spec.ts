@@ -215,3 +215,56 @@ test('stopping a replay interrupts the step in flight and reports stopped', asyn
   const resultIds = events.filter((e: any) => e.method === 'stepReplayResult').map((e: any) => e.stepId);
   expect(resultIds, 'the steps that ran before the stop lost their results').toContain('s2');
 });
+
+/**
+ * The other way a replay ends: the author closes the window it is running in.
+ *
+ * Nothing used to end it. The player kept waiting on a target that no longer
+ * existed, so the command answered only when that wait timed out — or never, if the
+ * worker went with the window. A replay's outcome travels solely on that answer, so
+ * the journey went on showing "Replaying…" with the step it was on spinning.
+ *
+ * The blocking step is what makes this measurable: without the fix the answer cannot
+ * arrive before BLOCKING_STEP_MS, so a prompt one proves the close ended the run
+ * rather than the block expiring.
+ */
+test('closing the recording window ends the replay promptly', async ({ page, context, baseURL, extensionServiceWorker }) => {
+  await page.goto(`${baseURL}/slow-login.html`);
+
+  const target = `${baseURL}/slow-login.html?delay=${BLOCKING_STEP_MS}`;
+  await startReplayAndCollect(page, blockingJourney(target), target);
+
+  // The recording window carries the delay query; the page driving this test does not.
+  const recordingPage = await context.waitForEvent('page', {
+    predicate: (p: any) => p.url().includes('delay='),
+    timeout: 30_000,
+  }).catch(() => context.pages().find((p: any) => p.url().includes('delay=')));
+  expect(recordingPage, 'the replay opened no window').toBeTruthy();
+
+  await expect.poll(
+      async () => (await collectedEvents(page))
+          .some((e: any) => e.method === 'stepReplayStarted' && e.stepId === 's3'),
+      { message: 'the blocking step never started', timeout: 60_000 },
+  ).toBe(true);
+
+  const startedAt = Date.now();
+  await recordingPage!.close();
+
+  const res = await page.evaluate(async (ms) => {
+    return await Promise.race([
+      (window as any).__ooReplay,
+      new Promise(resolve => setTimeout(() => resolve({ __timedOut: true }), ms)),
+    ]);
+  }, STOP_MUST_LAND_WITHIN_MS) as any;
+  const answeredInMs = Date.now() - startedAt;
+
+  expect(
+      res?.__timedOut,
+      'the replay never answered after its window was closed, so the journey is still showing a running replay',
+  ).toBeUndefined();
+  expect(
+      answeredInMs,
+      `the answer took ${answeredInMs}ms — it waited out the blocked action rather than ending with the window`,
+  ).toBeLessThan(STOP_MUST_LAND_WITHIN_MS);
+  expect(res?.stopped, `the replay did not report stopped: ${JSON.stringify(res)}`).toBe(true);
+});

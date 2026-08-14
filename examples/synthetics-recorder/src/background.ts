@@ -14,7 +14,7 @@ import type { StepFidelity } from 'playwright-crx';
 import type { Mode } from '@recorder/recorderTypes';
 import type { CrxApplication } from 'playwright-crx';
 import type { BrowserStep, SyntheticsForwardMessage, StepResultData, StepStartedData, StructuredError } from 'playwright-crx';
-import type { O2Command, O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage, ReplayResponse, ReplayAuth, ReplayHeader, ReplayCookie, BridgePortMessage, SwPong, RecorderStatus, UnsupportedCommandResponse } from './messaging';
+import type { O2Command, O2ToExtensionMessage, ExtensionToO2Message, OverlayMessage, PrefixFailureReason, ReplayResponse, ReplayAuth, ReplayHeader, ReplayCookie, BridgePortMessage, SwPong, RecorderStatus, UnsupportedCommandResponse } from './messaging';
 import { SW_PING } from './messaging';
 
 // ---- State ----
@@ -43,6 +43,24 @@ let replayActionOffset = 0;
 let replayFidelity: StepFidelity[] = [];
 /** Last step the player announced, so a failed restore can name where it stopped. */
 let lastStartedStepId: string | undefined;
+/**
+ * The tab the player is currently driving, for as long as it is driving it.
+ *
+ * Deliberately not `recordingTabId`: a plain replay never becomes a recording, so it
+ * never sets that one — which left the close of a replay's own window invisible to
+ * `handleTabRemoved`, the one listener that could have noticed it.
+ */
+let replayTabId: number | undefined;
+/**
+ * The recorder window went away underneath a running restore.
+ *
+ * All the player can say about that is that the action it was running rejected with
+ * `Target page, context or browser has been closed` — from inside the catch,
+ * indistinguishable from a step that genuinely could not run. Only this listener
+ * knows better, because it watched the tab go. Without it, an author closing the
+ * window is told step N of their journey failed.
+ */
+let restoreWindowClosed = false;
 
 // Long-lived connection back to the O2 web app running in a browser tab.
 // The O2 app opens this via chrome.runtime.connect(extensionId, { name: 'synthetics-recorder' }).
@@ -71,7 +89,7 @@ const O2_PORT_NAME = 'synthetics-recorder';
  * emits `import` at the top of content.js — a classic script Chrome then refuses to
  * load. See the "content script is emitted as a classic script" test.
  */
-const CAPABILITIES: string[] = ['record', 'replay', 'recordFrom'];
+const CAPABILITIES: string[] = ['record', 'replay', 'recordFrom', 'recordFromFailure'];
 
 /** The build the user actually has, for the "update the extension" message. */
 function extVersion(): string {
@@ -247,6 +265,12 @@ function runO2Command(command: O2Command, respond: (response?: any) => void): bo
 
     case 'startRecordingFrom':
       startRecordingFrom(command.prefixSteps, command.targetUrl, command.testIdAttr, command.auth, command.headers, command.cookies)
+        .then(result => respond(result))
+        .catch(err => respond({ success: false, error: err.message }));
+      return true;
+
+    case 'recordFromHere':
+      recordFromHere()
         .then(result => respond(result))
         .catch(err => respond({ success: false, error: err.message }));
       return true;
@@ -693,6 +717,20 @@ async function handleTabRemoved(tabId: number) {
   if (tabId === recordingTabId && isRecording) {
     stopRecording().catch(console.error);
   }
+  // A replay — or a restore, which is also `isReplaying` — lost the window it was
+  // driving. Both fell through this listener entirely, and the flag alone only helps
+  // a restore word its failure.
+  //
+  // The player is left waiting on a target that no longer exists, so it unwinds when
+  // its own timeout expires, or not at all if this worker is torn down with the
+  // window first. The web app has nothing else to learn from — a replay's outcome
+  // travels solely on the answer to its command — so it goes on showing a running
+  // replay with a step spinning. Stopping the player here unwinds it NOW, and
+  // `replayStopped` makes the answer say what happened.
+  if (isReplaying && tabId === replayTabId) {
+    restoreWindowClosed = true;
+    handleStopReplay().catch(() => {});
+  }
   // O2 web app tab closed — tear down the bridge port
   if (tabId === o2TabId) {
     o2Port = undefined;
@@ -744,6 +782,7 @@ async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr
     crxApp = await crx.start({ incognito: true, tabId, contextOptions });
     await crxApp.attach(tabId);
     isReplaying = true;
+    replayTabId = tabId;
 
     // show({ mode: 'none' }) triggers _createRecorderApp → factory → SyntheticsRecorderApp,
     // which registers a stepResult listener on Crx.player so per-step results stream to O2 in
@@ -758,6 +797,14 @@ async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr
       : { success: true, passed: true };
   } catch (err) {
     const e = err as Error;
+    // A cancellation reaches this function down BOTH paths, and which one depends on
+    // timing. `CrxPlayer.run` swallows its own Stopped error and returns — the case
+    // the success path above handles — but when the stop came from the window going
+    // away, the pending call rejects first with a target-closed error. Reported as an
+    // error, that reads to the web app as a step that failed rather than a run the
+    // author ended.
+    if (replayStopped)
+      return { success: true, passed: false, stopped: true };
     return {
       success: true,
       passed: false,
@@ -770,6 +817,7 @@ async function handleReplay(steps: BrowserStep[], targetUrl?: string, testIdAttr
     };
   } finally {
     isReplaying = false;
+    replayTabId = undefined;
     replayActionOffset = 0;
     await crxApp?.close().catch(() => {});
     crxApp = undefined;
@@ -868,37 +916,119 @@ async function startRecordingFrom(
   recordingTabId = tabId;
   recordingId = `rec_${Date.now()}_${tabId}`;
   browserSteps = [];
+  restoreWindowClosed = false;
 
   if (prefixSteps.length > 0) {
     isReplaying = true;
+    replayTabId = tabId;
     try {
       await crxApp.recorder.runActions(mapBrowserStepsToActions(prefixSteps));
+      // Reached ONLY because `CrxPlayer.run` swallows its own Stopped error and
+      // returns — a cancelled restore comes back through the success path, not the
+      // catch. Falling through here flipped the session into recording and told the
+      // web app it had started, on a restore the author had just abandoned.
+      if (replayStopped || restoreWindowClosed)
+        return await reportRestoreEnded(prefixSteps, 'Restore cancelled');
     } catch (err) {
       const e = err as Error;
-      // Which step stopped us. The player aborts on the failing action, so the last
-      // step to have started is the one that failed.
-      const failedStepId = lastStartedStepId ?? prefixSteps[prefixSteps.length - 1]?.id;
-      sendToO2({
-        type: 'synthetics-recorder',
-        recordingId: recordingId!,
-        payload: {
-          method: 'prefixFailed',
-          stepId: failedStepId,
-          error: e?.message ?? String(err),
-          structuredError: { message: e?.message ?? String(err), name: e?.name, stack: e?.stack },
-        },
-      });
-      // Session deliberately left open — see the doc comment.
-      return { success: false, passed: false, error: e?.message ?? String(err), failedStepId };
+      return await reportRestoreEnded(prefixSteps, e?.message ?? String(err), e);
     } finally {
       isReplaying = false;
+      replayTabId = undefined;
     }
   }
 
-  // Everything the collection logged while disabled is an artifact of the restore.
-  // Reset before enabling, so the author's first action is genuinely step one.
+  await enableRecordingOnSession(tabId, targetUrl ?? '');
+  return { success: true, passed: true };
+}
+
+/** Is the recording tab still there? `chrome.tabs.get` rejects once it is gone. */
+async function tabIsOpen(tabId?: number): Promise<boolean> {
+  if (tabId === undefined) return false;
+  try {
+    await chrome.tabs.get(tabId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Report a restore that did not reach its point, and dispose of the session.
+ *
+ * One place for both endings, because the only thing that differs between them is a
+ * string the web app renders — and because the SAME ending arrives down two paths
+ * (`run` throws for a failure, returns for a cancel), which is exactly how a cancel
+ * came to be reported as a started recording.
+ */
+async function reportRestoreEnded(
+  prefixSteps: BrowserStep[],
+  message: string,
+  err?: Error,
+): Promise<ReplayResponse & { failedStepId?: string }> {
+  // Which step stopped us. The player aborts on the failing action, so the last step
+  // to have started is the one that failed.
+  const failedStepId = lastStartedStepId ?? prefixSteps[prefixSteps.length - 1]?.id;
+  // Only this worker can tell these apart: it saw the tab go, it can ask whether the
+  // tab is still there, and it knows which stop it was asked for. All the web app
+  // would have is an exception that reads the same for every one of them.
+  //
+  // Two signals, and the tab is the one that decides. `chrome.tabs.onRemoved` is
+  // dispatched whenever Chrome gets round to it, while the failure arrives as soon as
+  // the player gives up — measured losing that race, which reported a closed window as
+  // a failing step. `chrome.tabs.get` answers about the tab as it is now, so no event
+  // can beat it.
+  //
+  // Deliberately NOT gated on the error looking like a closed target. Measured: an
+  // action already waiting when the window goes keeps waiting and dies as a TIMEOUT,
+  // not a TargetClosedError — so keying on the error class blinds this to the exact
+  // case it exists for. Nothing else closes the recording tab mid-restore, which is
+  // what makes its absence enough on its own.
+  const windowGone = restoreWindowClosed || !(await tabIsOpen(recordingTabId));
+  const reason: PrefixFailureReason = windowGone
+    ? 'window-closed'
+    : replayStopped
+      ? 'cancelled'
+      : 'step-failed';
+
+  sendToO2({
+    type: 'synthetics-recorder',
+    recordingId: recordingId!,
+    payload: {
+      method: 'prefixFailed',
+      stepId: failedStepId,
+      error: message,
+      structuredError: { message, name: err?.name, stack: err?.stack },
+      reason,
+    },
+  });
+
+  // Deliberately disposes of nothing, whatever the reason.
+  //
+  // A failing step leaves the session up on purpose — the browser is sitting where it
+  // stopped, which is what makes the recovery a mode flip rather than another replay.
+  // The obvious counterpart, tearing down the other two, was built and then removed:
+  // it made a MISCLASSIFIED ending destructive, and this classification can be wrong
+  // (measured — the recovery lost its session to it). Nothing is gained by it either,
+  // because `prepareRecordingWindow` already closes a stale CrxApplication before it
+  // starts the next one, which is exactly what releases the incognito lock.
+  //
+  // So the worst a wrong reason can now do is word a message badly.
+  return { success: false, passed: false, error: message, failedStepId };
+}
+
+/**
+ * Flip a restored session from replaying to capturing.
+ *
+ * Shared by the end of a successful restore and by `recordFromHere`, so the rule that
+ * makes an inserted block clean — reset the collection BEFORE enabling — cannot hold
+ * on one path and not the other. Everything the collection logged while disabled is
+ * an artifact of the restore: `RecorderCollection` logs `openPage`/`closePage` past
+ * its own enabled guard, and without the reset those head the author's first step.
+ */
+async function enableRecordingOnSession(tabId: number, url: string) {
   recorderApp?.resetCapture();
-  await crxApp.recorder.setMode('recording');
+  await crxApp!.recorder.setMode('recording');
   isRecording = true;
 
   await sendToOverlay(tabId, { method: 'showOverlay' });
@@ -907,17 +1037,39 @@ async function startRecordingFrom(
 
   sendToO2({
     type: 'synthetics-recorder',
-    recordingId,
+    recordingId: recordingId!,
     payload: {
       method: 'recordingStarted',
       tabId,
-      url: targetUrl ?? '',
+      url,
       mode: 'insert',
       baselineStepCount: browserSteps.length,
     },
   });
+}
 
-  return { success: true, passed: true };
+/**
+ * Record on the session a failed prefix left open, from where the failing step stopped.
+ *
+ * The browser has not moved since it stopped, so there is nothing to replay: this is
+ * the mode flip of design §7.6, and it is what makes the recovery instant instead of
+ * another minute of restore. The state it records against is already in the browser,
+ * which is why the command carries nothing.
+ *
+ * Refused when there is no such session — the caller then has a real restore to run,
+ * and must not be told this one started.
+ */
+async function recordFromHere(): Promise<{ success: boolean; error?: string }> {
+  if (!crxApp || recordingTabId === undefined)
+    return { success: false, error: 'No restored session to record from' };
+  if (isReplaying)
+    return { success: false, error: 'A replay is already in progress' };
+  if (isRecording)
+    return { success: false, error: 'Already recording' };
+
+  browserSteps = [];
+  await enableRecordingOnSession(recordingTabId, '');
+  return { success: true };
 }
 
 // Cancels an in-progress replay. The server CrxPlayer.stop() makes the in-flight action throw Stopped,

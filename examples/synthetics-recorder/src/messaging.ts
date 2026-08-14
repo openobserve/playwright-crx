@@ -17,6 +17,15 @@ export type ReplayHeader = { key: string; value: string };
 
 export type ReplayCookie = { name: string; value: string; domain: string };
 
+/**
+ * Why a restore stopped short of the point it was aiming for.
+ *
+ * `window-closed` and `cancelled` are the author ending it — the first through the
+ * only exit a restore used to offer. Only `step-failed` is the journey being unable
+ * to reach the point that was asked for.
+ */
+export type PrefixFailureReason = 'window-closed' | 'cancelled' | 'step-failed';
+
 // ---- O2 → Extension commands ----
 
 export type O2Command =
@@ -33,6 +42,16 @@ export type O2Command =
    * a mode flip rather than another replay.
    */
   | { action: 'startRecordingFrom'; prefixSteps: BrowserStep[]; targetUrl?: string; testIdAttr?: string; auth?: ReplayAuth; headers?: ReplayHeader[]; cookies?: ReplayCookie[] }
+  /**
+   * Start capturing on the session a FAILED prefix left open, from wherever the
+   * failing step stopped.
+   *
+   * Carries nothing because there is nothing to carry: the state it records against
+   * is already in the browser, which is what makes this a mode flip and not a second
+   * restore. Refused when no such session is open — the caller then has a real
+   * restore to run instead, and must not be told this one started.
+   */
+  | { action: 'recordFromHere' }
   | { action: 'stopReplay' };
 
 /**
@@ -117,11 +136,20 @@ export type ExtensionToO2Payload =
   }
   | { method: 'recordingStopped'; totalSteps: number }
   /**
-   * The restore could not reach the requested point. The session is deliberately left
-   * alive: the browser is sitting where `stepId` stopped, which is a legitimate
-   * restored state and exactly where an author fixing that step wants to be.
+   * The restore did not reach the requested point.
+   *
+   * On `step-failed` the session is deliberately left alive: the browser is sitting
+   * where `stepId` stopped, which is a legitimate restored state and exactly where an
+   * author fixing that step wants to be. The other two reasons end the session — a
+   * window the author closed takes its context with it, and a cancel means they want
+   * out — so there is nothing left to recover into.
+   *
+   * `reason` is what the web app renders from, and it is decided HERE because this is
+   * the only place that can decide it: the service worker watched the tab go away and
+   * knows which stop it was asked for, while all the web app would have is an
+   * exception that reads the same for every one of them.
    */
-  | { method: 'prefixFailed'; stepId: string; error?: string; structuredError?: StructuredError }
+  | { method: 'prefixFailed'; stepId: string; error?: string; structuredError?: StructuredError; reason?: PrefixFailureReason }
   | { method: 'stepReplayStarted'; stepId: string; stepName?: string }
   | {
     method: 'stepReplayResult';

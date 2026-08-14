@@ -251,6 +251,162 @@ test('a prefix that cannot be replayed reports the step it stopped on', async ({
 });
 
 /**
+ * Start a restore WITHOUT waiting for it to finish.
+ *
+ * Every test below acts while the prefix is still replaying — closing the window,
+ * cancelling — so the command promise has to be held rather than awaited. The
+ * service worker is woken first, because the retry the awaiting helper uses to
+ * absorb a cold start is not available here.
+ */
+async function startRestoreInFlight(page: any, prefixSteps: unknown[], targetUrl: string) {
+  await sendCommand(page, { action: 'getStatus' }, 10_000);
+  return sendCommand<any>(page, {
+    action: 'startRecordingFrom', prefixSteps, targetUrl, testIdAttr: 'data-test',
+  });
+}
+
+/** A prefix whose second step waits on an element that never appears. */
+const stalls = (target: string) => [
+  { id: 'p1', action: 'navigate', url: target },
+  { id: 'p2', action: 'click', locator: at('[data-test="this-element-does-not-exist"]') },
+];
+
+/** The recording window, once the restore has opened it. */
+async function waitForRecordingPage(context: any, url = 'v2-login.html') {
+  const found = await context.waitForEvent('page', {
+    predicate: (p: any) => p.url().includes(url), timeout: 30_000,
+  }).catch(() => context.pages().find((p: any) => p.url().includes(url)));
+  expect(found, 'the recording window never opened').toBeTruthy();
+  await found!.waitForLoadState('domcontentloaded').catch(() => {});
+  return found!;
+}
+
+/**
+ * The screenshot this work started from.
+ *
+ * Closing the recorder window is how an author walks away from a restore — for a
+ * long time it was the ONLY way out. The player can only report that as the action
+ * it was running rejecting, and reported as such the web app blames a step that
+ * never ran and offers a recovery for a session that no longer exists.
+ *
+ * Only the service worker can tell the two apart: it watched the tab go away.
+ */
+test('closing the recorder window is reported as a cancel, not a failed step', async ({
+  page, context, baseURL, extensionServiceWorker,
+}) => {
+  await page.goto(`${baseURL}/index.html`);
+  await collectPushes(page);
+
+  const target = `${baseURL}/v2-login.html`;
+  const pending = startRestoreInFlight(page, stalls(target), target);
+
+  const recordingPage = await waitForRecordingPage(context);
+  // The stalling step is now waiting on an element that will never appear.
+  await page.waitForTimeout(2_000);
+  await recordingPage.close();
+
+  await pending;
+  await page.waitForTimeout(1_000);
+
+  const { prefixFailed } = await pushes(page);
+  expect(prefixFailed, 'the close was never reported at all').toBeTruthy();
+  expect(prefixFailed?.reason,
+      'a window the author closed is reported as a step that failed, so the web app blames the journey for something the author did')
+      .toBe('window-closed');
+});
+
+/**
+ * The same ending by the other route — and the one the player does NOT throw for.
+ *
+ * `CrxPlayer.run` swallows its own Stopped error and returns normally, so a cancel
+ * comes back through the SUCCESS path. Left unhandled, the extension flips into
+ * recording on a session the author just abandoned, and reports it started.
+ */
+test('cancelling a restore is reported as a cancel, and does not start recording', async ({
+  page, context, baseURL, extensionServiceWorker,
+}) => {
+  await page.goto(`${baseURL}/index.html`);
+  await collectPushes(page);
+
+  const target = `${baseURL}/v2-login.html`;
+  const pending = startRestoreInFlight(page, stalls(target), target);
+
+  await waitForRecordingPage(context);
+  await page.waitForTimeout(2_000);
+  await sendCommand(page, { action: 'stopReplay' }, 10_000);
+
+  const res = await pending;
+  await page.waitForTimeout(1_000);
+
+  const { prefixFailed, started } = await pushes(page);
+  expect(res?.success, 'an abandoned restore reported success').toBe(false);
+  expect(prefixFailed?.reason, 'the cancel was not reported as one').toBe('cancelled');
+  expect(started,
+      'the extension flipped into recording on a session the author had just cancelled')
+      .toBeFalsy();
+});
+
+/**
+ * The recovery of design §7.6, which the failing-prefix test above only sets up.
+ *
+ * The browser is still sitting where the failing step stopped — a legitimate restored
+ * state, simply an earlier one than was asked for. Recording from there is a mode flip
+ * on the live session: no teardown, no second replay, no wasted minute. What it hands
+ * back must be as clean as a normal restore's capture — the author's actions and
+ * nothing the restore left behind.
+ */
+test('recording resumes on the session a failed prefix left open', async ({
+  page, context, baseURL, extensionServiceWorker,
+}) => {
+  await page.goto(`${baseURL}/index.html`);
+  await collectPushes(page);
+
+  const target = `${baseURL}/v2-login.html`;
+  // Wake the worker before starting, as the in-flight helper above does.
+  //
+  // Not incidental: against a COLD worker the first command can be lost, and the
+  // retrying helper then fires a second `startRecordingFrom` while the first is still
+  // opening its window — the second's `prepareRecordingWindow` closes the first's
+  // CrxApplication, and the session this test needs to record into is gone. Measured:
+  // 0 of 3 without this line, and the worker was never restarting.
+  await sendCommand(page, { action: 'getStatus' }, 10_000);
+
+  const res = await startRecordingFrom(page, stalls(target), target);
+  expect(res?.failedStepId, 'the prefix did not fail where this test needs it to').toBe('p2');
+
+  // A timeout is a step that failed, never a window that went away — the session has
+  // to still be there for the recovery to have anything to record into.
+  expect((await pushes(page)).prefixFailed?.reason,
+      'a step that timed out was reported as something that ends the session').toBe('step-failed');
+
+  const resumed = await sendCommand<any>(page, { action: 'recordFromHere' }, 30_000);
+  expect(resumed?.success,
+      `recording could not resume on the open session: ${resumed?.error ?? '(no response)'}`)
+      .toBe(true);
+
+  const recordingPage = context.pages().filter(
+      (p: any) => !p.isClosed() && p.url().includes('v2-login.html')).pop();
+  expect(recordingPage, 'the failed restore left no window to record in').toBeTruthy();
+  await recordingPage!.locator('[data-test="login-password-field"]').click();
+  await recordingPage!.locator('[data-test="login-password-field"]').fill('hunter2');
+  await recordingPage!.waitForTimeout(2_000);
+
+  await sendCommand(page, { action: 'stopRecording' });
+  await page.waitForTimeout(1_000);
+
+  const { steps, started } = await pushes(page);
+  expect(started?.mode, 'the resumed session did not announce itself as an insert').toBe('insert');
+  expect((steps as RecordedStep[]).some(s => targets(s).includes('login-password-field')),
+      `the author's action was not recorded: ${JSON.stringify(steps, null, 2)}`)
+      .toBe(true);
+  // Same rule as a normal restore: the collection is reset at the flip, so nothing
+  // the restore logged while disabled heads the author's block.
+  expect((steps as RecordedStep[]).map(s => s.action),
+      `the failed restore leaked into the capture: ${JSON.stringify(steps, null, 2)}`)
+      .not.toContain('navigate');
+});
+
+/**
  * Two restore-then-record sessions back to back, in one browser session.
  *
  * "Record more steps" twice in a row is ordinary, and the O2 UI flow reproduces a
