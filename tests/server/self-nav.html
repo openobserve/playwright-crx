@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+  <head><title>Self nav</title></head>
+  <body>
+    <h1>Self navigation</h1>
+    <p id="stage">stage 0</p>
+    <script>
+      // Navigates itself on load, with no user interaction at all - the shape a real
+      // SPA produces when its router writes query/route state after mount. This is the
+      // second reproduction in navigation-steps-research.md Appendix A, where opening a
+      // recording on the O2 login page produced three navigate steps and nobody had
+      // touched anything.
+      [1500, 2500, 3500].forEach((delay, i) => {
+        setTimeout(() => {
+          history.pushState({}, '', `/settled-${i + 1}`);
+          document.getElementById('stage').textContent = `stage ${i + 1}`;
+        }, delay);
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+  <head><title>SPA nav</title></head>
+  <body>
+    <h1>SPA navigation</h1>
+    <button data-test="go">Go</button>
+    <p id="stage">stage 0</p>
+    <script>
+      // A slow SPA. The click causes a route change that lands seconds later, then
+      // two more behind it. No document is ever loaded - these are pushState calls,
+      // which is what Vue Router does and what frameCommittedSameDocumentNavigation
+      // reports as a public navigation.
+      //
+      // The hops differ by PATH, not query string: generalizeUrlPattern strips the
+      // query, so query-only hops would all flatten to one pattern and the "which
+      // signal was kept" assertion could not fail.
+      document.querySelector('[data-test=go]').addEventListener('click', () => {
+        [6000, 6600, 7200].forEach((delay, i) => {
+          setTimeout(() => {
+            history.pushState({}, '', `/stage-${i + 1}`);
+            document.getElementById('stage').textContent = `stage ${i + 1}`;
+          }, delay);
+        });
+      });
+    </script>
+  </body>
+</html>

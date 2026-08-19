@@ -97,3 +97,54 @@ test('the opening navigate survives a stop/start cycle', async ({ page, o2, base
   expect(steps[0]?.action, `second recording lost its opening navigate: ${describeSteps(steps)}`).toBe('navigate');
   expect(steps[0]?.url).toBe(target);
 });
+
+test('a click that causes three SPA route changes records one step', async ({ page, o2, baseURL }) => {
+  await page.goto(`${baseURL}/index.html`);
+  await o2.listen();
+
+  const target = `${baseURL}/spa-nav.html`;
+  await o2.startRecording(target);
+
+  const rec = await o2.recordingTab('spa-nav.html', 20_000);
+  await rec.waitForLoadState('domcontentloaded');
+  // The injected recorder must attach before a click is captured at all.
+  await rec.waitForTimeout(6_000);
+
+  await rec.locator('[data-test="go"]').click({ timeout: 10_000 });
+  // Past the last pushState (7.2s) plus settle.
+  await rec.waitForTimeout(10_000);
+
+  await o2.stopRecording();
+  await page.waitForTimeout(2_000);
+
+  const steps = await o2.steps();
+  const navs = steps.filter(s => s.action === 'navigate');
+  expect(navs.length, `route changes became their own steps: ${describeSteps(steps)}`).toBe(1);
+
+  const click = steps.find(s => s.action === 'click');
+  expect(click, `the click was not recorded: ${describeSteps(steps)}`).toBeTruthy();
+  expect(
+      click!.settle?.navigation?.url_pattern,
+      `the click carries no navigation evidence: ${JSON.stringify(click)}`,
+  ).toBeTruthy();
+});
+
+test('opening a recording on a self-navigating page records one navigate', async ({ page, o2, baseURL }) => {
+  await page.goto(`${baseURL}/index.html`);
+  await o2.listen();
+
+  const target = `${baseURL}/self-nav.html`;
+  await o2.startRecording(target);
+
+  const rec = await o2.recordingTab('self-nav.html', 20_000);
+  await rec.waitForLoadState('domcontentloaded');
+  // No interaction at all. Everything recorded here was recorded by nobody.
+  await rec.waitForTimeout(8_000);
+
+  await o2.stopRecording();
+  await page.waitForTimeout(2_000);
+
+  const steps = await o2.steps();
+  expect(steps.length, `steps appeared with no author action: ${describeSteps(steps)}`).toBe(1);
+  expect(steps[0].action).toBe('navigate');
+});
