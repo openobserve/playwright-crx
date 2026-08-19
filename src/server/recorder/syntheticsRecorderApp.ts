@@ -101,6 +101,16 @@ export class SyntheticsRecorderApp extends EventEmitter {
   private _finalRebuild?: Promise<void>;
   /** Kept so the journey origin can be recovered when no navigate action was recorded. */
   private _context?: BrowserContext;
+  /**
+   * Whether the journey still needs a navigation to say where it begins.
+   *
+   * True for a fresh recording: that opening navigation IS the journey's first step and
+   * replay has nowhere to start without it. False once anything at all has been recorded,
+   * and false from the moment a restore-then-record session resets the capture — there the
+   * prefix has already navigated, so everything arriving before the author's first action
+   * is the application settling rather than something the author did.
+   */
+  private _needsOpeningNavigate = true;
 
   constructor(
     crx: Crx,
@@ -166,7 +176,7 @@ export class SyntheticsRecorderApp extends EventEmitter {
     // mapping and the network-evidence rebuild below are unchanged — they just run off
     // this list instead of a pushed one.
     recorder.on(RecorderEvent.ActionAdded, (action: actions.ActionInContext) => {
-      this._recordedActions.push(action);
+      this._acceptAction(action);
       this._regenerate();
     });
     // The navigation-signal patch in recorderSignalProcessor.ts is what makes this fire
@@ -241,6 +251,10 @@ export class SyntheticsRecorderApp extends EventEmitter {
     // the synthetics recorder is headless (no code editor), so calling
     // setOutput would restart() the action collection and destroy the
     // initial openPage step that install() just generated.
+    // A fresh session needs its opening navigation captured. resetCapture() clears this
+    // again for a restore-then-record session, which already has one.
+    this._needsOpeningNavigate = true;
+
     this._recorder.setMode(mode);
 
     // Seed the journey's opening navigation.
@@ -362,6 +376,56 @@ export class SyntheticsRecorderApp extends EventEmitter {
   resetCapture() {
     this._recordedActions = [];
     this._network.clear();
+    // The prefix has already navigated, so the journey knows where it starts. Without
+    // this the restored page's own settling becomes step one of the inserted block.
+    this._needsOpeningNavigate = false;
+  }
+
+  /**
+   * The journey's first navigation is a step; every navigation after it is evidence.
+   *
+   * Upstream synthesizes a `navigate` action whenever a navigation signal is not
+   * attributable to a click/press/fill less than five seconds old
+   * (recorderSignalProcessor.ts). That rule is tuned for code generation, where a surplus
+   * `page.goto()` is cosmetic. In a monitor it is a step that really runs: a login
+   * redirecting in six seconds became a step, and because the synthesized navigate then
+   * counted as "the last action", every navigation behind it became one too. One click on
+   * a SPA produced four navigate steps and left the click with no wait condition at all.
+   *
+   * Rather than re-tune that heuristic in the vendored tree — 22 files already carry
+   * patches, and its own checker records that every upgrade so far broke at least one —
+   * the decision is made here, on actions we have already been handed.
+   *
+   * Out-of-band navigation (address bar, reload, back) is absorbed rather than kept. That
+   * is a deliberate trade, matching Datadog and Dynatrace: the author adds a navigate step
+   * from the editor when a journey genuinely needs one.
+   */
+  private _acceptAction(action: actions.ActionInContext) {
+    if (action.action.name === 'navigate' && !this._needsOpeningNavigate) {
+      this._absorbNavigation(action);
+      return;
+    }
+    // Anything recorded means the journey now has a place to start — including an
+    // `openPage`, which is what the opening step is on the paths where it survives.
+    this._needsOpeningNavigate = false;
+    this._recordedActions.push(action);
+  }
+
+  /**
+   * Record a navigation as evidence on the last action on its page.
+   *
+   * Deliberately the same shape as the `SignalAdded` handler in the constructor, because
+   * it is the same operation: the recorder absorbs navigations it can attribute itself,
+   * and this absorbs the ones it could not. Silence when no action exists on that page is
+   * the behaviour a restore needs — the capture list is empty at that moment, so the
+   * application's own settling has nothing to attach to and correctly leaves no trace.
+   */
+  private _absorbNavigation(action: actions.ActionInContext) {
+    const url = (action.action as { url?: string }).url;
+    if (!url)
+      return;
+    const target = this._recordedActions.findLast(a => a.pageGuid === action.pageGuid);
+    target?.action.signals.push({ name: 'navigation', url });
   }
 
   async setRunningFile() {

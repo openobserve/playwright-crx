@@ -48,7 +48,7 @@ test('a journey opens with a navigate step carrying the target URL', async ({ pa
   expect(first.url, 'the opening navigate carries no URL').toBe(target);
 });
 
-test('navigating during a recording is captured as its own step', async ({ page, o2, baseURL }) => {
+test('a navigation during a recording becomes evidence, not a second step', async ({ page, o2, baseURL }) => {
   await page.goto(`${baseURL}/index.html`);
   await o2.listen();
 
@@ -56,9 +56,22 @@ test('navigating during a recording is captured as its own step', async ({ page,
   await o2.startRecording(target);
 
   const recordingPage = await o2.recordingTab('v2-login.html');
-  // A navigation the author performs *after* recording has started, which reaches the
-  // recorder as a navigation signal rather than through the opening seed. Both paths must
-  // produce a step; only the first one was ever exercised.
+  // A navigation reaching the recorder as a signal rather than through the opening seed.
+  //
+  // This used to assert it produced a SECOND navigate step. It no longer does, and that is
+  // the decided behaviour rather than a regression: the journey's first navigation is a
+  // step and every navigation after it is evidence on what came before it.
+  //
+  // The reason it is right for the case that actually matters — a redirect — is that the
+  // redirect replays itself. `goto /login` is the durable instruction; landing on `/home`
+  // is a result, and baking a result into the instruction would replay a stale URL (often
+  // carrying session state) and skip the redirect the monitor is there to check. Recorded
+  // as `settle` instead, it becomes the step's wait condition.
+  //
+  // The cost, accepted knowingly: a navigation the author performs out-of-band — a typed
+  // URL, or this explicit goto — is indistinguishable from a redirect and is absorbed the
+  // same way. Replay will not reproduce it, so the author adds a navigate step from the
+  // editor when a journey needs one. See docs/synthetics/navigation-steps-research.md.
   await recordingPage.goto(`${baseURL}/root.html`);
   await recordingPage.waitForTimeout(1_500);
 
@@ -66,10 +79,14 @@ test('navigating during a recording is captured as its own step', async ({ page,
   await page.waitForTimeout(1_000);
 
   const steps = await o2.steps();
-  const urls = steps.filter(s => s.action === 'navigate').map(s => s.url);
-  expect(urls, `expected both navigations, got ${describeSteps(steps)}`).toContain(target);
-  expect(urls, `the in-recording navigation was lost: ${describeSteps(steps)}`)
-      .toContain(`${baseURL}/root.html`);
+  const navs = steps.filter(s => s.action === 'navigate');
+  expect(navs.map(s => s.url), `the opening navigate was lost: ${describeSteps(steps)}`)
+      .toEqual([target]);
+  // Not discarded — carried on the opening step as the condition it should settle on.
+  expect(
+      navs[0]?.settle?.navigation?.url_pattern,
+      `the navigation was dropped instead of recorded as evidence: ${JSON.stringify(navs[0]?.settle)}`,
+  ).toBe('**/root.html/**');
 });
 
 test('the opening navigate survives a stop/start cycle', async ({ page, o2, baseURL }) => {
@@ -123,10 +140,12 @@ test('a click that causes three SPA route changes records one step', async ({ pa
 
   const click = steps.find(s => s.action === 'click');
   expect(click, `the click was not recorded: ${describeSteps(steps)}`).toBeTruthy();
+  // Three hops were absorbed onto this click. The one worth waiting for is where the page
+  // came to rest; /stage-1 is somewhere it passed through and did not stay.
   expect(
       click!.settle?.navigation?.url_pattern,
-      `the click carries no navigation evidence: ${JSON.stringify(click)}`,
-  ).toBeTruthy();
+      `settle names an intermediate hop, not the resting URL: ${JSON.stringify(click!.settle)}`,
+  ).toBe('**/stage-3/**');
 });
 
 test('opening a recording on a self-navigating page records one navigate', async ({ page, o2, baseURL }) => {
@@ -147,4 +166,39 @@ test('opening a recording on a self-navigating page records one navigate', async
   const steps = await o2.steps();
   expect(steps.length, `steps appeared with no author action: ${describeSteps(steps)}`).toBe(1);
   expect(steps[0].action).toBe('navigate');
+});
+
+test('replaying a stored journey runs every navigate step it contains', async ({ page, o2, baseURL }) => {
+  await page.goto(`${baseURL}/index.html`);
+  await o2.listen();
+
+  // A journey as it exists in storage today: three consecutive navigates, exactly the
+  // shape the recorder no longer PRODUCES. Nothing may collapse or drop them on the way
+  // to replay — a step an author has seen and saved is their data, however it got there.
+  const stored = [
+    { id: 's1', action: 'navigate', name: 'one', url: `${baseURL}/v2-login.html` },
+    { id: 's2', action: 'navigate', name: 'two', url: `${baseURL}/root.html` },
+    { id: 's3', action: 'navigate', name: 'three', url: `${baseURL}/v2-search.html` },
+  ];
+
+  const res = await o2.replay<{ success: boolean; passed: boolean }>(stored, {
+    targetUrl: `${baseURL}/v2-login.html`,
+    testIdAttr: 'data-test',
+  });
+  expect(res?.passed, 'a stored three-navigate journey no longer replays').toBe(true);
+
+  // Two results for three steps, and that is correct rather than a step going missing:
+  // mapBrowserStepsToActions turns step 0's navigate back into the `openPage` the player
+  // needs to create the page before anything can act on it, and an openPage executes as
+  // page creation rather than as a step. `replayActionOffset` (background.ts:769) exists
+  // for exactly this. The first URL is still visited — it is where the page opens.
+  const results = (await o2.pushes()).filter(p => p.method === 'stepReplayResult');
+  expect(
+      results.map(r => r.stepId),
+      `the stored navigates after the opening one did not run: ${JSON.stringify(results)}`,
+  ).toEqual(['s2', 's3']);
+  expect(
+      results.every(r => r.passed),
+      `a stored navigate step failed on replay: ${JSON.stringify(results)}`,
+  ).toBe(true);
 });

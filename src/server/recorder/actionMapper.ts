@@ -181,7 +181,12 @@ function buildSettle(
   const { action, startTime, endTime } = actionInContext;
   const settle: StepSettle = {};
 
-  const navigation = action.signals?.find(s => s.name === 'navigation');
+  // The LAST one, not the first. An action now carries one navigation signal per hop of a
+  // redirect chain or SPA route change, because they are absorbed onto the action that
+  // caused them rather than each becoming a step. The first names an intermediate URL the
+  // page did not stay on; the last is where it came to rest, which is the only one worth
+  // waiting for.
+  const navigation = action.signals?.findLast(s => s.name === 'navigation');
   if (navigation) {
     const url_pattern = generalizeUrlPattern(navigation.url);
     if (url_pattern)
